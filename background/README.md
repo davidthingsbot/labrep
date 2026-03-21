@@ -17,6 +17,7 @@ This folder contains deep dives into the concepts, algorithms, and prior art rel
 | [nurbs-mathematics.md](./nurbs-mathematics.md) | B-splines, NURBS curves and surfaces | ✅ Complete |
 | [surface-intersection.md](./surface-intersection.md) | SSI algorithms — the "dragon" | ✅ Complete |
 | [boolean-operations.md](./boolean-operations.md) | How booleans use SSI | ✅ Complete |
+| [alternative-kernels.md](./alternative-kernels.md) | Attempts to recreate OCCT, AI-driven projects | ✅ Complete |
 
 ## Document Structure
 
