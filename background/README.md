@@ -18,6 +18,7 @@ This folder contains deep dives into the concepts, algorithms, and prior art rel
 | [surface-intersection.md](./surface-intersection.md) | SSI algorithms — the "dragon" | ✅ Complete |
 | [boolean-operations.md](./boolean-operations.md) | How booleans use SSI | ✅ Complete |
 | [alternative-kernels.md](./alternative-kernels.md) | Attempts to recreate OCCT, AI-driven projects | ✅ Complete |
+| [design-notes.md](./design-notes.md) | Subsystems, data types, gotchas from other projects | ✅ Complete |
 
 ## Document Structure
 
