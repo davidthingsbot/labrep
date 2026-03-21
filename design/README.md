@@ -509,6 +509,117 @@ These features are explicitly **out of scope** for initial development:
 
 ---
 
+## Key Algorithmic Challenges
+
+### Surface-Surface Intersection (SSI) — "The Dragon"
+
+**What it is:** When two surfaces meet (like in a boolean operation), you need to find the curve where they intersect. That curve becomes a new edge in the result.
+
+**Why it's called "the dragon":** This is the single hardest algorithmic problem in a BRep kernel. It's where projects stall and booleans fail.
+
+**Simple cases are tractable:**
+
+| Intersection | Result |
+|--------------|--------|
+| Plane ∩ Plane | Straight line |
+| Plane ∩ Cylinder | Ellipse (or lines) |
+| Plane ∩ Sphere | Circle |
+| Sphere ∩ Sphere | Circle |
+| Cylinder ∩ Cylinder | Ellipse, hyperbola, or lines |
+
+These have closed-form analytic solutions.
+
+**NURBS surfaces are brutal:**
+
+- The intersection can be *multiple* disconnected curves
+- Curves can branch, loop, or spiral
+- Curves can degenerate to points (tangent contact)
+- Curves can have cusps or self-intersections
+- **No closed-form solution** — must iterate numerically
+
+**From vcad's developer:**
+> "My ssi.rs is ~500 lines of marching algorithms and Newton-Raphson refinement. She's ugly but she runs."
+
+**Common approaches:**
+
+1. **Marching** — Start at a known intersection point, step along the surface following the curve
+2. **Subdivision** — Recursively split surfaces until intersection is locally planar
+3. **Implicitization** — Convert parametric surface to implicit form and solve (expensive)
+
+**Why it matters:** Every boolean operation (union, subtract, intersect) calls SSI internally. If SSI fails or computes the curve incorrectly, the boolean fails. This is why "failing booleans" plague CAD users — SSI hit an edge case the kernel developers hadn't handled.
+
+**Our approach:** For Phase 8 (booleans), we start with analytic surfaces only (planes, cylinders, spheres, cones). These have tractable SSI. NURBS SSI is explicitly excluded for now — it's a Phase 12+ problem if ever.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    SSI COMPLEXITY                               │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ANALYTIC (Phase 8)                                             │
+│  ──────────────────                                             │
+│  • Plane ∩ Plane         → closed-form line                    │
+│  • Plane ∩ Cylinder      → closed-form ellipse                 │
+│  • Plane ∩ Sphere        → closed-form circle                  │
+│  • Cylinder ∩ Cylinder   → conic sections                      │
+│  Complexity: Medium. Well-understood algorithms.               │
+│                                                                 │
+│  NURBS (Not in scope)                                           │
+│  ────────────────────                                           │
+│  • NURBS ∩ NURBS         → numerical marching                  │
+│  • Branching, loops, degeneracies                              │
+│  Complexity: Extreme. OCCT has tens of thousands of lines.     │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Why Booleans Are Hard
+
+Boolean operations (union, subtract, intersect) seem simple conceptually but involve a 4-stage pipeline where each stage can fail:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    BOOLEAN PIPELINE                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  STAGE 1: CANDIDATE DETECTION                                   │
+│  ────────────────────────────                                   │
+│  • AABB (bounding box) overlap test                            │
+│  • Filter face pairs that might intersect                       │
+│  • Fast, rarely fails                                           │
+│                                                                 │
+│  STAGE 2: SURFACE-SURFACE INTERSECTION (SSI)                    │
+│  ───────────────────────────────────────────                    │
+│  • Find intersection curves between overlapping faces           │
+│  • The dragon (see above)                                       │
+│  • Most likely failure point                                    │
+│                                                                 │
+│  STAGE 3: FACE CLASSIFICATION                                   │
+│  ────────────────────────────                                   │
+│  • For each face, determine: Inside, Outside, or On boundary   │
+│  • Ray casting + winding number                                │
+│  • Can fail on degenerate cases (face exactly on boundary)     │
+│                                                                 │
+│  STAGE 4: SEWING                                                │
+│  ───────────────                                                │
+│  • Trim faces along intersection curves                         │
+│  • Split edges where curves cross                               │
+│  • Merge surviving faces into new solid                        │
+│  • Repair topology (match vertices within tolerance)           │
+│  • Can fail if topology becomes inconsistent                   │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Degenerate cases that cause failures:**
+- Tangent surfaces (surfaces touch but don't cross)
+- Coincident faces (same surface, same boundary)
+- Zero-thickness features (knife-edge results)
+- Near-tangent (numerically indistinguishable from tangent)
+
+**Our approach:** Implement booleans for analytic surfaces first. Document failure modes. Add robustness incrementally as we encounter edge cases in real use.
+
+---
+
 ## Implementation Phases
 
 ### Phase 1: Mathematical Foundation
