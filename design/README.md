@@ -509,6 +509,191 @@ These features are explicitly **out of scope** for initial development:
 
 ---
 
+## Learning from OCCT's Legacy Design
+
+OpenCASCADE carries 30+ years of design decisions, naming conventions, and architectural patterns from an era before modern C++ (let alone TypeScript). Understanding these legacy patterns helps us avoid repeating them.
+
+### The gp / Geom / Geom2d Split
+
+OCCT has **three parallel hierarchies** for describing the same geometric concepts:
+
+| Package | Purpose | Example | Memory |
+|---------|---------|---------|--------|
+| `gp` | Lightweight value types | `gp_Pnt`, `gp_Circ`, `gp_Pln` | Stack, copyable |
+| `Geom` | 3D parametric curves/surfaces | `Geom_Circle`, `Geom_Plane` | Handle (ref-counted) |
+| `Geom2d` | 2D parametric curves | `Geom2d_Circle`, `Geom2d_Line` | Handle (ref-counted) |
+
+**Why this exists:**
+- `gp` classes are efficient for computation (no virtual calls, stack allocation)
+- `Geom` classes support parameterization (can evaluate at any t or u,v)
+- `Geom` classes participate in BRep (can be shared via handles)
+
+**The problem:**
+- A `Geom_Circle` internally contains a `gp_Circ`
+- You constantly convert between them
+- New users are perpetually confused ("Which circle do I use?")
+- Documentation doesn't clearly explain the distinction
+
+**Our approach:** Single representation per concept. If we need parameterization, build it in from the start. Don't create "lightweight" duplicates.
+
+### The TopoDS / TShape / BRep Split
+
+OCCT topology has **three layers** for the same entity:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│              OCCT'S THREE-LAYER TOPOLOGY                        │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  LAYER 1: TopoDS_Shape                                          │
+│  ─────────────────────                                          │
+│  • A "reference" to topology + orientation + location           │
+│  • Lightweight, copyable                                        │
+│  • Multiple TopoDS_Shape can reference same TShape              │
+│                                                                 │
+│  LAYER 2: TopoDS_TShape (TVertex, TEdge, TFace, etc.)          │
+│  ────────────────────────────────────────────────────           │
+│  • The actual topological structure                             │
+│  • Contains child shapes, flags                                 │
+│  • Abstract — no geometry attached                              │
+│                                                                 │
+│  LAYER 3: BRep_TShape (BRep_TVertex, BRep_TEdge, BRep_TFace)   │
+│  ───────────────────────────────────────────────────────────    │
+│  • Inherits from TopoDS_TShape                                  │
+│  • Adds geometric data (curves, surfaces, tolerances)           │
+│  • This is where actual BRep data lives                         │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Example of the confusion:**
+```cpp
+// To get a point from a vertex, you need:
+TopoDS_Vertex vertex = ...;                    // Layer 1
+const TopoDS_TShape& tshape = vertex.TShape(); // Layer 2
+const BRep_TVertex& tvertex = dynamic_cast<const BRep_TVertex&>(tshape); // Layer 3
+gp_Pnt point = tvertex.Pnt();                  // Finally!
+
+// Or use the helper (which hides this mess):
+gp_Pnt point = BRep_Tool::Pnt(vertex);
+```
+
+**Why this exists:**
+- Separation of concerns (topology vs geometry)
+- Memory sharing (multiple shapes reference same TShape)
+- Historical: BRep was added later as one possible geometry binding
+
+**The problem:**
+- Extreme indirection for simple operations
+- Easy to hold wrong layer and get confused
+- Dynamic casts everywhere
+- `BRep_Tool` has 50+ static methods because the layering is too complex
+
+**Our approach:** Flatten the hierarchy. A `Vertex` contains a `Point3D` and tolerance, period. Orientation and transforms are separate concerns, handled explicitly.
+
+### The Handle System
+
+OCCT predates `std::shared_ptr` (and even standardized smart pointers). It invented its own:
+
+```cpp
+Handle(Geom_Circle) circle = new Geom_Circle(...);
+```
+
+**Problems:**
+- Custom memory manager (MMGT_OPT environment variable)
+- Memory leaks in old versions (fixed in 6.8+)
+- Doesn't integrate with modern C++ memory management
+- Requires special macros in class definitions
+
+**Our approach:** Use standard TypeScript memory management. Immutable data structures where practical.
+
+### Naming Conventions
+
+OCCT naming reflects its age and French origins:
+
+| OCCT Name | What It Means | Modern Name |
+|-----------|---------------|-------------|
+| `gp` | Geometric Primitives | `math` or `core` |
+| `Pln` | Plane | `Plane` |
+| `Circ` | Circle | `Circle` |
+| `Ax1`, `Ax2`, `Ax3` | Axis systems | `Axis`, `CoordinateSystem` |
+| `Trsf` | Transform | `Transform` |
+| `ElCLib` | Elementary Curves Library | (just put methods on curves) |
+| `BRepBuilderAPI` | BRep construction | `builder` or `create` |
+| `BRepAlgoAPI` | Boolean algorithms | `boolean` |
+| `TopAbs` | Topology Absolute (enums) | (inline the enums) |
+| `TopExp` | Topology Explorer | `traverse` or `iterate` |
+
+**Our approach:** Use clear, modern names. Full words, not abbreviations. `Circle` not `Circ`. `Plane` not `Pln`.
+
+### CDL and WOK (Removed in OCCT 7.0)
+
+Until 2016, OCCT required a custom language (CDL - CAS.CADE Definition Language) and build system (WOK - Workshop Organization Kit). Classes were defined in `.cdl` files and transpiled to C++.
+
+**This was removed in OCCT 7.0**, but the code structure still reflects CDL patterns:
+- Classes organized by CDL "packages"
+- Naming conventions from CDL era
+- Some architectural patterns exist because CDL required them
+
+**Our approach:** We're starting fresh in TypeScript. No legacy build systems to satisfy.
+
+### When Unification Failed
+
+Sometimes OCCT's layers exist for good reasons. Cautionary tales:
+
+**1. Curve Representations**
+An edge can have multiple curve representations:
+- 3D curve (`BRep_Curve3D`)
+- Curve on surface (`BRep_CurveOnSurface`)
+- Curve on two surfaces (`BRep_CurveOn2Surfaces`)
+- Polygon approximation (`BRep_Polygon3D`)
+
+These seem redundant, but they're all needed:
+- 3D curve for spatial operations
+- Curve-on-surface for UV trimming
+- Polygon for fast tessellation
+
+**Lesson:** Don't unify representations that serve different purposes.
+
+**2. Tolerances at Multiple Levels**
+Vertices, edges, and faces all have tolerances. This seems redundant (why not one global tolerance?), but:
+- Imported models have varying precision
+- Operations can degrade precision locally
+- Different features need different accuracy
+
+**Lesson:** Local tolerances are harder but necessary.
+
+**3. Orientation as Separate Concept**
+`TopoDS_Shape` stores orientation separately from `TShape`. This allows:
+- Same edge used forward in one face, reversed in another
+- Efficient instancing (share geometry, vary orientation)
+
+**Lesson:** Orientation should be composable, not baked into geometry.
+
+### Summary: What to Avoid vs. What to Keep
+
+**AVOID:**
+
+| Pattern | Why |
+|---------|-----|
+| Multiple parallel type hierarchies | `gp` + `Geom` + `Geom2d` confusion |
+| Deep inheritance for topology | `TopoDS` → `TShape` → `BRep_TShape` |
+| Custom memory management | Handle system, MMGT_OPT |
+| Abbreviated names | `Pln`, `Circ`, `Trsf` |
+| Static helper classes | `BRep_Tool` with 50+ methods |
+| Dynamic casting | `Handle::DownCast` everywhere |
+
+**KEEP (for good reasons):**
+
+| Pattern | Why |
+|---------|-----|
+| Geometry separate from topology | Different concerns, different lifecycles |
+| Multiple curve representations | 3D curve ≠ UV curve ≠ polygon |
+| Local tolerances | Real models have varying precision |
+| Orientation as composable | Enables efficient sharing |
+
+---
+
 ## Key Algorithmic Challenges
 
 ### Surface-Surface Intersection (SSI) — "The Dragon"
