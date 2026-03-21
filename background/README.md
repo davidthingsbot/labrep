@@ -12,11 +12,11 @@ This folder contains deep dives into the concepts, algorithms, and prior art rel
 
 | Document | Topic | Status |
 |----------|-------|--------|
-| [brep-fundamentals.md](./brep-fundamentals.md) | BRep topology, geometry, data structures | 🚧 Stub |
-| [opencascade-architecture.md](./opencascade-architecture.md) | OCCT package structure, key classes | 🚧 Stub |
-| [nurbs-mathematics.md](./nurbs-mathematics.md) | B-splines, NURBS curves and surfaces | 🚧 Stub |
-| [surface-intersection.md](./surface-intersection.md) | SSI algorithms — the "dragon" | 🚧 Stub |
-| [boolean-operations.md](./boolean-operations.md) | How booleans use SSI | 🚧 Stub |
+| [brep-fundamentals.md](./brep-fundamentals.md) | BRep topology, geometry, data structures | ✅ Complete |
+| [opencascade-architecture.md](./opencascade-architecture.md) | OCCT package structure, key classes | ✅ Complete |
+| [nurbs-mathematics.md](./nurbs-mathematics.md) | B-splines, NURBS curves and surfaces | ✅ Complete |
+| [surface-intersection.md](./surface-intersection.md) | SSI algorithms — the "dragon" | ✅ Complete |
+| [boolean-operations.md](./boolean-operations.md) | How booleans use SSI | ✅ Complete |
 
 ## Document Structure
 
