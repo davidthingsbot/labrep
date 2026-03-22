@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
+import type { Mesh } from '@labrep/generation';
 
 vi.mock('@react-three/fiber', () => ({
   Canvas: ({ children, ...props }: any) => (
@@ -29,5 +30,21 @@ describe('Viewer', () => {
     const container = screen.getByTestId('viewer-container');
     expect(container.className).toContain('w-full');
     expect(container.className).toContain('h-full');
+  });
+
+  it('renders default scene when no mesh provided', () => {
+    render(<Viewer />);
+    expect(screen.getByTestId('three-canvas')).toBeInTheDocument();
+  });
+
+  it('accepts a mesh prop', () => {
+    const mesh: Mesh = {
+      vertices: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+    // Should render without crashing
+    render(<Viewer mesh={mesh} />);
+    expect(screen.getByTestId('three-canvas')).toBeInTheDocument();
   });
 });

@@ -1,19 +1,25 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Header } from '@/components/Header';
 import { Editor } from '@/components/Editor';
 import { Viewer } from '@/components/Viewer';
 import { LibraryBrowser } from '@/components/LibraryBrowser';
+import { makeBox } from '@labrep/generation';
 
 const DEFAULT_CODE = `// labrep - BRep geometry
-// import { primitives } from 'labrep';
-//
-// const box = primitives.makeBox(10, 20, 30);
+import { makeBox } from '@labrep/generation';
+
+const box = makeBox(1, 1, 1);
 `;
 
 export function AppLayout() {
   const [code, setCode] = useState(DEFAULT_CODE);
+
+  const mesh = useMemo(() => {
+    const result = makeBox(1, 1, 1);
+    return result.success ? result.result : undefined;
+  }, []);
 
   return (
     <div className="flex flex-col h-screen bg-gray-900 text-white">
@@ -23,7 +29,7 @@ export function AppLayout() {
           <Editor value={code} onChange={(v) => setCode(v ?? '')} />
         </div>
         <div className="w-1/2">
-          <Viewer />
+          <Viewer mesh={mesh} />
         </div>
       </div>
       <LibraryBrowser />

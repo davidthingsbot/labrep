@@ -13,6 +13,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      '@labrep/generation': path.resolve(__dirname, '../generation/src'),
     },
   },
 });

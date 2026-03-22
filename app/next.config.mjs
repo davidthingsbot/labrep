@@ -9,6 +9,7 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  transpilePackages: ['@labrep/generation'],
 };
 
 export default nextConfig;

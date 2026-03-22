@@ -18,9 +18,11 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@labrep/generation": ["../generation/src"],
+      "@labrep/generation/*": ["../generation/src/*"]
     }
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", "../generation/src/**/*.ts"],
   "exclude": ["node_modules"]
 }
