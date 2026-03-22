@@ -807,61 +807,25 @@ Boolean operations (union, subtract, intersect) seem simple conceptually but inv
 
 ## Implementation Phases
 
-### Phase 1: Mathematical Foundation
+Each phase has a dedicated design document with full details: OCCT references, data types, function signatures, testing approach, and viewer examples.
+
+### Phase 1: Mathematical Foundation ✅
 
 **Goal:** Basic math operations, fully tested.
 
-```
-Data Types:
-├── Point2D, Vector2D
-├── Point3D, Vector3D
-├── Transform2D, Transform3D
-├── Plane, Axis
-└── BoundingBox2D, BoundingBox3D
+**Design doc:** [`math-foundation.md`](math-foundation.md)
 
-Functions:
-├── Vector arithmetic (add, subtract, scale, dot, cross)
-├── Point operations (distance, midpoint, transform)
-├── Matrix operations (multiply, inverse, decompose)
-└── Plane/Axis construction and queries
-
-Tests:
-├── All operations with known values
-├── Edge cases (zero vectors, degenerate transforms)
-└── Numerical precision tests
-```
-
-**Exit Criteria:** Can create points, vectors, transforms; all operations pass tests.
+**Status:** Complete — Point2D/3D, Vector2D/3D, Transform3D, Axis, Plane, BoundingBox
 
 ---
 
-### Phase 2: 2D Curves
+### Phase 2: 2D Curves 🚧
 
 **Goal:** Line and arc geometry in 2D.
 
-```
-Data Types:
-├── Curve2D (interface)
-├── Line2D
-├── Arc2D
-├── Circle2D
-└── Wire2D
+**Design doc:** [`curves-2d.md`](curves-2d.md)
 
-Functions:
-├── Construction (from points, center+radius, etc.)
-├── Evaluation (point at parameter, tangent, length)
-├── Intersection (line-line, line-arc, arc-arc)
-├── Trim, reverse, transform
-└── Wire construction from curves
-
-Tests:
-├── Evaluation at known parameters
-├── Intersection with known solutions
-├── Wire closure detection
-└── Transform correctness
-```
-
-**Exit Criteria:** Can create and manipulate 2D curves; intersection works.
+**Status:** In progress — Line2D ✅, Circle2D ✅, Arc2D pending, Intersections pending, Wire2D pending
 
 ---
 

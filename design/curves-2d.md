@@ -374,6 +374,58 @@ generation/tests/geometry/
 
 ---
 
+## Viewer Examples
+
+Examples to add to the app demonstrating Phase 2 functionality:
+
+### curves-line
+**Visual:** A line segment with labeled start/end points, animated to show parameter evaluation (point traveling along line).
+**Code:**
+```typescript
+import { makeLine2D, evaluateLine2D } from '@labrep/generation';
+
+const start = point2d(0, 0);
+const end = point2d(3, 2);
+const line = makeLine2D(start, end);
+
+// Evaluate at parameter t (0 to length)
+const midpoint = evaluateLine2D(line.result, line.result.segmentLength / 2);
+```
+
+### curves-circle
+**Visual:** A circle with center marked, animated point traveling around the circumference.
+**Code:**
+```typescript
+import { makeCircle2D, evaluateCircle2D } from '@labrep/generation';
+
+const center = point2d(0, 0);
+const circle = makeCircle2D(center, 1);
+
+// Evaluate at angle (0 to 2π)
+const point = evaluateCircle2D(circle.result, Math.PI / 4);
+```
+
+### curves-arc
+**Visual:** An arc showing start angle, end angle, and center. Animated point traces the arc.
+**Code:**
+```typescript
+import { makeArc2D, evaluateArc2D } from '@labrep/generation';
+
+const arc = makeArc2D(center, radius, startAngle, endAngle);
+```
+
+### curves-intersection
+**Visual:** Two curves (line-circle or circle-circle) with intersection points highlighted.
+**Code:**
+```typescript
+import { intersectLine2DCircle2D } from '@labrep/generation';
+
+const intersections = intersectLine2DCircle2D(line, circle);
+// Returns array of { point, paramOnCurve1, paramOnCurve2 }
+```
+
+---
+
 ## Exit Criteria
 
 Phase 2 is complete when:

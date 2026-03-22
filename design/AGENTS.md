@@ -33,6 +33,27 @@ Phase 1 → Phase 2 → Phase 3 → ... → Phase 11
 2. Verify required data types exist
 3. Understand dependencies on prior work
 
+### Phase Design Documents
+
+Each phase must have a dedicated design document in `design/<phase-name>.md`:
+- `design/math-foundation.md` — Phase 1
+- `design/curves-2d.md` — Phase 2
+- etc.
+
+**Every phase design document must include:**
+1. Overview and goals
+2. OCCT references (classes, source files)
+3. Data types with TypeScript interfaces
+4. Functions with signatures
+5. Testing approach (table of test cases)
+6. **Viewer examples** — What examples will demonstrate this phase's functionality
+7. Exit criteria
+
+**Viewer examples are not an afterthought.** Plan them during the design phase:
+- What visual demonstration best shows the feature?
+- What code snippet will appear in the editor?
+- How will animation be used (if at all)?
+
 ### TDD Is Mandatory
 
 **For every function you implement:**
