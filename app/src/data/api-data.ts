@@ -26,7 +26,7 @@ export interface ApiEntry {
 }
 
 /** All module names. */
-export const API_MODULES = ['core', 'geometry', 'mesh', 'primitives'] as const;
+export const API_MODULES = ['core', 'geometry', 'io', 'mesh', 'primitives'] as const;
 
 /** All API entries, extracted from generation/ JSDoc. */
 export const apiEntries: ApiEntry[] = [
@@ -1191,6 +1191,195 @@ export const apiEntries: ApiEntry[] = [
     signature: 'lengthWire2D(wire: Wire2D): number',
     params: [{ name: 'wire', type: 'Wire2D', description: 'The wire' }],
     returns: 'Sum of all curve lengths',
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // I/O — STL
+  // ═══════════════════════════════════════════════════════
+  {
+    name: 'meshToStlAscii',
+    kind: 'function',
+    module: 'io',
+    description: 'Export a Mesh to ASCII STL format. Each triangle is written as an independent facet with a computed face normal.',
+    signature: 'meshToStlAscii(mesh: Mesh, name?: string): string',
+    params: [
+      { name: 'mesh', type: 'Mesh', description: 'The mesh to export' },
+      { name: 'name', type: 'string', description: 'Solid name (default: "labrep")' },
+    ],
+    returns: 'STL file content as a string',
+  },
+  {
+    name: 'meshToStlBinary',
+    kind: 'function',
+    module: 'io',
+    description: 'Export a Mesh to binary STL format. 80-byte header + uint32 triangle count + packed triangles.',
+    signature: 'meshToStlBinary(mesh: Mesh): ArrayBuffer',
+    params: [
+      { name: 'mesh', type: 'Mesh', description: 'The mesh to export' },
+    ],
+    returns: 'STL file content as an ArrayBuffer',
+  },
+  {
+    name: 'stlAsciiToMesh',
+    kind: 'function',
+    module: 'io',
+    description: 'Parse ASCII STL text into a Mesh. Vertices are de-duplicated by position and normals averaged.',
+    signature: 'stlAsciiToMesh(text: string): OperationResult<Mesh>',
+    params: [
+      { name: 'text', type: 'string', description: 'ASCII STL file content' },
+    ],
+    returns: 'Mesh or failure',
+  },
+  {
+    name: 'stlBinaryToMesh',
+    kind: 'function',
+    module: 'io',
+    description: 'Parse binary STL data into a Mesh. Vertices are de-duplicated by position and normals averaged.',
+    signature: 'stlBinaryToMesh(data: ArrayBuffer): OperationResult<Mesh>',
+    params: [
+      { name: 'data', type: 'ArrayBuffer', description: 'Binary STL file content' },
+    ],
+    returns: 'Mesh or failure',
+  },
+  {
+    name: 'stlToMesh',
+    kind: 'function',
+    module: 'io',
+    description: 'Import an STL file (ASCII or binary) into a Mesh. Auto-detects format from input type and content.',
+    signature: 'stlToMesh(data: string | ArrayBuffer): OperationResult<Mesh>',
+    params: [
+      { name: 'data', type: 'string | ArrayBuffer', description: 'STL file content (string for ASCII, ArrayBuffer for either)' },
+    ],
+    returns: 'Mesh or failure',
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // I/O — STEP
+  // ═══════════════════════════════════════════════════════
+  {
+    name: 'parseStep',
+    kind: 'function',
+    module: 'io',
+    description: 'Parse a STEP file string into a StepModel. Handles any valid ISO-10303-21 file.',
+    signature: 'parseStep(text: string): OperationResult<StepModel>',
+    params: [{ name: 'text', type: 'string', description: 'STEP file content' }],
+    returns: 'Parsed StepModel or failure',
+  },
+  {
+    name: 'writeStep',
+    kind: 'function',
+    module: 'io',
+    description: 'Write a StepModel to STEP file text (ISO 10303-21 format).',
+    signature: 'writeStep(model: StepModel): string',
+    params: [{ name: 'model', type: 'StepModel', description: 'The model to serialize' }],
+    returns: 'STEP file content as a string',
+  },
+  {
+    name: 'createStepModelBuilder',
+    kind: 'function',
+    module: 'io',
+    description: 'Create a builder for constructing a StepModel for export. Manages entity ID allocation.',
+    signature: 'createStepModelBuilder(): StepModelBuilder',
+    returns: 'A StepModelBuilder',
+  },
+  {
+    name: 'stepToPoint3D',
+    kind: 'function',
+    module: 'io',
+    description: 'Extract a Point3D from a CARTESIAN_POINT STEP entity.',
+    signature: 'stepToPoint3D(entity: StepEntity): OperationResult<Point3D>',
+    params: [{ name: 'entity', type: 'StepEntity', description: 'A CARTESIAN_POINT entity' }],
+    returns: 'Point3D or failure',
+  },
+  {
+    name: 'point3DToStep',
+    kind: 'function',
+    module: 'io',
+    description: 'Create a CARTESIAN_POINT STEP entity from a Point3D.',
+    signature: 'point3DToStep(point: Point3D, id: number): StepEntity',
+    params: [
+      { name: 'point', type: 'Point3D', description: 'The point' },
+      { name: 'id', type: 'number', description: 'Entity ID to assign' },
+    ],
+    returns: 'A StepEntity',
+  },
+  {
+    name: 'stepToVector3D',
+    kind: 'function',
+    module: 'io',
+    description: 'Extract a normalized Vector3D from a DIRECTION STEP entity.',
+    signature: 'stepToVector3D(entity: StepEntity): OperationResult<Vector3D>',
+    params: [{ name: 'entity', type: 'StepEntity', description: 'A DIRECTION entity' }],
+    returns: 'Vector3D or failure',
+  },
+  {
+    name: 'vector3DToStep',
+    kind: 'function',
+    module: 'io',
+    description: 'Create a DIRECTION STEP entity from a Vector3D (auto-normalized).',
+    signature: 'vector3DToStep(vector: Vector3D, id: number): StepEntity',
+    params: [
+      { name: 'vector', type: 'Vector3D', description: 'The vector (will be normalized)' },
+      { name: 'id', type: 'number', description: 'Entity ID to assign' },
+    ],
+    returns: 'A StepEntity',
+  },
+  {
+    name: 'stepToAxis',
+    kind: 'function',
+    module: 'io',
+    description: 'Extract an Axis from an AXIS1_PLACEMENT STEP entity by resolving its point and direction references.',
+    signature: 'stepToAxis(entity: StepEntity, model: StepModel): OperationResult<Axis>',
+    params: [
+      { name: 'entity', type: 'StepEntity', description: 'An AXIS1_PLACEMENT entity' },
+      { name: 'model', type: 'StepModel', description: 'The full model (to resolve references)' },
+    ],
+    returns: 'Axis or failure',
+  },
+  {
+    name: 'axisToStep',
+    kind: 'function',
+    module: 'io',
+    description: 'Create STEP entities for an Axis (AXIS1_PLACEMENT + CARTESIAN_POINT + DIRECTION).',
+    signature: 'axisToStep(ax: Axis, builder: StepModelBuilder): StepEntity[]',
+    params: [
+      { name: 'ax', type: 'Axis', description: 'The axis' },
+      { name: 'builder', type: 'StepModelBuilder', description: 'Model builder for ID allocation' },
+    ],
+    returns: 'Array of created entities',
+  },
+  {
+    name: 'stepToPlane',
+    kind: 'function',
+    module: 'io',
+    description: 'Extract a Plane from an AXIS2_PLACEMENT_3D STEP entity by resolving its point and direction references.',
+    signature: 'stepToPlane(entity: StepEntity, model: StepModel): OperationResult<Plane>',
+    params: [
+      { name: 'entity', type: 'StepEntity', description: 'An AXIS2_PLACEMENT_3D entity' },
+      { name: 'model', type: 'StepModel', description: 'The full model (to resolve references)' },
+    ],
+    returns: 'Plane or failure',
+  },
+  {
+    name: 'planeToStep',
+    kind: 'function',
+    module: 'io',
+    description: 'Create STEP entities for a Plane (AXIS2_PLACEMENT_3D + CARTESIAN_POINT + 2 DIRECTIONs).',
+    signature: 'planeToStep(pl: Plane, builder: StepModelBuilder): StepEntity[]',
+    params: [
+      { name: 'pl', type: 'Plane', description: 'The plane' },
+      { name: 'builder', type: 'StepModelBuilder', description: 'Model builder for ID allocation' },
+    ],
+    returns: 'Array of created entities',
+  },
+  {
+    name: 'extractFoundationTypes',
+    kind: 'function',
+    module: 'io',
+    description: 'Extract all Point3D, Vector3D, Axis, and Plane objects from a parsed STEP model.',
+    signature: 'extractFoundationTypes(model: StepModel): { points, directions, axes, planes }',
+    params: [{ name: 'model', type: 'StepModel', description: 'A parsed StepModel' }],
+    returns: 'Maps of extracted objects keyed by entity ID',
   },
 
   // ═══════════════════════════════════════════════════════

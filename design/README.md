@@ -829,7 +829,29 @@ Each phase has a dedicated design document with full details: OCCT references, d
 
 ---
 
-### Phase 3: Sketch System (No Constraints)
+### Phase 3: STL Import/Export ✅ *(NEW — I/O-first refactor)*
+
+**Goal:** Read and write STL files from our Mesh type. Enables mesh-level round-trip testing.
+
+**Design doc:** [`stl-io.md`](stl-io.md)
+
+**Status:** Complete — ASCII/binary writer + reader, auto-detect, round-trip tests (46 tests)
+
+---
+
+### Phase 4: STEP Import/Export Foundation ✅ *(moved up from Phase 6)*
+
+**Goal:** STEP parser/writer infrastructure + foundation-type converters (Point3D, Vector3D, Axis, Plane). The parser and writer handle all entity types syntactically; semantic conversion starts with foundation types and grows incrementally with each phase.
+
+**Design doc:** [`step-io.md`](step-io.md)
+
+**Rationale:** See [`io-first-refactor.md`](io-first-refactor.md) — I/O comes early so every subsequent phase can be round-trip tested through STEP and STL.
+
+**Status:** Complete — lexer, parser, writer, model builder, foundation converters, round-trip tests (48 tests)
+
+---
+
+### Phase 5: Sketch System (No Constraints) *(was Phase 3)*
 
 **Goal:** Create sketches with elements, find closed profiles.
 
@@ -856,7 +878,7 @@ Tests:
 
 ---
 
-### Phase 4: Basic 3D Geometry
+### Phase 6: Basic 3D Geometry + Extend STEP *(was Phase 4)*
 
 **Goal:** 3D curves, planar surfaces, basic topology.
 
@@ -885,7 +907,7 @@ Tests:
 
 ---
 
-### Phase 5: Extrude Operation
+### Phase 7: Extrude + Extend STEP *(was Phase 5)*
 
 **Goal:** Turn 2D profile into 3D solid via extrusion.
 
@@ -913,34 +935,7 @@ Tests:
 
 ---
 
-### Phase 6: STEP File I/O
-
-**Goal:** Read and write STEP files for interoperability.
-
-```
-Data Types:
-├── StepReader
-├── StepWriter
-└── StepEntity (internal AST)
-
-Functions:
-├── Parse STEP text → entity tree
-├── Convert entities → labrep geometry
-├── Convert labrep geometry → entities
-├── Write entities → STEP text
-
-Tests:
-├── Round-trip: write → read → compare
-├── Read known STEP files
-├── Handle STEP from other CAD systems
-└── Error handling for malformed files
-```
-
-**Exit Criteria:** Can save work, load external geometry.
-
----
-
-### Phase 7: Sketch on Face
+### Phase 8: Sketch on Face *(was Phase 7)*
 
 **Goal:** Create sketches on faces of existing solids.
 
@@ -961,7 +956,7 @@ Tests:
 
 ---
 
-### Phase 8: Boolean Operations
+### Phase 9: Boolean Operations + Extend STEP *(was Phase 8)*
 
 **Goal:** Combine solids (union, subtract, intersect).
 
@@ -988,7 +983,7 @@ Tests:
 
 ---
 
-### Phase 9: Revolve Operation
+### Phase 10: Revolve + Extend STEP *(was Phase 9)*
 
 **Goal:** Create solids by revolving profiles.
 
@@ -1013,7 +1008,7 @@ Tests:
 
 ---
 
-### Phase 10: Constraint Solver
+### Phase 11: Constraint Solver *(was Phase 10)*
 
 **Goal:** Add constraints to sketches, solve for geometry.
 
@@ -1040,7 +1035,7 @@ Tests:
 
 ---
 
-### Phase 11: Assemblies
+### Phase 12: Assemblies + Extend STEP *(was Phase 11)*
 
 **Goal:** Multiple parts with joints.
 
@@ -1171,6 +1166,9 @@ describe('extrude', () => {
 | [step-api-alignment.md](./step-api-alignment.md) | STEP → API mapping, design decisions | ✅ Complete |
 | [app-examples-animation.md](./app-examples-animation.md) | Viewer example system & animation | ✅ Complete |
 | [face-orientation-analysis.md](./face-orientation-analysis.md) | OCCT winding conventions | ✅ Complete |
+| [io-first-refactor.md](./io-first-refactor.md) | I/O-first phase reordering rationale | ✅ Complete |
+| [stl-io.md](./stl-io.md) | Phase 3: STL import/export | ✅ Complete |
+| [step-io.md](./step-io.md) | Phase 4: STEP parser/writer + foundation converters | ✅ Complete |
 
 ## Adding a Design Document
 

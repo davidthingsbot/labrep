@@ -49,7 +49,9 @@ labrep/
 
 ✅ **Phase 2: 2D Curves** — Complete (Line2D, Circle2D, Arc2D, Intersections, Wire2D)
 
-🔲 **Phase 3: Sketch System** — Next up
+✅ **Phase 3: STL Import/Export** — Complete (ASCII/binary writer + reader, round-trip tested)
+
+✅ **Phase 4: STEP Import/Export** — Complete (parser, writer, foundation converters, round-trip tested)
 
 See [`design/README.md`](design/README.md) for full phase breakdown and design docs.
 

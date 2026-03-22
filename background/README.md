@@ -20,6 +20,8 @@ This folder contains deep dives into the concepts, algorithms, and prior art rel
 | [alternative-kernels.md](./alternative-kernels.md) | Attempts to recreate OCCT, AI-driven projects | ✅ Complete |
 | [design-notes.md](./design-notes.md) | Subsystems, data types, gotchas from other projects | ✅ Complete |
 | [step-format.md](./step-format.md) | STEP file format, entities, API alignment | ✅ Complete |
+| [stl-format.md](./stl-format.md) | STL file format, ASCII/binary, export from Mesh | ✅ Complete |
+| [3mf-format.md](./3mf-format.md) | 3MF file format, ZIP+XML packaging, rich mesh export | ✅ Complete |
 
 ## Document Structure
 

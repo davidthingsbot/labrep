@@ -15,6 +15,8 @@ import { Math2DExample } from './Math2DExample';
 import { TransformsExample } from './TransformsExample';
 import { PlanesAxesExample } from './PlanesAxesExample';
 import { BoundingBoxExample } from './BoundingBoxExample';
+import { StlRoundtripExample } from './StlRoundtripExample';
+import { StepRoundtripExample } from './StepRoundtripExample';
 
 /** All registered examples. */
 export const examples: Example[] = [
@@ -315,6 +317,74 @@ size(box);                          // (2, 1.5, 1)
 contains(box, point3d(0, 0, 0));    // true
 contains(box, point3d(5, 5, 5));    // false
 intersects(box, b);                 // true/false
+`,
+  },
+  {
+    id: 'stl-roundtrip',
+    name: 'STL Round-Trip',
+    description: 'Export to STL, import back, compare original vs imported',
+    component: StlRoundtripExample,
+    code: `// STL Round-Trip — export and re-import
+import {
+  makeBox, makeSphere, makeCylinder,
+  meshToStlAscii, meshToStlBinary, stlToMesh,
+  meshVertexCount, meshTriangleCount, validateMesh,
+} from '@labrep/generation';
+
+// Create a mesh
+const box = makeBox(1, 1, 1).result;
+
+// Export to ASCII STL
+const asciiStl = meshToStlAscii(box, 'mybox');
+// asciiStl is a string: "solid mybox\\n  facet normal..."
+
+// Export to binary STL (smaller, faster)
+const binaryStl = meshToStlBinary(box);
+// binaryStl is an ArrayBuffer
+
+// Import back (auto-detects format)
+const imported = stlToMesh(asciiStl);
+// or: stlToMesh(binaryStl)
+
+if (imported.success) {
+  const m = imported.result;
+  meshTriangleCount(m);  // same as original
+  meshVertexCount(m);    // de-duplicated vertices
+  validateMesh(m);       // check mesh validity
+}
+`,
+  },
+  {
+    id: 'step-roundtrip',
+    name: 'STEP Round-Trip',
+    description: 'Export foundation types to STEP, parse back, compare',
+    component: StepRoundtripExample,
+    code: `// STEP Round-Trip — foundation types
+import {
+  point3d, XY_PLANE, X_AXIS,
+  createStepModelBuilder, point3DToStep,
+  vector3DToStep, planeToStep,
+  writeStep, parseStep, extractFoundationTypes,
+} from '@labrep/generation';
+
+// Build a STEP model
+const builder = createStepModelBuilder();
+builder.addEntity(point3DToStep(point3d(1, 2, 3), builder.nextId()));
+vector3DToStep(X_AXIS, builder.nextId());
+planeToStep(XY_PLANE, builder);
+
+// Export to STEP text
+const stepText = writeStep(builder.build());
+// stepText is ISO-10303-21 formatted text
+
+// Parse it back
+const parsed = parseStep(stepText);
+
+// Extract typed objects from the parsed model
+const types = extractFoundationTypes(parsed.result);
+// types.points — Map<number, Point3D>
+// types.directions — Map<number, Vector3D>
+// types.planes — Map<number, Plane>
 `,
   },
   {

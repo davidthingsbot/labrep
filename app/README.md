@@ -7,16 +7,21 @@ Interactive viewer application for labrep.
 ## Overview
 
 A web application with:
-- **Editor** — Code editing panel for writing BRep definitions
-- **Viewer** — Three.js 3D viewport for visualizing results
-- **Library Browser** — Browse examples and library reference
+- **Editor** — Monaco code editor showing example API usage
+- **Viewer** — Three.js 3D viewport with orbit controls and billboard text labels
+- **Library Browser** — Resizable bottom panel with three tabs:
+  - **Examples** — 17 interactive examples covering all library functions
+  - **API Reference** — Browsable documentation for all exports (filterable by module)
+  - **OCCT Reference** — (coming soon)
 
 ## Stack
 
 - **Next.js** — React framework
-- **Vite** — Build tool (via Next.js)
 - **React** — UI components
-- **Three.js** — 3D rendering
+- **Three.js** / **@react-three/fiber** / **@react-three/drei** — 3D rendering
+- **Monaco Editor** — Code editing
+- **Tailwind CSS** — Styling
+- **Vitest** — Testing
 - **TypeScript** — Type safety
 
 ## Design Principles
@@ -45,7 +50,13 @@ A web application with:
 
 ## Status
 
-🚧 **In development** — Core viewer and examples working.
+✅ **Viewer, examples, and API reference functional.**
+
+- 17 examples covering math foundation, 2D curves, transforms, planes, bounding boxes, primitives, STL round-trip, and STEP round-trip
+- API reference with 80+ entries across 5 modules (core, geometry, io, mesh, primitives)
+- Resizable bottom panel with drag handle
+- Billboard text labels (always face camera)
+- 99 tests passing
 
 ## Getting Started
 
@@ -63,13 +74,16 @@ npm run test    # Run tests
 app/
 ├── src/
 │   ├── components/
-│   │   ├── Editor/           # Code editor panel
-│   │   ├── Viewer/           # Three.js 3D viewport
-│   │   └── LibraryBrowser/   # Browse examples/library
-│   ├── hooks/                # React hooks
-│   ├── lib/                  # Utilities, labrep integration
-│   └── pages/                # Next.js pages
-├── tests/                    # Component tests
+│   │   ├── Editor/           # Monaco code editor panel
+│   │   ├── Header/           # App header with toggles
+│   │   ├── Layout/           # AppLayout (root composition)
+│   │   ├── Viewer/           # Three.js viewport, SceneObjects, ExampleRenderer
+│   │   └── LibraryBrowser/   # Tabs: Examples, API Reference, OCCT Reference
+│   ├── data/                 # Static API reference data
+│   ├── examples/             # 17 interactive example components + registry
+│   ├── hooks/                # useAnimationLoop, useResizeHandle
+│   ├── lib/                  # mesh-to-three conversion utility
+│   └── app/                  # Next.js app router (layout, page, globals.css)
 ├── public/                   # Static assets
 └── package.json
 ```
@@ -79,4 +93,4 @@ app/
 1. **Similar to OpenSCAD** — Familiar workflow for CAD users
 2. **Real-time preview** — See changes as you type
 3. **Library integration** — Easy access to examples and docs
-4. **Export** — STL, STEP (when supported)
+4. **Export** — STL and STEP I/O demonstrated in examples
