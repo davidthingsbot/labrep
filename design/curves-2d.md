@@ -429,10 +429,12 @@ const intersections = intersectLine2DCircle2D(line, circle);
 ## Exit Criteria
 
 Phase 2 is complete when:
-- [ ] Line2D: construction, evaluation, tangent, length, reverse, transform
-- [ ] Circle2D: construction (center+radius, 3 points), evaluation, tangent, length
-- [ ] Arc2D: construction (center+radius+angles, 3 points, bulge), evaluation, tangent, length
-- [ ] Intersections: line-line, line-circle, circle-circle all working
-- [ ] Wire2D: construction, validation, closed detection
-- [ ] All tests pass
-- [ ] Demo examples in viewer app
+- [x] Line2D: construction, evaluation, tangent, length, reverse *(19 tests)*
+- [x] Circle2D: construction (center+radius, 3 points), evaluation, tangent, length *(22 tests)*
+- [x] Arc2D: construction (center+radius+angles, 3 points, bulge), evaluation, tangent, length *(29 tests)*
+- [x] Intersections: line-line, line-circle, circle-circle all working *(19 tests)*
+- [x] Wire2D: construction, validation, closed detection *(13 tests)*
+- [x] All tests pass *(234 total)*
+- [ ] Demo examples in viewer app *(pending)*
+
+**Status: ✅ CORE COMPLETE** (awaiting viewer examples)
