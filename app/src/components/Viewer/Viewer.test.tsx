@@ -10,6 +10,10 @@ vi.mock('@react-three/fiber', () => ({
 
 vi.mock('@react-three/drei', () => ({
   OrbitControls: () => null,
+  Line: (props: any) => <div data-testid="drei-line" {...props} />,
+  Sphere: (props: any) => <div data-testid="drei-sphere" {...props} />,
+  Cone: (props: any) => <div data-testid="drei-cone" {...props} />,
+  Text: ({ children, ...props }: any) => <div data-testid="drei-text" {...props}>{children}</div>,
 }));
 
 import { Viewer } from './Viewer';

@@ -25,7 +25,43 @@ No exceptions. No "I'll add tests later." The test comes first.
 - Strict mode enabled
 - No `any` types (except when truly unavoidable, with comment explaining why)
 - Meaningful variable names
-- JSDoc comments for all public APIs
+
+### JSDoc — Mandatory
+
+**Every exported function, interface, type, and constant MUST have a JSDoc comment.**
+No exceptions. This is how we generate API documentation and provide IDE tooltips.
+
+```typescript
+/**
+ * Compute the Euclidean distance between two points.
+ *
+ * @param a - First point
+ * @param b - Second point
+ * @returns The distance between a and b, always >= 0
+ */
+export function distance(a: Point3D, b: Point3D): number {
+
+/**
+ * A point in 3D Euclidean space.
+ *
+ * Immutable — all operations return new points.
+ */
+export interface Point3D {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+/** Default tolerance for floating-point comparisons. */
+export const TOLERANCE = 1e-7;
+```
+
+Rules:
+- First line: brief description of what it does (not how)
+- `@param` for every parameter
+- `@returns` describing the return value
+- Note edge cases, tolerances, or coordinate conventions where relevant
+- For interfaces: describe what the type represents and any invariants
 
 ### Naming
 

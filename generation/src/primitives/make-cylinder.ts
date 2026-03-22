@@ -3,9 +3,17 @@ import { Mesh, OperationResult, createMesh, success, failure } from '../mesh/mes
 /**
  * Create a cylinder mesh centered at the origin, aligned along the Y axis.
  *
- * The cylinder extends from -height/2 to +height/2. It consists of three
- * parts: the side barrel, a top cap, and a bottom cap. Vertices are
- * duplicated at the seam edges so that each part has its own normals.
+ * The cylinder extends from `-height/2` to `+height/2`. It consists of
+ * three parts: the side barrel, a top cap, and a bottom cap. Vertices
+ * are duplicated at seam edges so that each part has its own normals
+ * (smooth around the barrel, flat on the caps).
+ *
+ * @param radius - Radius of the circular cross-section (must be positive).
+ * @param height - Total height along the Y axis (must be positive).
+ * @param options - Optional tessellation controls.
+ * @param options.segments - Number of circumferential divisions (default 32).
+ * @returns A successful result containing the cylinder mesh, or a failure
+ *          if `radius` or `height` is non-positive.
  */
 export function makeCylinder(
   radius: number,

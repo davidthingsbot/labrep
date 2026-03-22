@@ -9,9 +9,19 @@ import {
 /**
  * Generate a UV sphere mesh centered at the origin.
  *
- * @param radius   Sphere radius (must be positive).
- * @param options  segments = longitudinal divisions (default 32),
- *                 rings    = latitudinal divisions  (default 16).
+ * The sphere is tessellated using a latitude/longitude grid. The south
+ * pole sits at `(0, -radius, 0)` and the north pole at `(0, radius, 0)`.
+ * Normals point outward and are smooth (per-vertex, not per-face).
+ *
+ * Higher `segments` and `rings` values produce a smoother sphere at the
+ * cost of more geometry.
+ *
+ * @param radius - Sphere radius (must be positive).
+ * @param options - Optional tessellation controls.
+ * @param options.segments - Number of longitudinal divisions (default 32).
+ * @param options.rings - Number of latitudinal divisions (default 16).
+ * @returns A successful result containing the sphere mesh, or a failure
+ *          if `radius` is non-positive.
  */
 export function makeSphere(
   radius: number,

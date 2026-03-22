@@ -12,6 +12,10 @@ Our TypeScript BRep implementation.
 
 **On-Demand** — When stuck, reference OCCT, understand the algorithm, reimplement cleanly.
 
+**JSDoc on everything** — Every exported function, interface, type, and constant
+must have a JSDoc comment with `@param` and `@returns` tags. This is mandatory,
+not optional. It powers IDE tooltips and future API documentation.
+
 ## Structure
 
 ```

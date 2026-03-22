@@ -19,12 +19,25 @@ function mat(e: Float64Array): Transform3D {
   return { elements: e };
 }
 
+/**
+ * Create the 4x4 identity transform (no rotation, translation, or scale).
+ *
+ * @returns The identity Transform3D
+ */
 export function identity(): Transform3D {
   const e = new Float64Array(16);
   e[0] = 1; e[5] = 1; e[10] = 1; e[15] = 1;
   return mat(e);
 }
 
+/**
+ * Create a translation transform.
+ *
+ * @param dx - Translation along the X axis
+ * @param dy - Translation along the Y axis
+ * @param dz - Translation along the Z axis
+ * @returns A Transform3D that translates by (dx, dy, dz)
+ */
 export function translation(dx: number, dy: number, dz: number): Transform3D {
   const e = new Float64Array(16);
   e[0] = 1; e[5] = 1; e[10] = 1; e[15] = 1;
@@ -32,6 +45,12 @@ export function translation(dx: number, dy: number, dz: number): Transform3D {
   return mat(e);
 }
 
+/**
+ * Create a rotation transform about the X axis.
+ *
+ * @param angle - Rotation angle in radians (right-hand rule)
+ * @returns A Transform3D that rotates around the X axis
+ */
 export function rotationX(angle: number): Transform3D {
   const c = Math.cos(angle);
   const s = Math.sin(angle);
@@ -43,6 +62,12 @@ export function rotationX(angle: number): Transform3D {
   return mat(e);
 }
 
+/**
+ * Create a rotation transform about the Y axis.
+ *
+ * @param angle - Rotation angle in radians (right-hand rule)
+ * @returns A Transform3D that rotates around the Y axis
+ */
 export function rotationY(angle: number): Transform3D {
   const c = Math.cos(angle);
   const s = Math.sin(angle);
@@ -54,6 +79,12 @@ export function rotationY(angle: number): Transform3D {
   return mat(e);
 }
 
+/**
+ * Create a rotation transform about the Z axis.
+ *
+ * @param angle - Rotation angle in radians (right-hand rule)
+ * @returns A Transform3D that rotates around the Z axis
+ */
 export function rotationZ(angle: number): Transform3D {
   const c = Math.cos(angle);
   const s = Math.sin(angle);
@@ -65,6 +96,14 @@ export function rotationZ(angle: number): Transform3D {
   return mat(e);
 }
 
+/**
+ * Create a non-uniform scaling transform.
+ *
+ * @param sx - Scale factor along the X axis
+ * @param sy - Scale factor along the Y axis
+ * @param sz - Scale factor along the Z axis
+ * @returns A Transform3D that scales by (sx, sy, sz)
+ */
 export function scaling(sx: number, sy: number, sz: number): Transform3D {
   const e = new Float64Array(16);
   e[0] = sx; e[5] = sy; e[10] = sz; e[15] = 1;
@@ -73,6 +112,10 @@ export function scaling(sx: number, sy: number, sz: number): Transform3D {
 
 /**
  * Compose two transforms: result = a * b (apply b first, then a).
+ *
+ * @param a - The outer (second-applied) transform
+ * @param b - The inner (first-applied) transform
+ * @returns A new Transform3D equivalent to applying b then a
  */
 export function compose(a: Transform3D, b: Transform3D): Transform3D {
   const ae = a.elements;
@@ -93,7 +136,11 @@ export function compose(a: Transform3D, b: Transform3D): Transform3D {
 }
 
 /**
- * Compute inverse of a 4x4 matrix using cofactor expansion.
+ * Compute the inverse of a 4x4 transform using cofactor expansion.
+ *
+ * @param t - The transform to invert
+ * @returns The inverse Transform3D
+ * @throws Error if the matrix determinant is near zero (not invertible)
  */
 export function inverse(t: Transform3D): Transform3D {
   const m = t.elements;
@@ -204,7 +251,11 @@ export function inverse(t: Transform3D): Transform3D {
 }
 
 /**
- * Transform a point (affected by translation).
+ * Transform a point by applying the full 4x4 matrix, including translation.
+ *
+ * @param t - The transform to apply
+ * @param p - The point to transform
+ * @returns The transformed point
  */
 export function transformPoint(t: Transform3D, p: Point3D): Point3D {
   const e = t.elements;
@@ -216,7 +267,12 @@ export function transformPoint(t: Transform3D, p: Point3D): Point3D {
 }
 
 /**
- * Transform a vector (NOT affected by translation).
+ * Transform a vector by applying only the rotational/scale part of the matrix
+ * (translation is ignored).
+ *
+ * @param t - The transform to apply
+ * @param v - The vector to transform
+ * @returns The transformed vector
  */
 export function transformVector(t: Transform3D, v: Vector3D): Vector3D {
   const e = t.elements;

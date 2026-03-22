@@ -1,10 +1,17 @@
 import { Mesh, OperationResult, createMesh, success, failure } from '../mesh/mesh';
 
 /**
- * Create a box mesh centered at the origin.
- * @param width  extent along X
- * @param height extent along Y
- * @param depth  extent along Z
+ * Create an axis-aligned box mesh centered at the origin.
+ *
+ * The box extends from `-width/2` to `+width/2` along X, and likewise
+ * for Y (height) and Z (depth). Each face has its own flat-shaded normals
+ * and counter-clockwise winding when viewed from outside.
+ *
+ * @param width - Extent along the X axis (must be positive).
+ * @param height - Extent along the Y axis (must be positive).
+ * @param depth - Extent along the Z axis (must be positive).
+ * @returns A successful result containing a 24-vertex, 12-triangle mesh,
+ *          or a failure if any dimension is non-positive.
  */
 export function makeBox(
   width: number,
