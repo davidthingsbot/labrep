@@ -1201,6 +1201,7 @@ describe('extrude', () => {
 | Document | Topic | Status |
 |----------|-------|--------|
 | (This README) | Overview, data types, phases | ✅ Complete |
+| [step-api-alignment.md](./step-api-alignment.md) | STEP → API mapping, design decisions | ✅ Complete |
 
 ## Adding a Design Document
 

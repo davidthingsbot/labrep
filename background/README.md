@@ -19,6 +19,7 @@ This folder contains deep dives into the concepts, algorithms, and prior art rel
 | [boolean-operations.md](./boolean-operations.md) | How booleans use SSI | ✅ Complete |
 | [alternative-kernels.md](./alternative-kernels.md) | Attempts to recreate OCCT, AI-driven projects | ✅ Complete |
 | [design-notes.md](./design-notes.md) | Subsystems, data types, gotchas from other projects | ✅ Complete |
+| [step-format.md](./step-format.md) | STEP file format, entities, API alignment | ✅ Complete |
 
 ## Document Structure
 
