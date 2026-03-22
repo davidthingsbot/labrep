@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ExampleSelector } from './ExampleSelector';
+import { ApiReference } from './ApiReference';
 
 const TABS = ['Examples', 'API Reference', 'OCCT Reference'] as const;
 
@@ -12,9 +13,11 @@ interface LibraryBrowserProps {
   onExampleSelect?: (id: string) => void;
   /** Controlled visibility - hides entire component when false */
   visible?: boolean;
+  /** Panel height in pixels (controlled by resize handle) */
+  height?: number;
 }
 
-export function LibraryBrowser({ selectedExampleId, onExampleSelect, visible = true }: LibraryBrowserProps) {
+export function LibraryBrowser({ selectedExampleId, onExampleSelect, visible = true, height }: LibraryBrowserProps) {
   const [activeTab, setActiveTab] = useState<string>(TABS[0]);
 
   if (!visible) {
@@ -22,11 +25,14 @@ export function LibraryBrowser({ selectedExampleId, onExampleSelect, visible = t
   }
 
   return (
-    <div 
-      className="border-t border-gray-700 bg-gray-800"
-      style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+    <div
+      className="flex flex-col bg-gray-800 overflow-hidden"
+      style={{
+        height: height ? `${height}px` : undefined,
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+      }}
     >
-      <div className="flex items-center justify-between px-4 py-1">
+      <div className="flex items-center justify-between px-4 py-1 shrink-0">
         <div className="flex gap-1">
           {TABS.map((tab) => (
             <button
@@ -45,7 +51,7 @@ export function LibraryBrowser({ selectedExampleId, onExampleSelect, visible = t
       </div>
       <div
         data-testid="library-content"
-        className="px-4 py-2 text-sm text-gray-400"
+        className="px-4 py-2 text-sm text-gray-400 flex-1 overflow-y-auto min-h-0"
       >
         {activeTab === 'Examples' && (
           selectedExampleId && onExampleSelect ? (
@@ -54,7 +60,7 @@ export function LibraryBrowser({ selectedExampleId, onExampleSelect, visible = t
             <p>No examples configured.</p>
           )
         )}
-        {activeTab === 'API Reference' && <p>Coming soon.</p>}
+        {activeTab === 'API Reference' && <ApiReference />}
         {activeTab === 'OCCT Reference' && <p>Coming soon.</p>}
       </div>
     </div>

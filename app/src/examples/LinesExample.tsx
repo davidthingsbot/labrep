@@ -1,8 +1,8 @@
 'use client';
 
-import { Text } from '@react-three/drei';
+
 import { point3d } from '@labrep/generation';
-import { LineViz } from '@/components/Viewer/SceneObjects';
+import { LineViz , BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
 
 /** Example demonstrating line segment visualization. */
@@ -16,9 +16,9 @@ export function LinesExample({ animationAngle }: ExampleProps) {
   
   return (
     <group>
-      <Text position={[0, 3, 0]} fontSize={0.4} color="white">
+      <BillboardText position={[0, 3, 0]} fontSize={0.4} color="white">
         Lines
-      </Text>
+      </BillboardText>
       {/* Triangle */}
       <LineViz
         start={point3d(0, 0, 0)}

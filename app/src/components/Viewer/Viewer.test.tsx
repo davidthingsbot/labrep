@@ -15,6 +15,7 @@ vi.mock('@react-three/drei', () => ({
   Sphere: (props: any) => <div data-testid="drei-sphere" {...props} />,
   Cone: (props: any) => <div data-testid="drei-cone" {...props} />,
   Text: ({ children, ...props }: any) => <div data-testid="drei-text" {...props}>{children}</div>,
+  Billboard: ({ children, ...props }: any) => <div data-testid="drei-billboard" {...props}>{children}</div>,
 }));
 
 vi.mock('@/examples/registry', () => ({

@@ -11,6 +11,15 @@ describe('example registry', () => {
       'primitives-sphere',
       'primitives-cylinder',
       'primitives-all',
+      'math-2d',
+      'transforms',
+      'planes-axes',
+      'bounding-boxes',
+      'curves-line2d',
+      'curves-circle2d',
+      'curves-arc2d',
+      'curves-intersection',
+      'curves-wire2d',
     ];
     
     const actualIds = examples.map(e => e.id);

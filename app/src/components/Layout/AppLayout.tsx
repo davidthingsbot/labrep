@@ -6,6 +6,7 @@ import { Editor } from '@/components/Editor';
 import { Viewer } from '@/components/Viewer';
 import { LibraryBrowser } from '@/components/LibraryBrowser';
 import { getExampleById } from '@/examples/registry';
+import { useResizeHandle } from '@/hooks/useResizeHandle';
 
 /** Root layout composing the Header, Editor, Viewer, and LibraryBrowser into a split-pane workspace. */
 export function AppLayout() {
@@ -14,6 +15,14 @@ export function AppLayout() {
   const [libraryVisible, setLibraryVisible] = useState(true);
   const [editorVisible, setEditorVisible] = useState(true);
   const [animationEnabled, setAnimationEnabled] = useState(true);
+  const [panelHeight, setPanelHeight] = useState(160);
+
+  const { handleProps } = useResizeHandle({
+    height: panelHeight,
+    onHeightChange: setPanelHeight,
+    minHeight: 80,
+    maxHeight: typeof window !== 'undefined' ? window.innerHeight - 60 : 600,
+  });
 
   const handleExampleSelect = useCallback((id: string) => {
     setSelectedExampleId(id);
@@ -49,10 +58,20 @@ export function AppLayout() {
           </div>
         )}
       </div>
-      <LibraryBrowser 
+      {libraryVisible && (
+        <div
+          data-testid="resize-handle"
+          {...handleProps}
+          className="h-1.5 bg-gray-800 border-t border-gray-700 cursor-ns-resize flex items-center justify-center hover:bg-gray-700 active:bg-gray-600 transition-colors"
+        >
+          <div className="w-8 h-0.5 rounded-full bg-gray-500" />
+        </div>
+      )}
+      <LibraryBrowser
         visible={libraryVisible}
         selectedExampleId={selectedExampleId}
         onExampleSelect={handleExampleSelect}
+        height={panelHeight}
       />
     </div>
   );

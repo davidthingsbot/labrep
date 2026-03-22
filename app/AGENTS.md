@@ -98,6 +98,20 @@ describe('Editor', () => {
 });
 ```
 
+## Example Coverage Principle
+
+**Every exported function should be demonstrated in at least one example.**
+
+Examples are not just object showcases — they should show functions in action. When building or updating examples:
+
+1. **Audit the API surface** — Check which exported functions from `generation/` are not yet visualized
+2. **Group related functions** — It's fine to demonstrate multiple functions in one example (e.g., `tangentCircle2D` and `intersectLine2DCircle2D` can both appear in the Circle2D example)
+3. **Show inputs and outputs visually** — If a function takes a curve and returns a point, show both the curve and the resulting point
+4. **Use animation to show variation** — Animate parameters to show how outputs change (e.g., tangent vector rotating as parameter sweeps around a circle)
+5. **Update the code snippet** — The editor code should reference all demonstrated functions so users can see the API usage
+
+---
+
 ## Integration with labrep
 
 The app imports from `generation/`:

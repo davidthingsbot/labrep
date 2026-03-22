@@ -1,9 +1,9 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Text } from '@react-three/drei';
+
 import { makeSphere } from '@labrep/generation';
-import { MeshViz } from '@/components/Viewer/SceneObjects';
+import { MeshViz , BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
 
 /** Example demonstrating sphere primitive with gentle wobble. */
@@ -21,9 +21,9 @@ export function SphereExample({ animationAngle }: ExampleProps) {
 
   return (
     <group rotation={[wobbleX, 0, wobbleZ]}>
-      <Text position={[0, 2, 0]} fontSize={0.4} color="white">
+      <BillboardText position={[0, 2, 0]} fontSize={0.4} color="white">
         Sphere
-      </Text>
+      </BillboardText>
       <MeshViz mesh={sphere} color="coral" label="Sphere" />
     </group>
   );

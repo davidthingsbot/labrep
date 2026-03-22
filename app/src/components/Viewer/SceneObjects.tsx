@@ -1,10 +1,30 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import type { Mesh as LabrepMesh } from '@labrep/generation';
-import { Cone, Line, Sphere, Text } from '@react-three/drei';
+import { Billboard, Cone, Line, Sphere, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import { meshToBufferGeometry } from '@/lib/mesh-to-three';
+
+// --- BillboardText ---
+
+interface BillboardTextProps {
+  position: [number, number, number] | number[];
+  fontSize: number;
+  color: string;
+  children: ReactNode;
+}
+
+/** Text label that always faces the camera. */
+export function BillboardText({ position, fontSize, color, children }: BillboardTextProps) {
+  return (
+    <Billboard position={position as [number, number, number]}>
+      <Text fontSize={fontSize} color={color}>
+        {children}
+      </Text>
+    </Billboard>
+  );
+}
 
 // --- PointViz ---
 
@@ -22,9 +42,9 @@ export function PointViz({ point, color = 'yellow', size = 0.05, label }: PointV
         <meshStandardMaterial color={color} />
       </Sphere>
       {label && (
-        <Text position={[0, size + 0.1, 0]} fontSize={0.1} color={color}>
+        <BillboardText position={[0, size + 0.1, 0]} fontSize={0.1} color={color}>
           {label}
-        </Text>
+        </BillboardText>
       )}
     </group>
   );
@@ -64,9 +84,9 @@ export function VectorViz({ origin, vector, color = 'red', label }: VectorVizPro
         </Cone>
       </group>
       {label && (
-        <Text position={end} fontSize={0.1} color={color}>
+        <BillboardText position={end} fontSize={0.1} color={color}>
           {label}
-        </Text>
+        </BillboardText>
       )}
     </group>
   );
@@ -96,9 +116,9 @@ export function LineViz({ start, end, color = 'cyan', label }: LineVizProps) {
     <group>
       <Line points={points} color={color} lineWidth={2} />
       {label && (
-        <Text position={midpoint} fontSize={0.1} color={color}>
+        <BillboardText position={midpoint} fontSize={0.1} color={color}>
           {label}
-        </Text>
+        </BillboardText>
       )}
     </group>
   );
@@ -127,9 +147,9 @@ export function MeshViz({ mesh, color = 'steelblue', wireframe = false, label }:
         </mesh>
       )}
       {label && (
-        <Text position={[0, 1.2, 0]} fontSize={0.15} color={color}>
+        <BillboardText position={[0, 1.2, 0]} fontSize={0.15} color={color}>
           {label}
-        </Text>
+        </BillboardText>
       )}
     </group>
   );

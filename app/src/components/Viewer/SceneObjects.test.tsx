@@ -12,9 +12,28 @@ vi.mock('@react-three/drei', () => ({
   Sphere: (props: any) => <div data-testid="drei-sphere" {...props} />,
   Cone: (props: any) => <div data-testid="drei-cone" {...props} />,
   Text: ({ children, ...props }: any) => <div data-testid="drei-text" {...props}>{children}</div>,
+  Billboard: ({ children, ...props }: any) => <div data-testid="drei-billboard" {...props}>{children}</div>,
 }));
 
-import { PointViz, VectorViz, LineViz, MeshViz } from './SceneObjects';
+import { PointViz, VectorViz, LineViz, MeshViz, BillboardText } from './SceneObjects';
+
+describe('BillboardText', () => {
+  it('renders text content', () => {
+    render(<BillboardText position={[0, 0, 0]} fontSize={0.2} color="white">Hello</BillboardText>);
+    expect(screen.getByText('Hello')).toBeInTheDocument();
+  });
+
+  it('wraps text in a Billboard component', () => {
+    render(<BillboardText position={[0, 0, 0]} fontSize={0.2} color="white">Test</BillboardText>);
+    expect(screen.getByTestId('drei-billboard')).toBeInTheDocument();
+  });
+
+  it('passes props to the inner Text component', () => {
+    render(<BillboardText position={[1, 2, 3]} fontSize={0.15} color="red">Label</BillboardText>);
+    const text = screen.getByTestId('drei-text');
+    expect(text).toBeInTheDocument();
+  });
+});
 
 describe('PointViz', () => {
   it('renders a sphere for a Point3D', () => {
@@ -22,9 +41,9 @@ describe('PointViz', () => {
     expect(screen.getByTestId('drei-sphere')).toBeInTheDocument();
   });
 
-  it('renders a label when label prop is provided', () => {
+  it('renders a billboard label when label prop is provided', () => {
     render(<PointViz point={{ x: 0, y: 0, z: 0 }} label="Origin" />);
-    expect(screen.getByTestId('drei-text')).toBeInTheDocument();
+    expect(screen.getByTestId('drei-billboard')).toBeInTheDocument();
     expect(screen.getByText('Origin')).toBeInTheDocument();
   });
 
