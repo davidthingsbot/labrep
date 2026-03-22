@@ -98,10 +98,11 @@ export function makeSphere(
     1 + (r - 1) * segments + (s % segments);
 
   // South pole cap (ring = 1)
+  // Winding: (pole, s, s+1) for consistent CW from outside
   for (let s = 0; s < segments; s++) {
     indices[ii++] = southPole;
-    indices[ii++] = ringVertex(1, s + 1);
     indices[ii++] = ringVertex(1, s);
+    indices[ii++] = ringVertex(1, s + 1);
   }
 
   // Middle bands
@@ -125,10 +126,11 @@ export function makeSphere(
   }
 
   // North pole cap (ring = rings - 1)
+  // Winding must match south pole cap: (pole, s+1, s) for consistent CW from outside
   for (let s = 0; s < segments; s++) {
     indices[ii++] = northPole;
-    indices[ii++] = ringVertex(rings - 1, s);
     indices[ii++] = ringVertex(rings - 1, s + 1);
+    indices[ii++] = ringVertex(rings - 1, s);
   }
 
   return success(createMesh(vertices, normals, indices));

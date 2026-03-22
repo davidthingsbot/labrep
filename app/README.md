@@ -19,9 +19,33 @@ A web application with:
 - **Three.js** — 3D rendering
 - **TypeScript** — Type safety
 
+## Design Principles
+
+### Grayscale Interface
+
+**All color comes from the 3D model. The interface is grayscale and muted.**
+
+- UI elements use grays only: `gray-900` (background), `gray-800` (panels), `gray-700` (borders), `gray-400`/`gray-100` (text)
+- No colored icons or emoji — use plain text labels
+- Active/selected states use lighter grays, not accent colors
+- The 3D viewport is the visual focus; chrome should recede
+
+### Mobile-First Layout
+
+- Portrait: Viewer on top, editor below
+- Landscape/desktop: Side-by-side panels
+- Safe area insets respected for mobile navigation bars
+- Touch-friendly button sizes
+
+### Minimalist Controls
+
+- Toggle buttons use lowercase text labels: `play`, `pause`, `code`, `examples`
+- No decorative elements
+- Functionality over ornamentation
+
 ## Status
 
-🚧 **Not started** — Structure planned.
+🚧 **In development** — Core viewer and examples working.
 
 ## Getting Started
 

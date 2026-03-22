@@ -16,6 +16,7 @@ vi.mock('@react-three/fiber', () => ({
   Canvas: ({ children, ...props }: any) => (
     <div data-testid="three-canvas" {...props}>{children}</div>
   ),
+  useFrame: () => {},
 }));
 
 vi.mock('@react-three/drei', () => ({
@@ -26,12 +27,17 @@ vi.mock('@react-three/drei', () => ({
   Text: ({ children, ...props }: any) => <div data-testid="drei-text" {...props}>{children}</div>,
 }));
 
+vi.mock('@/examples/registry', () => ({
+  examples: [],
+  getExampleById: () => undefined,
+}));
+
 import { AppLayout } from './AppLayout';
 
 describe('AppLayout', () => {
   it('renders the Header', () => {
     render(<AppLayout />);
-    expect(screen.getByText('labrep viewer')).toBeInTheDocument();
+    expect(screen.getByText('labrep')).toBeInTheDocument();
   });
 
   it('renders the Editor', () => {
@@ -54,6 +60,6 @@ describe('AppLayout', () => {
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain('flex');
     expect(root.className).toContain('flex-col');
-    expect(root.className).toContain('h-screen');
+    expect(root.style.height).toBe('100dvh');
   });
 });

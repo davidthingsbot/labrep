@@ -5,3 +5,7 @@ export const Canvas = ({ children, ...props }: any) => (
     {children}
   </div>
 );
+
+export const useFrame = (callback: (state: { clock: { getElapsedTime: () => number } }) => void) => {
+  // No-op in tests - animations don't run
+};

@@ -204,6 +204,44 @@ function intersectLines(l1: Line2D, l2: Line2D): Point2D[] {
 
 ---
 
+## ⚠️ CRITICAL: Structural Alignment with OCCT
+
+**The mapping from OpenCASCADE's structure to labrep must remain straightforward.**
+
+This is the foundational constraint for all library code changes. If our structures diverge from OCCT in non-trivial ways, sophisticated algorithms ported from OCCT later will not work correctly.
+
+### Before Changing Library Code, Ask:
+
+1. **What does OCCT do?** — Research the equivalent OCCT behavior/convention
+2. **Why does OCCT do it that way?** — Understand the reasoning (often there's a geometric or algorithmic reason)
+3. **If I change this, will OCCT algorithms still map cleanly?** — If no, do not change
+4. **Is this a rendering/display concern vs. a geometric concern?** — Display issues should be fixed in the app, not by changing geometric conventions
+
+### Allowed Changes:
+- **Simplification** — where there is NO downstream effect on algorithm development
+- **Optimization** — where the geometric semantics are preserved exactly
+- **Reordering** — where it doesn't change the mathematical meaning
+
+### Forbidden Changes:
+- Changing coordinate conventions without matching OCCT
+- Altering winding order, normal direction, or orientation semantics
+- "Fixing" something that looks wrong before understanding why OCCT does it that way
+- Adapting library code to fit a particular rendering framework's expectations
+
+### Example: Face Orientation
+
+If faces appear "inside out" in a WebGL viewer:
+- **Wrong approach:** Change the winding order in the mesh generation
+- **Right approach:** 
+  1. Research how OCCT defines face orientation
+  2. Check if our generation matches OCCT's convention
+  3. If we match OCCT, fix the viewer (use `DoubleSide`, or transform at render time)
+  4. If we don't match OCCT, fix generation to match OCCT
+
+**The viewer adapts to the library, not the other way around.**
+
+---
+
 ## What We're NOT Building (Exclusions)
 
 Per the design, these are **explicitly out of scope**:

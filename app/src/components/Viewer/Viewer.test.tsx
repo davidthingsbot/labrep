@@ -6,6 +6,7 @@ vi.mock('@react-three/fiber', () => ({
   Canvas: ({ children, ...props }: any) => (
     <div data-testid="three-canvas" {...props}>{children}</div>
   ),
+  useFrame: () => {},
 }));
 
 vi.mock('@react-three/drei', () => ({
@@ -14,6 +15,10 @@ vi.mock('@react-three/drei', () => ({
   Sphere: (props: any) => <div data-testid="drei-sphere" {...props} />,
   Cone: (props: any) => <div data-testid="drei-cone" {...props} />,
   Text: ({ children, ...props }: any) => <div data-testid="drei-text" {...props}>{children}</div>,
+}));
+
+vi.mock('@/examples/registry', () => ({
+  getExampleById: () => undefined,
 }));
 
 import { Viewer } from './Viewer';

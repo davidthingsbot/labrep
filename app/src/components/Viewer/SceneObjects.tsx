@@ -119,7 +119,7 @@ export function MeshViz({ mesh, color = 'steelblue', wireframe = false, label }:
   return (
     <group>
       <mesh geometry={geometry}>
-        <meshStandardMaterial color={color} />
+        <meshStandardMaterial color={color} side={THREE.DoubleSide} />
       </mesh>
       {wireframe && (
         <mesh geometry={geometry}>
