@@ -19,6 +19,7 @@ We're testing a hypothesis: **AI can compress the timeline for building complex 
 ```
 labrep/
 ├── background/      # Research notes, topic documentation
+├── design/          # Architecture, API design, phase docs
 ├── library/         # Reference materials (OCCT submodule, papers, docs)
 ├── generation/      # Our TypeScript implementation (TDD)
 ├── examples/        # Usage examples
@@ -28,6 +29,7 @@ labrep/
 | Folder | Purpose |
 |--------|---------|
 | `background/` | Deep dives into BRep concepts, algorithms, OCCT architecture |
+| `design/` | Architecture decisions, API design, phase implementation docs |
 | `library/` | OpenCASCADE source (submodule), academic papers, external docs |
 | `generation/` | The actual TypeScript code we're building — tests first |
 | `examples/` | Working examples demonstrating library features |
@@ -43,7 +45,13 @@ labrep/
 
 ## Status
 
-🚧 **Early exploration** — Setting up structure, writing initial background docs.
+✅ **Phase 1: Math Foundation** — Complete (Point2D/3D, Vector2D/3D, Transform3D, Axis, Plane, BoundingBox)
+
+✅ **Phase 2: 2D Curves** — Complete (Line2D, Circle2D, Arc2D, Intersections, Wire2D)
+
+🔲 **Phase 3: Sketch System** — Next up
+
+See [`design/README.md`](design/README.md) for full phase breakdown and design docs.
 
 ## Getting Started
 

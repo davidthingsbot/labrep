@@ -819,13 +819,13 @@ Each phase has a dedicated design document with full details: OCCT references, d
 
 ---
 
-### Phase 2: 2D Curves 🚧
+### Phase 2: 2D Curves ✅
 
 **Goal:** Line and arc geometry in 2D.
 
 **Design doc:** [`curves-2d.md`](curves-2d.md)
 
-**Status:** In progress — Line2D ✅, Circle2D ✅, Arc2D pending, Intersections pending, Wire2D pending
+**Status:** Complete — Line2D, Circle2D, Arc2D, Intersections, Wire2D (102 tests)
 
 ---
 
@@ -1165,7 +1165,12 @@ describe('extrude', () => {
 | Document | Topic | Status |
 |----------|-------|--------|
 | (This README) | Overview, data types, phases | ✅ Complete |
+| [AGENTS.md](./AGENTS.md) | Development workflow, TDD practices | ✅ Complete |
+| [math-foundation.md](./math-foundation.md) | Phase 1: Points, vectors, transforms | ✅ Complete |
+| [curves-2d.md](./curves-2d.md) | Phase 2: Line2D, Circle2D, Arc2D, Wire2D | ✅ Complete |
 | [step-api-alignment.md](./step-api-alignment.md) | STEP → API mapping, design decisions | ✅ Complete |
+| [app-examples-animation.md](./app-examples-animation.md) | Viewer example system & animation | ✅ Complete |
+| [face-orientation-analysis.md](./face-orientation-analysis.md) | OCCT winding conventions | ✅ Complete |
 
 ## Adding a Design Document
 

@@ -31,7 +31,16 @@ generation/
 
 ## Status
 
-🚧 **Not started** — Setting up structure.
+✅ **Phase 1: Math Foundation** — Complete
+- `src/core/`: Point2D/3D, Vector2D/3D, Transform3D, Axis, Plane, BoundingBox, Tolerance
+
+✅ **Phase 2: 2D Curves** — Complete
+- `src/geometry/`: Line2D, Circle2D, Arc2D, Intersections, Wire2D
+
+✅ **Primitives** — Complete
+- `src/primitives/`: makeBox, makeSphere, makeCylinder
+
+**234 tests passing**
 
 ## Getting Started
 
