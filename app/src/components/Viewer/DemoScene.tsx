@@ -20,7 +20,7 @@ export function DemoScene() {
   }, []);
 
   return (
-    <group data-testid="demo-scene">
+    <group>
       {/* Group 1: Points */}
       <group position={[-4, 0, 0]}>
         <Text position={[0, 3, 0]} fontSize={0.4} color="white">

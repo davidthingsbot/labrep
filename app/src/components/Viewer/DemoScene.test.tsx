@@ -37,9 +37,10 @@ describe('DemoScene', () => {
     render(<DemoScene />);
   });
 
-  it('renders the demo container', () => {
+  it('renders group title labels', () => {
     render(<DemoScene />);
-    expect(screen.getByTestId('demo-scene')).toBeInTheDocument();
+    const textElements = screen.getAllByTestId('drei-text');
+    expect(textElements.length).toBeGreaterThanOrEqual(4);
   });
 
   it('includes labeled points', () => {
