@@ -52,7 +52,7 @@ A BRep model describes a solid by its boundary. Think of it like describing a ca
 │  • A mesh of triangles               • How they connect         │
 │                                      • The math for each        │
 │                                                                 │
-│  The STRUCTURE (topology) and MATH (geometry) are separate.    │
+│  The STRUCTURE (topology) and MATH (geometry) are separate.     │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -156,16 +156,16 @@ Each topological entity has associated geometry:
 │  TOPOLOGY              GEOMETRY                                 │
 │  ────────              ────────                                 │
 │                                                                 │
-│  Vertex  ─────────────► Point (x, y, z)                        │
+│  Vertex  ─────────────► Point (x, y, z)                         │
 │                                                                 │
-│  Edge    ─────────────► Curve (line, circle, NURBS)            │
-│          └──────────► Parameter range [t₁, t₂]                 │
+│  Edge    ─────────────► Curve (line, circle, NURBS)             │
+│          └──────────► Parameter range [t₁, t₂]                  │
 │                                                                 │
-│  Face    ─────────────► Surface (plane, cylinder, NURBS)       │
-│          └──────────► Trim loops (how the surface is cut)      │
+│  Face    ─────────────► Surface (plane, cylinder, NURBS)        │
+│          └──────────► Trim loops (how the surface is cut)       │
 │                                                                 │
-│  The same curve can be shared by multiple edges.               │
-│  The same surface can be shared by multiple faces.             │
+│  The same curve can be shared by multiple edges.                │
+│  The same surface can be shared by multiple faces.              │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -188,29 +188,29 @@ BRep defines a hierarchy of topological entities:
 │                    TOPOLOGICAL HIERARCHY                        │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  COMPOUND ──────► Collection of unrelated solids               │
-│      │            (e.g., all parts of an assembly)             │
+│  COMPOUND ──────► Collection of unrelated solids                │
+│      │            (e.g., all parts of an assembly)              │
 │      ▼                                                          │
-│  COMPSOLID ────► Solids sharing faces                          │
-│      │            (rare — mostly in imported models)           │
+│  COMPSOLID ────► Solids sharing faces                           │
+│      │            (rare — mostly in imported models)            │
 │      ▼                                                          │
-│  SOLID ────────► Closed volume, watertight boundary            │
-│      │            (the "part" you're designing)                │
+│  SOLID ────────► Closed volume, watertight boundary             │
+│      │            (the "part" you're designing)                 │
 │      ▼                                                          │
-│  SHELL ────────► Connected set of faces                        │
-│      │            (a solid has one or more shells)             │
+│  SHELL ────────► Connected set of faces                         │
+│      │            (a solid has one or more shells)              │
 │      ▼                                                          │
-│  FACE ─────────► Bounded region of a surface                   │
-│      │            (a face of the solid)                        │
+│  FACE ─────────► Bounded region of a surface                    │
+│      │            (a face of the solid)                         │
 │      ▼                                                          │
-│  WIRE ─────────► Connected sequence of edges                   │
-│      │            (boundary loop of a face)                    │
+│  WIRE ─────────► Connected sequence of edges                    │
+│      │            (boundary loop of a face)                     │
 │      ▼                                                          │
-│  EDGE ─────────► Bounded piece of a curve                      │
-│      │            (where two faces meet)                       │
+│  EDGE ─────────► Bounded piece of a curve                       │
+│      │            (where two faces meet)                        │
 │      ▼                                                          │
-│  VERTEX ───────► A point                                       │
-│                  (where edges meet — a corner)                 │
+│  VERTEX ───────► A point                                        │
+│                  (where edges meet — a corner)                  │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -280,7 +280,7 @@ Every face has a surface normal. By convention:
         │   ◄────┼────    │    counter-clockwise
         │        │    │   │    when viewed from
         │        │    ▼   │    outside
-        └────────────────┘
+        └─────────────────┘
 ```
 
 ### Edge Orientation
@@ -292,7 +292,7 @@ Edges can be used "forward" or "reversed" by different faces:
 │                     EDGE ORIENTATION                            │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  The same edge bounds two faces, but in opposite directions:   │
+│  The same edge bounds two faces, but in opposite directions:    │
 │                                                                 │
 │         Face A                    Face B                        │
 │        ┌──────┐                  ┌──────┐                       │
@@ -327,7 +327,7 @@ Real-world CAD must handle numerical imprecision. BRep uses tolerances:
 │                                                                 │
 │                    ╭─────╮                                      │
 │                   ╱       ╲                                     │
-│                  │    ●    │   The vertex "is" any point       │
+│                  │    ●    │   The vertex "is" any point        │
 │                   ╲       ╱    within this sphere               │
 │                    ╰─────╯                                      │
 │                                                                 │
@@ -399,7 +399,7 @@ Each edge is split into two "half-edges," one for each direction:
 │       ┌─────────────────────────────────────┐                   │
 │       │              Face A                 │                   │
 │       │                                     │                   │
-│       │   ←──────── half-edge 1 ←────────  │                   │
+│       │   ←──────── half-edge 1 ←────────   │                   │
 │       │   V2 ────────────────────────► V1   │                   │
 │       │                                     │                   │
 │       └─────────────────────────────────────┘                   │

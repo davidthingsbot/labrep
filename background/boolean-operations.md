@@ -37,30 +37,30 @@ This document covers how it all works.
 │                    BOOLEAN OPERATIONS                           │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│      UNION (A ∪ B)              Everything in A or B           │
+│      UNION (A ∪ B)              Everything in A or B            │
 │                                                                 │
-│      ┌─────┐                    ┌─────┐                        │
-│      │  A  │     ┌─────┐        │█████│████┐                   │
-│      │     ├─────┤  B  │   →    │█████████│                    │
-│      │     │     │     │        │█████│████│                   │
-│      └─────┘     └─────┘        └─────┴────┘                   │
+│      ┌─────┐                    ┌──────────┐                    │
+│      │  A  │     ┌─────┐        │██████████│                    │
+│      │     │·····│  B  │   →    │██████████│                    │
+│      │     │     │     │        │██████████│                    │
+│      └─────┘     └─────┘        └──────────┘                    │
 │                                                                 │
-│      SUBTRACT (A - B)           A minus any overlap with B     │
+│      SUBTRACT (A - B)           A minus any overlap with B      │
 │                                                                 │
-│      ┌─────┐                    ┌─────┐                        │
-│      │  A  │     ┌─────┐        │█████│                        │
-│      │     ├─────┤  B  │   →    │█████├────┐                   │
-│      │     │     │     │        │█████│    │                   │
-│      └─────┘     └─────┘        └─────┘    │                   │
-│                                      └─────┘                    │
+│      ┌─────┐                    ┌─────┐                         │
+│      │  A  │     ┌─────┐        │█████│                         │
+│      │     │·····│  B  │   →    │█████│                         │
+│      │     │     │     │        │█████│                         │
+│      └─────┘     └─────┘        └─────┘                         │
 │                                                                 │
-│      INTERSECT (A ∩ B)          Only the overlap               │
 │                                                                 │
-│      ┌─────┐                          ┌────┐                   │
-│      │  A  │     ┌─────┐              │████│                   │
-│      │     ├─────┤  B  │   →          │████│                   │
-│      │     │     │     │              │████│                   │
-│      └─────┘     └─────┘              └────┘                   │
+│      INTERSECT (A ∩ B)          Only the overlap                │
+│                                                                 │
+│      ┌─────┐                          ┌────┐                    │
+│      │  A  │     ┌─────┐              │████│                    │
+│      │     │·····│  B  │   →          │████│                    │
+│      │     │     │     │              │████│                    │
+│      └─────┘     └─────┘              └────┘                    │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -113,33 +113,33 @@ The general algorithm has these phases:
 │                                                                 │
 │  INPUT: Solid A, Solid B                                        │
 │                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ PHASE 1: INTERSECTION                                    │   │
-│  │ • Find all face-face intersections (SSI)                │   │
-│  │ • Result: intersection curves on each face              │   │
-│  └─────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ PHASE 1: INTERSECTION                                   │    │
+│  │ • Find all face-face intersections (SSI)                │    │
+│  │ • Result: intersection curves on each face              │    │
+│  └─────────────────────────────────────────────────────────┘    │
 │                         │                                       │
 │                         ▼                                       │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ PHASE 2: SPLIT                                           │   │
-│  │ • Split faces along intersection curves                 │   │
-│  │ • Result: smaller faces with known boundaries           │   │
-│  └─────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ PHASE 2: SPLIT                                          │    │
+│  │ • Split faces along intersection curves                 │    │
+│  │ • Result: smaller faces with known boundaries           │    │
+│  └─────────────────────────────────────────────────────────┘    │
 │                         │                                       │
 │                         ▼                                       │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ PHASE 3: CLASSIFY                                        │   │
-│  │ • Determine each face's position: in A? in B?           │   │
-│  │ • Mark faces as keep/discard based on operation         │   │
-│  └─────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ PHASE 3: CLASSIFY                                       │    │
+│  │ • Determine each face's position: in A? in B?           │    │
+│  │ • Mark faces as keep/discard based on operation         │    │
+│  └─────────────────────────────────────────────────────────┘    │
 │                         │                                       │
 │                         ▼                                       │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ PHASE 4: BUILD                                           │   │
-│  │ • Collect surviving faces                               │   │
-│  │ • Fix orientations (flip if needed)                     │   │
-│  │ • Stitch into new solid                                 │   │
-│  └─────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────┐    │
+│  │ PHASE 4: BUILD                                          │    │
+│  │ • Collect surviving faces                               │    │
+│  │ • Fix orientations (flip if needed)                     │    │
+│  │ • Stitch into new solid                                 │    │
+│  └─────────────────────────────────────────────────────────┘    │
 │                         │                                       │
 │                         ▼                                       │
 │  OUTPUT: Solid Result                                           │
@@ -170,20 +170,20 @@ For each face of B: is it **inside**, **outside**, or **on** solid A?
 │                                                                 │
 │  Method: Ray casting                                            │
 │                                                                 │
-│  1. Cast ray from P in arbitrary direction                     │
-│  2. Count intersections with solid boundary                    │
-│  3. Odd count = inside, Even count = outside                   │
+│  1. Cast ray from P in arbitrary direction                      │
+│  2. Count intersections with solid boundary                     │
+│  3. Odd count = inside, Even count = outside                    │
 │                                                                 │
 │         P ●────────────────────────────────────► ray            │
-│           │     ×     ×     ×                                  │
-│           │     │     │     │                                  │
-│           ▼     ▼     ▼     ▼                                  │
-│    ┌──────────────────────────────────┐                        │
-│    │        SOLID                     │                        │
-│    │   (boundary shown as line)       │                        │
-│    └──────────────────────────────────┘                        │
+│           │     ×     ×     ×                                   │
+│           │     │     │     │                                   │
+│           ▼     ▼     ▼     ▼                                   │
+│    ┌──────────────────────────────────┐                         │
+│    │        SOLID                     │                         │
+│    │   (boundary shown as line)       │                         │
+│    └──────────────────────────────────┘                         │
 │                                                                 │
-│    3 intersections = ODD → P is INSIDE                         │
+│    3 intersections = ODD → P is INSIDE                          │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -216,17 +216,17 @@ Faces share edges. When we split faces, we must handle shared edges consistently
 │                   SHARED EDGE CONSISTENCY                       │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│      Face A₁       Face A₂           After splitting:          │
-│     ┌────────┬────────┐                                        │
-│     │        │        │             ┌────┬───┬────┬───┐        │
-│     │        │        │             │ A₁a│A₁b│ A₂a│A₂b│        │
-│     │────────┼────────│  split →    │────┼───┼────┼───│        │
-│     │        │        │             │    │   │    │   │        │
-│     │    shared edge  │             │    │   │    │   │        │
-│     └────────┴────────┘             └────┴───┴────┴───┘        │
+│      Face A₁       Face A₂           After splitting:           │
+│     ┌────────┬────────┐                                         │
+│     │        │        │             ┌────┬───┬────┬───┐         │
+│     │        │        │             │ A₁a│A₁b│ A₂a│A₂b│         │
+│     │────────┼────────│  split →    │────┼───┼────┼───│         │
+│     │        │        │             │    │   │    │   │         │
+│     │    shared edge  │             │    │   │    │   │         │
+│     └────────┴────────┘             └────┴───┴────┴───┘         │
 │                                                                 │
-│  The shared edge must be split at the SAME parameter values    │
-│  on both faces. Otherwise, topology becomes inconsistent.      │
+│  The shared edge must be split at the SAME parameter values     │
+│  on both faces. Otherwise, topology becomes inconsistent.       │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -266,14 +266,14 @@ Connect the faces into shells:
 │                                                                 │
 │  Before:                    After sewing:                       │
 │                                                                 │
-│    ┌────┐  ┌────┐           ┌────────┐                         │
-│    │ F1 │  │ F2 │           │   F1   │                         │
-│    │    │  │    │    →      ├────────┤ edges matched           │
-│    └────┘  └────┘           │   F2   │                         │
+│    ┌────┐  ┌────┐           ┌────────┐                          │
+│    │ F1 │  │ F2 │           │   F1   │                          │
+│    │    │  │    │    →      ├────────┤ edges matched            │
+│    └────┘  └────┘           │   F2   │                          │
 │                             └────────┘                          │
 │    (gap between)            (connected shell)                   │
 │                                                                 │
-│  Matching edges become shared (one edge, two faces).           │
+│  Matching edges become shared (one edge, two faces).            │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -327,18 +327,16 @@ Check the result:
 │                    REGULARIZATION                               │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  Non-regularized A ∩ B:       Regularized:                     │
+│  Non-regularized A ∩ B:       Regularized:                      │
 │                                                                 │
-│        ┌─────────┐                                              │
-│        │         │                                              │
-│        │    A    │                                              │
-│        │    ┌────┤   B is tangent,        (empty result)        │
-│        └────┤    │   intersection is                            │
-│             │ B  │   just a face                                │
-│             └────┘                                              │
+│        ┌─────┐┌────┐                                            │
+│        │     ││    │  A and B share a face (tangent).           │
+│        │  A  ││ B  │  Their intersection is 2D, not 3D.         │
+│        │     ││    │                                            │
+│        └─────┘└────┘                                            │
 │                                                                 │
-│  The "intersection" is a 2D face, not a 3D solid.              │
-│  Regularization removes it, leaving empty result.              │
+│  The "intersection" is a 2D face, not a 3D solid.               │
+│  Regularization removes it, leaving empty result.               │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -374,24 +372,24 @@ IntTools_EdgeFace             // Edge-face intersection
 │                    OCCT BOOLEAN FLOW                            │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  BRepAlgoAPI_Fuse / Cut / Common                               │
+│  BRepAlgoAPI_Fuse / Cut / Common                                │
 │           │                                                     │
 │           ▼                                                     │
-│  BOPAlgo_BOP::Perform()                                        │
+│  BOPAlgo_BOP::Perform()                                         │
 │           │                                                     │
-│           ├──► BOPAlgo_PaveFiller                              │
+│           ├──► BOPAlgo_PaveFiller                               │
 │           │        │                                            │
-│           │        ├── IntTools_FaceFace (SSI)                 │
+│           │        ├── IntTools_FaceFace (SSI)                  │
 │           │        ├── IntTools_EdgeFace                        │
-│           │        └── Build pave blocks (split edges)         │
+│           │        └── Build pave blocks (split edges)          │
 │           │                                                     │
-│           ├──► BOPAlgo_Builder                                 │
+│           ├──► BOPAlgo_Builder                                  │
 │           │        │                                            │
-│           │        ├── Classify faces (in/out/on)              │
-│           │        ├── Select faces based on operation         │
-│           │        └── Build result shapes                     │
+│           │        ├── Classify faces (in/out/on)               │
+│           │        ├── Select faces based on operation          │
+│           │        └── Build result shapes                      │
 │           │                                                     │
-│           └──► Return result solid                             │
+│           └──► Return result solid                              │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```

@@ -167,7 +167,7 @@ function pointsEqual(p1: Point2D, p2: Point2D): boolean {
 
 // Never:
 function pointsEqual(p1: Point2D, p2: Point2D): boolean {
-  return p1.x === p2.x && p1.y === p2.y;  // ❌ Never exact compare floats
+  return p1.x === p2.x && p1.y === p2.y;  // X Never exact compare floats
 }
 ```
 

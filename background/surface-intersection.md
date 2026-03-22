@@ -39,10 +39,10 @@ If your SSI is wrong, your booleans are wrong. If your SSI misses a branch, you'
 │                                                                 │
 │       Surface A                     Surface B                   │
 │         ┌───────┐                  ╱─────────╲                  │
-│        ╱        │                 ╱           ╲                 │
-│       │    ═════╬════════════════╬═════       │                 │
-│       │         │ intersection   ╱             │                │
-│       └─────────┘ curve         ╱               ╲               │
+│         │       │                 ╱           ╲                 │
+│         │  ═════┤════════════════╬═════       │                 │
+│         │       │ intersection   ╱             │                │
+│         └───────┘ curve         ╱               ╲               │
 │                                ╱                 ╲              │
 │                               └───────────────────┘             │
 │                                                                 │
@@ -80,15 +80,15 @@ Two NURBS surfaces? The intersection curve:
 │                                                                 │
 │  SIMPLE           BRANCHING         CLOSED LOOP                 │
 │                                                                 │
-│   ────────        ────┬────         ╭─────────╮                │
+│   ────────        ────┬────         ╭─────────╮                 │
 │                       │             │         │                 │
 │                      ╱ ╲            │         │                 │
 │                     ╱   ╲           ╰─────────╯                 │
 │                                                                 │
-│  SELF-CROSSING    TANGENT REGION    DEGENERATE (point)         │
+│  SELF-CROSSING    TANGENT REGION    DEGENERATE (point)          │
 │                                                                 │
 │      ╱╲           ════════════            ●                     │
-│     ╱  ╲          (near-parallel)   (surfaces touch)           │
+│     ╱  ╲          (near-parallel)   (surfaces touch)            │
 │    ╱    ╲                                                       │
 │   ╱      ╲                                                      │
 │                                                                 │
@@ -149,7 +149,7 @@ Two NURBS surfaces? The intersection curve:
 │                                                                 │
 │  ANALYTIC                                                       │
 │  ────────                                                       │
-│  • For plane-plane, plane-quadric, etc.                        │
+│  • For plane-plane, plane-quadric, etc.                         │
 │  • Closed-form solution                                         │
 │  • Fast and exact (within floating-point)                       │
 │  • Limited to special cases                                     │
@@ -157,7 +157,7 @@ Two NURBS surfaces? The intersection curve:
 │  MARCHING                                                       │
 │  ────────                                                       │
 │  • Start from a point on the intersection                       │
-│  • Step along the curve, solving for each point                │
+│  • Step along the curve, solving for each point                 │
 │  • Good for tracing individual curves                           │
 │  • May miss separate branches                                   │
 │                                                                 │
@@ -214,22 +214,22 @@ Once on the curve, compute:
 │  Current point P is on intersection curve.                      │
 │                                                                 │
 │  1. Compute normals:                                            │
-│     n₁ = ∂S₁/∂u × ∂S₁/∂v  (normal to surface 1)                │
-│     n₂ = ∂S₂/∂u × ∂S₂/∂v  (normal to surface 2)                │
+│     n₁ = ∂S₁/∂u × ∂S₁/∂v  (normal to surface 1)                 │
+│     n₂ = ∂S₂/∂u × ∂S₂/∂v  (normal to surface 2)                 │
 │                                                                 │
 │  2. Tangent to intersection curve:                              │
-│     t = n₁ × n₂   (cross product of normals)                   │
+│     t = n₁ × n₂   (cross product of normals)                    │
 │     (normalize t)                                               │
 │                                                                 │
 │  3. Take predictor step:                                        │
-│     P' = P + Δs · t   (Δs = step size)                         │
+│     P' = P + Δs · t   (Δs = step size)                          │
 │                                                                 │
 │  4. Correct back onto both surfaces:                            │
-│     Solve for (u₁, v₁, u₂, v₂) such that                       │
-│     S₁(u₁, v₁) = S₂(u₂, v₂) ≈ P'                               │
+│     Solve for (u₁, v₁, u₂, v₂) such that                        │
+│     S₁(u₁, v₁) = S₂(u₂, v₂) ≈ P'                                │
 │     (Newton-Raphson)                                            │
 │                                                                 │
-│  5. New point: P_new = S₁(u₁, v₁)                              │
+│  5. New point: P_new = S₁(u₁, v₁)                               │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -275,15 +275,15 @@ When surfaces might have multiple intersection branches, subdivision finds them 
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │        Surface 1              Surface 2                         │
-│       ┌─────────┐            ┌─────────┐                       │
-│       │    ╱╲   │            │  ╱──╲   │                       │
-│       │   ╱  ╲  │            │ ╱    ╲  │                       │
-│       │  ╱    ╲ │            │╱      ╲ │                       │
-│       │ ╱      ╲│            │        ╲│                       │
-│       └─────────┘            └─────────┘                       │
+│       ┌─────────┐            ┌─────────┐                        │
+│       │    ╱╲   │            │  ╱──╲   │                        │
+│       │   ╱  ╲  │            │ ╱    ╲  │                        │
+│       │  ╱    ╲ │            │╱      ╲ │                        │
+│       │ ╱      ╲│            │        ╲│                        │
+│       └─────────┘            └─────────┘                        │
 │                                                                 │
-│  If bounding boxes don't overlap → NO intersection (prune)     │
-│  If boxes overlap → might intersect (subdivide further)        │
+│  If bounding boxes don't overlap → NO intersection (prune)      │
+│  If boxes overlap → might intersect (subdivide further)         │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -429,28 +429,28 @@ IntSurf_*               — Low-level intersection utilities
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  1. CLASSIFY SURFACES                                           │
-│     • Is each surface analytic (plane, cylinder, etc.)?        │
-│     • If both analytic, use special-case code                  │
+│     • Is each surface analytic (plane, cylinder, etc.)?         │
+│     • If both analytic, use special-case code                   │
 │                                                                 │
 │  2. FIND STARTING POINTS                                        │
-│     • Sample both surfaces on grids                            │
-│     • Find close points                                        │
-│     • Refine to exact intersection                             │
+│     • Sample both surfaces on grids                             │
+│     • Find close points                                         │
+│     • Refine to exact intersection                              │
 │                                                                 │
 │  3. TRACE CURVES                                                │
-│     • From each starting point, march in both directions       │
-│     • Stop at surface boundaries or degeneracies               │
-│     • Use adaptive step size                                   │
+│     • From each starting point, march in both directions        │
+│     • Stop at surface boundaries or degeneracies                │
+│     • Use adaptive step size                                    │
 │                                                                 │
 │  4. CONNECT AND CLEAN                                           │
 │     • Connect curve segments                                    │
-│     • Remove duplicates                                        │
-│     • Sort by parameter                                        │
+│     • Remove duplicates                                         │
+│     • Sort by parameter                                         │
 │                                                                 │
 │  5. OUTPUT                                                      │
-│     • 3D curves (Geom_Curve)                                   │
-│     • Parameter curves on each surface (Geom2d_Curve)          │
-│     • Intersection type (point, curve, region)                 │
+│     • 3D curves (Geom_Curve)                                    │
+│     • Parameter curves on each surface (Geom2d_Curve)           │
+│     • Intersection type (point, curve, region)                  │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```

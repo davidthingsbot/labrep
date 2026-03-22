@@ -4,6 +4,46 @@ Instructions for AI agents creating project-wide tools.
 
 ---
 
+## Python Environment
+
+**This directory uses `uv` for Python environment management.**
+
+- `pyproject.toml` — declares dependencies
+- `uv.lock` — pins exact versions (committed to git)
+- `.python-version` — pins Python 3.12
+- `.venv/` — local virtual environment (gitignored)
+
+### Running Python tools and tests
+
+```bash
+cd tools/
+uv run python check-ascii-boxes.py <file.md>    # run a tool
+uv run python test_check_ascii_boxes.py -v       # run tests
+```
+
+`uv run` handles the venv automatically. If dependencies are missing, run `uv sync` first.
+
+### Adding Python dependencies
+
+1. Add to `[project.dependencies]` (runtime) or `[dependency-groups] dev` (dev-only) in `pyproject.toml`
+2. Run `uv sync` to update `uv.lock`
+3. Commit both `pyproject.toml` and `uv.lock`
+
+### Installing uv (if not present)
+
+```bash
+# Ubuntu/Debian
+sudo apt install -y pipx && pipx install uv
+
+# macOS
+brew install uv
+
+# Or via pip (if system allows)
+pip install uv
+```
+
+---
+
 ## Purpose
 
 Tools here support labrep development across all subprojects:
@@ -14,50 +54,11 @@ Tools here support labrep development across all subprojects:
 
 **Not for:** Tools specific to OCCT reference code (those go in `library/tools/`).
 
-## Tool Categories
-
-### Build Tools
-- Compile TypeScript
-- Bundle for distribution
-- Generate type declarations
-
-### Test Tools
-- Run test suites
-- Coverage reports
-- Benchmark comparisons
-
-### Code Generation
-- Generate boilerplate from templates
-- Scaffold new modules
-- Create test stubs
-
-### Development Helpers
-- Linting and formatting
-- Dependency checks
-- Documentation generation
-
 ## Guidelines
 
 ### Keep Tools Simple
 
-Prefer small, composable tools over monolithic scripts:
-```bash
-# Good: focused tools
-./tools/lint.sh
-./tools/test.sh
-./tools/build.sh
-
-# Avoid: do-everything scripts
-./tools/do-all-the-things.sh
-```
-
-### Use Standard Tooling
-
-Leverage existing tools where possible:
-- `vitest` for testing
-- `eslint` + `prettier` for linting/formatting
-- `tsc` for TypeScript compilation
-- `esbuild` or `rollup` for bundling
+Prefer small, composable tools over monolithic scripts.
 
 ### Exit Codes
 
@@ -68,42 +69,11 @@ Scripts should return proper exit codes:
 
 ### Documentation
 
-Every tool needs at the top:
-```bash
-#!/usr/bin/env bash
-# tool-name.sh — One-line description
-#
-# Usage: ./tools/tool-name.sh [options]
-#
-# Options:
-#   --verbose    Show detailed output
-#   --help       Show this help
-```
+Every tool should document its purpose and usage at the top of the file.
 
-Or for TypeScript:
-```typescript
-/**
- * tool-name.ts — One-line description
- * 
- * Usage: npx ts-node tools/tool-name.ts [options]
- */
-```
+### Naming Conventions
 
-## Naming Conventions
-
+- Python: `kebab-case.py`
 - Shell scripts: `kebab-case.sh`
-- TypeScript: `kebab-case.ts`
+- Tests: `test_<tool-name>.py`
 - Use descriptive action verbs: `build-`, `test-`, `generate-`, `check-`
-
-## Integration with package.json
-
-Register commonly-used tools as npm scripts:
-```json
-{
-  "scripts": {
-    "build": "./tools/build.sh",
-    "test": "./tools/test.sh",
-    "lint": "./tools/lint.sh"
-  }
-}
-```

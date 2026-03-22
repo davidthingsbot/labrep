@@ -1,0 +1,8 @@
+[project]
+name = "labrep-tools"
+version = "0.1.0"
+description = "Project-wide tools and utilities for labrep"
+requires-python = ">=3.12"
+
+[dependency-groups]
+dev = ["pytest"]

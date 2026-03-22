@@ -24,37 +24,37 @@ Our design is driven by a typical CAD workflow:
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  1. CREATE SKETCH                                               │
-│     └─► Select or create a 2D workplane                        │
+│     └─► Select or create a 2D workplane                         │
 │                                                                 │
 │  2. DRAW 2D SHAPES                                              │
-│     └─► Lines, arcs, circles, rectangles on the sketch        │
+│     └─► Lines, arcs, circles, rectangles on the sketch          │
 │                                                                 │
 │  3. ADD CONSTRAINTS                                             │
-│     └─► Parallel, perpendicular, tangent, coincident, equal   │
+│     └─► Parallel, perpendicular, tangent, coincident, equal     │
 │                                                                 │
 │  4. ADD PARAMETERS                                              │
-│     └─► Named dimensions, variables, expressions               │
+│     └─► Named dimensions, variables, expressions                │
 │                                                                 │
 │  5. CONFIRM SKETCH                                              │
-│     └─► Validate: fully constrained? closed profiles?          │
+│     └─► Validate: fully constrained? closed profiles?           │
 │                                                                 │
 │  6. EXTRUDE OR REVOLVE                                          │
-│     └─► Create first 3D body from sketch profile               │
+│     └─► Create first 3D body from sketch profile                │
 │                                                                 │
 │  7. STEP FILE I/O                                               │
-│     └─► Save progress, load reference geometry                 │
+│     └─► Save progress, load reference geometry                  │
 │                                                                 │
 │  8. SKETCH ON FACE                                              │
-│     └─► Select face of body, create new sketch there           │
+│     └─► Select face of body, create new sketch there            │
 │                                                                 │
 │  9. MORE OPERATIONS                                             │
-│     └─► Extrude (add or cut), revolve, pattern                 │
+│     └─► Extrude (add or cut), revolve, pattern                  │
 │                                                                 │
 │  10. LOAD EXTERNAL SKETCH                                       │
-│      └─► Import sketch from file, apply to surface             │
+│      └─► Import sketch from file, apply to surface              │
 │                                                                 │
 │  11. ASSEMBLIES                                                 │
-│      └─► Multiple parts, joints/mates, positioning             │
+│      └─► Multiple parts, joints/mates, positioning              │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -474,16 +474,16 @@ These features are explicitly **out of scope** for initial development:
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  GEOMETRY                                                       │
-│  • NURBS freeform curves/surfaces (use analytic only)          │
+│  • NURBS freeform curves/surfaces (use analytic only)           │
 │  • Offset surfaces                                              │
-│  • Loft, sweep with guide rails                                │
-│  • Blend/fillet surfaces                                       │
+│  • Loft, sweep with guide rails                                 │
+│  • Blend/fillet surfaces                                        │
 │                                                                 │
 │  OPERATIONS                                                     │
-│  • Fillets and chamfers                                        │
+│  • Fillets and chamfers                                         │
 │  • Shell (hollow out)                                           │
 │  • Draft angles                                                 │
-│  • Patterns (linear, circular array)                           │
+│  • Patterns (linear, circular array)                            │
 │  • Mirror operations                                            │
 │                                                                 │
 │  DOMAIN-SPECIFIC                                                │
@@ -551,13 +551,13 @@ OCCT topology has **three layers** for the same entity:
 │  • Lightweight, copyable                                        │
 │  • Multiple TopoDS_Shape can reference same TShape              │
 │                                                                 │
-│  LAYER 2: TopoDS_TShape (TVertex, TEdge, TFace, etc.)          │
+│  LAYER 2: TopoDS_TShape (TVertex, TEdge, TFace, etc.)           │
 │  ────────────────────────────────────────────────────           │
 │  • The actual topological structure                             │
 │  • Contains child shapes, flags                                 │
 │  • Abstract — no geometry attached                              │
 │                                                                 │
-│  LAYER 3: BRep_TShape (BRep_TVertex, BRep_TEdge, BRep_TFace)   │
+│  LAYER 3: BRep_TShape (BRep_TVertex, BRep_TEdge, BRep_TFace)    │
 │  ───────────────────────────────────────────────────────────    │
 │  • Inherits from TopoDS_TShape                                  │
 │  • Adds geometric data (curves, surfaces, tolerances)           │
@@ -742,17 +742,17 @@ These have closed-form analytic solutions.
 │                                                                 │
 │  ANALYTIC (Phase 8)                                             │
 │  ──────────────────                                             │
-│  • Plane ∩ Plane         → closed-form line                    │
-│  • Plane ∩ Cylinder      → closed-form ellipse                 │
-│  • Plane ∩ Sphere        → closed-form circle                  │
-│  • Cylinder ∩ Cylinder   → conic sections                      │
-│  Complexity: Medium. Well-understood algorithms.               │
+│  • Plane ∩ Plane         → closed-form line                     │
+│  • Plane ∩ Cylinder      → closed-form ellipse                  │
+│  • Plane ∩ Sphere        → closed-form circle                   │
+│  • Cylinder ∩ Cylinder   → conic sections                       │
+│  Complexity: Medium. Well-understood algorithms.                │
 │                                                                 │
 │  NURBS (Not in scope)                                           │
 │  ────────────────────                                           │
-│  • NURBS ∩ NURBS         → numerical marching                  │
-│  • Branching, loops, degeneracies                              │
-│  Complexity: Extreme. OCCT has tens of thousands of lines.     │
+│  • NURBS ∩ NURBS         → numerical marching                   │
+│  • Branching, loops, degeneracies                               │
+│  Complexity: Extreme. OCCT has tens of thousands of lines.      │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -768,7 +768,7 @@ Boolean operations (union, subtract, intersect) seem simple conceptually but inv
 │                                                                 │
 │  STAGE 1: CANDIDATE DETECTION                                   │
 │  ────────────────────────────                                   │
-│  • AABB (bounding box) overlap test                            │
+│  • AABB (bounding box) overlap test                             │
 │  • Filter face pairs that might intersect                       │
 │  • Fast, rarely fails                                           │
 │                                                                 │
@@ -780,17 +780,17 @@ Boolean operations (union, subtract, intersect) seem simple conceptually but inv
 │                                                                 │
 │  STAGE 3: FACE CLASSIFICATION                                   │
 │  ────────────────────────────                                   │
-│  • For each face, determine: Inside, Outside, or On boundary   │
-│  • Ray casting + winding number                                │
-│  • Can fail on degenerate cases (face exactly on boundary)     │
+│  • For each face, determine: Inside, Outside, or On boundary    │
+│  • Ray casting + winding number                                 │
+│  • Can fail on degenerate cases (face exactly on boundary)      │
 │                                                                 │
 │  STAGE 4: SEWING                                                │
 │  ───────────────                                                │
 │  • Trim faces along intersection curves                         │
 │  • Split edges where curves cross                               │
-│  • Merge surviving faces into new solid                        │
-│  • Repair topology (match vertices within tolerance)           │
-│  • Can fail if topology becomes inconsistent                   │
+│  • Merge surviving faces into new solid                         │
+│  • Repair topology (match vertices within tolerance)            │
+│  • Can fail if topology becomes inconsistent                    │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -1112,19 +1112,19 @@ Every phase follows this pattern:
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  1. WRITE TEST FIRST                                            │
-│     ├── Test file: tests/<module>/<feature>.test.ts            │
+│     ├── Test file: tests/<module>/<feature>.test.ts             │
 │     ├── Describe expected behavior                              │
-│     └── Use concrete values with known results                 │
+│     └── Use concrete values with known results                  │
 │                                                                 │
 │  2. RUN TEST → CONFIRM FAILURE                                  │
-│     └── Test should fail (feature doesn't exist yet)           │
+│     └── Test should fail (feature doesn't exist yet)            │
 │                                                                 │
 │  3. WRITE MINIMAL IMPLEMENTATION                                │
-│     ├── Source file: src/<module>/<feature>.ts                 │
-│     └── Just enough to pass the test                           │
+│     ├── Source file: src/<module>/<feature>.ts                  │
+│     └── Just enough to pass the test                            │
 │                                                                 │
 │  4. RUN TEST → CONFIRM PASS                                     │
-│     └── Test should now pass                                   │
+│     └── Test should now pass                                    │
 │                                                                 │
 │  5. REFACTOR IF NEEDED                                          │
 │     ├── Clean up code                                           │
@@ -1132,7 +1132,7 @@ Every phase follows this pattern:
 │     └── Commit                                                  │
 │                                                                 │
 │  6. NEXT TEST                                                   │
-│     └── Repeat for next behavior                               │
+│     └── Repeat for next behavior                                │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```

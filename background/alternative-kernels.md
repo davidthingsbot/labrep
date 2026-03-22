@@ -39,26 +39,26 @@ Many have tried to build alternatives. Most have failed or stalled. This documen
 │                                                                 │
 │  PRODUCTION READY                                               │
 │  ────────────────                                               │
-│  • OpenCASCADE ────────── 30+ years, 3.6M lines, the standard  │
+│  • OpenCASCADE ────────── 30+ years, 3.6M lines, the standard   │
 │                                                                 │
 │  MOST MATURE ALTERNATIVE                                        │
 │  ───────────────────────                                        │
-│  • Truck ─────────────── 4+ years, Rust, NURBS + booleans      │
+│  • Truck ─────────────── 4+ years, Rust, NURBS + booleans       │
 │                                                                 │
 │  EXPERIMENTAL / EARLY STAGE                                     │
 │  ──────────────────────────                                     │
-│  • Fornjot ───────────── 4+ years, Rust, lines/circles only    │
-│  • vcad ──────────────── Months old, AI-built, unverified      │
+│  • Fornjot ───────────── 4+ years, Rust, lines/circles only     │
+│  • vcad ──────────────── Months old, AI-built, unverified       │
 │                                                                 │
 │  DISCONTINUED / PIVOTED                                         │
 │  ──────────────────────                                         │
-│  • CADmium ───────────── Used Truck, team dissolved            │
+│  • CADmium ───────────── Used Truck, team dissolved             │
 │                                                                 │
 │  DIFFERENT APPROACH (NOT BREP)                                  │
 │  ─────────────────────────────                                  │
-│  • libfive ───────────── SDF-based, not true BRep              │
-│  • ImplicitCAD ───────── SDF + CSG, Haskell                    │
-│  • SolveSpace ────────── Own kernel, NURBS but limited         │
+│  • libfive ───────────── SDF-based, not true BRep               │
+│  • ImplicitCAD ───────── SDF + CSG, Haskell                     │
+│  • SolveSpace ────────── Own kernel, NURBS but limited          │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -120,9 +120,9 @@ Building a BRep kernel is extraordinarily difficult. This table shows why most a
 │  • Robust booleans on arbitrary geometry                        │
 │  • Filleting (rolling ball algorithm)                           │
 │  • STEP import/export                                           │
-│  • Edge cases, degeneracies, tolerancing                       │
+│  • Edge cases, degeneracies, tolerancing                        │
 │                                                                 │
-│  This is why OCCT took decades and is millions of lines.       │
+│  This is why OCCT took decades and is millions of lines.        │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
