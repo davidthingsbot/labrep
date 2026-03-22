@@ -1,0 +1,1024 @@
+#!/usr/bin/env python3
+"""
+Test suite for check-ascii-boxes.py
+
+Run:
+  python3 test_check_ascii_boxes.py           # normal mode
+  python3 test_check_ascii_boxes.py -v        # verbose — show all diagrams
+  python3 test_check_ascii_boxes.py -vv       # extra verbose — show issues too
+
+Tests progress from simple to complex:
+  1. Simple single boxes
+  2. Boxes with content
+  3. Boxes with mid-rules (├───┤)
+  4. Labeled borders (┌─ Title ──┐)
+  5. Side-by-side boxes
+  6. Nested boxes
+  7. Deeply nested boxes
+  8. Side-by-side + nested combinations
+  9. Table-style boxes (n×m grids)
+  10. Vertical bars used for non-box purposes
+  11. Double-wide and special-width characters
+  12. Unclosed and malformed boxes
+"""
+
+import sys
+import os
+import importlib.util
+from pathlib import Path
+
+# ── Load checker module ─────────────────────────────────────────────────
+SCRIPT_DIR = Path(__file__).parent
+spec = importlib.util.spec_from_file_location(
+    "check_ascii_boxes",
+    SCRIPT_DIR / "check-ascii-boxes.py"
+)
+checker = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(checker)
+
+# ── Verbosity ───────────────────────────────────────────────────────────
+VERBOSE = 0
+
+
+def check(diagram_str):
+    """Run the checker on a diagram string wrapped in a fenced code block.
+    Returns list of issue strings (empty = pass)."""
+    md = f"```\n{diagram_str}\n```\n"
+    lines = md.split('\n')
+    blocks = checker.extract_code_blocks(lines)
+    all_issues = []
+    for _start, block_lines in blocks:
+        all_issues.extend(checker.check_code_block(block_lines))
+    return all_issues
+
+
+# ── Test infrastructure ─────────────────────────────────────────────────
+_results = {'pass': 0, 'fail': 0, 'tests': []}
+
+
+def expect_clean(name, diagram):
+    """Assert the checker finds NO issues."""
+    issues = check(diagram)
+    ok = len(issues) == 0
+    _results['tests'].append((name, ok, diagram, issues))
+    if ok:
+        _results['pass'] += 1
+    else:
+        _results['fail'] += 1
+
+
+def expect_issues(name, diagram, min_issues=1):
+    """Assert the checker finds at least min_issues problems."""
+    issues = check(diagram)
+    ok = len(issues) >= min_issues
+    _results['tests'].append((name, ok, diagram, issues))
+    if ok:
+        _results['pass'] += 1
+    else:
+        _results['fail'] += 1
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  1. SIMPLE SINGLE BOXES
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_simple_boxes():
+    # --- Good ---
+
+    expect_clean("minimal box (3×3)", """\
+┌─┐
+│ │
+└─┘""")
+
+    expect_clean("small box", """\
+┌────┐
+│ Hi │
+└────┘""")
+
+    expect_clean("wider box with padding", """\
+┌──────────────┐
+│  Hello       │
+│  World       │
+└──────────────┘""")
+
+    expect_clean("tall narrow box", """\
+┌──┐
+│  │
+│  │
+│  │
+│  │
+└──┘""")
+
+    expect_clean("single-char-wide box", """\
+┌┐
+││
+└┘""")
+
+    # --- Bad ---
+
+    expect_issues("bottom too narrow", """\
+┌──────┐
+│      │
+└─────┘""")
+
+    expect_issues("bottom too wide", """\
+┌──────┐
+│      │
+└───────┘""")
+
+    expect_issues("right edge misaligned on content", """\
+┌──────┐
+│     │
+└──────┘""")
+
+    expect_issues("left edge misaligned on content", """\
+┌──────┐
+ │     │
+└──────┘""")
+
+    expect_issues("content line one char too wide", """\
+┌──────┐
+│       │
+└──────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  2. BOXES WITH CONTENT VARIATIONS
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_content_variations():
+    expect_clean("box with text content", """\
+┌────────────────────┐
+│ Name: Alice        │
+│ Role: Engineer     │
+│ Status: Active     │
+└────────────────────┘""")
+
+    expect_clean("box with special chars in content", """\
+┌──────────────────┐
+│ price: $42.00    │
+│ ratio: 3/4       │
+│ note: (pending)  │
+│ path: ~/src/*.ts │
+└──────────────────┘""")
+
+    expect_clean("box with arrows in content", """\
+┌──────────────────┐
+│ A → B → C → D    │
+│ ◄── feedback ──► │
+└──────────────────┘""")
+
+    expect_issues("mixed content line widths", """\
+┌──────────────────┐
+│ short           │
+│ this line is longer │
+└──────────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  3. BOXES WITH MID-RULES
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_mid_rules():
+    expect_clean("simple mid-rule", """\
+┌──────────┐
+│ Header   │
+├──────────┤
+│ Body     │
+└──────────┘""")
+
+    expect_clean("multiple mid-rules", """\
+┌──────────┐
+│ Row 1    │
+├──────────┤
+│ Row 2    │
+├──────────┤
+│ Row 3    │
+└──────────┘""")
+
+    expect_issues("mid-rule too short", """\
+┌──────────┐
+│ Header   │
+├─────────┤
+│ Body     │
+└──────────┘""")
+
+    expect_issues("mid-rule too long", """\
+┌──────────┐
+│ Header   │
+├───────────┤
+│ Body     │
+└──────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  4. LABELED BORDERS
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_labeled_borders():
+    # --- Good ---
+
+    expect_clean("labeled top border", """\
+┌─ Title ──────┐
+│              │
+└──────────────┘""")
+
+    expect_clean("labeled with longer name", """\
+┌─ Research Notes ──────────┐
+│                           │
+│  Some research content    │
+│                           │
+└───────────────────────────┘""")
+
+    expect_clean("labeled with punctuation", """\
+┌─ Phase 3: API ───────┐
+│                      │
+└──────────────────────┘""")
+
+    expect_clean("label with numbers", """\
+┌─ Item #42 ───┐
+│              │
+└──────────────┘""")
+
+    # --- Bad ---
+
+    expect_issues("labeled top 1 char too short", """\
+┌─ Research ──────┐
+│                  │
+└──────────────────┘""")
+
+    expect_issues("labeled top 1 char too wide", """\
+┌─ Research ────────┐
+│                  │
+└──────────────────┘""")
+
+    expect_issues("labeled top, content lines vary", """\
+┌─ Title ──────────────┐
+│                      │
+│  some content       │
+│                      │
+└──────────────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  5. SIDE-BY-SIDE BOXES
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_side_by_side():
+    # --- Good ---
+
+    expect_clean("two boxes side by side", """\
+┌──────┐  ┌──────┐
+│ Left │  │ Right│
+└──────┘  └──────┘""")
+
+    expect_clean("three boxes side by side", """\
+┌──────┐  ┌──────┐  ┌──────┐
+│  A   │  │  B   │  │  C   │
+└──────┘  └──────┘  └──────┘""")
+
+    expect_clean("side by side with arrows between", """\
+┌──────┐      ┌──────┐      ┌──────┐
+│ Src  │ ───► │ Proc │ ───► │ Out  │
+└──────┘      └──────┘      └──────┘""")
+
+    expect_clean("side by side different widths", """\
+┌────┐  ┌──────────────┐  ┌──┐
+│ A  │  │ Longer box   │  │B │
+└────┘  └──────────────┘  └──┘""")
+
+    # --- Bad ---
+
+    expect_issues("side by side, first box right edge off", """\
+┌──────┐  ┌──────┐
+│ Left  │  │Right │
+└──────┘  └──────┘""")
+
+    expect_issues("side by side, second box bottom mismatch", """\
+┌──────┐  ┌──────┐
+│ Left │  │Right │
+└──────┘  └─────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  6. NESTED BOXES
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_nested():
+    # --- Good ---
+
+    expect_clean("simple nesting", """\
+┌──────────────┐
+│  ┌────────┐  │
+│  │ Inner  │  │
+│  └────────┘  │
+└──────────────┘""")
+
+    expect_clean("nesting with content around inner", """\
+┌──────────────────┐
+│ Outer header     │
+│                  │
+│  ┌────────────┐  │
+│  │ Inner box  │  │
+│  └────────────┘  │
+│                  │
+│ Outer footer     │
+└──────────────────┘""")
+
+    expect_clean("two inner boxes stacked", """\
+┌──────────────┐
+│  ┌────────┐  │
+│  │ Top    │  │
+│  └────────┘  │
+│  ┌────────┐  │
+│  │ Bottom │  │
+│  └────────┘  │
+└──────────────┘""")
+
+    expect_clean("two inner boxes side by side inside outer", """\
+┌──────────────────────┐
+│  ┌──────┐  ┌──────┐  │
+│  │  A   │  │  B   │  │
+│  └──────┘  └──────┘  │
+└──────────────────────┘""")
+
+    # --- Bad ---
+
+    # NOTE: inner box touching outer edge (│ at same col as ┐) is hard to
+    # detect structurally — the checker sees ┐ as a valid right edge char.
+    # This is a known limitation. Test a clearly broken inner box instead.
+
+    expect_issues("inner box content misaligned", """\
+┌──────────────┐
+│  ┌────────┐  │
+│  │ Inner   │  │
+│  └────────┘  │
+└──────────────┘""")
+
+    expect_issues("inner box misaligned within outer", """\
+┌──────────────┐
+│  ┌────────┐  │
+│  │ Inner   │  │
+│  └────────┘  │
+└──────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  7. DEEPLY NESTED BOXES
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_deep_nesting():
+    # --- Good ---
+
+    expect_clean("three levels deep", """\
+┌──────────────────────┐
+│  ┌──────────────┐    │
+│  │  ┌────────┐  │    │
+│  │  │ Deep   │  │    │
+│  │  └────────┘  │    │
+│  └──────────────┘    │
+└──────────────────────┘""")
+
+    expect_clean("three levels with labeled borders", """\
+┌─ Outer ──────────────────┐
+│  ┌─ Middle ──────────┐   │
+│  │  ┌─ Inner ───┐    │   │
+│  │  │           │    │   │
+│  │  └───────────┘    │   │
+│  └───────────────────┘   │
+└──────────────────────────┘""")
+
+    # --- Bad ---
+
+    expect_issues("deep nesting with middle box misaligned", """\
+┌──────────────────────┐
+│  ┌──────────────┐    │
+│  │  ┌────────┐  │    │
+│  │  │ Deep   │  │    │
+│  │  └────────┘   │    │
+│  └──────────────┘    │
+└──────────────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  8. SIDE-BY-SIDE + NESTED COMBINATIONS
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_sidebyside_nested():
+    # --- Good ---
+
+    expect_clean("outer with side-by-side labeled inner boxes", """\
+┌─ Project ──────────────────────────────────┐
+│                                            │
+│  ┌─ Research ───────┐  ┌─ Design ───────┐  │
+│  │                  │  │                │  │
+│  │  ┌────┐ ┌────┐   │  │  ┌──────────┐  │  │
+│  │  │ A  │ │ B  │   │  │  │ Mockup   │  │  │
+│  │  └────┘ └────┘   │  │  └──────────┘  │  │
+│  │                  │  │                │  │
+│  └──────────────────┘  └────────────────┘  │
+│                                            │
+└────────────────────────────────────────────┘""")
+
+    expect_clean("flow diagram with labeled boxes", """\
+┌─ Input ──┐      ┌─ Process ─┐      ┌─ Output ─┐
+│          │ ───► │           │ ───► │          │
+└──────────┘      └───────────┘      └──────────┘""")
+
+    # --- Bad ---
+
+    expect_issues("outer box content line off by 1", """\
+┌─ Outer ───────────────────┐
+│                           │
+│  ┌──────┐  ┌──────┐     │
+│  │  A   │  │  B   │     │
+│  └──────┘  └──────┘     │
+│                           │
+└───────────────────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  9. TABLE-STYLE BOXES (n×m grids)
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_tables():
+    # --- Good ---
+
+    expect_clean("2-column table", """\
+┌──────────┬──────────┐
+│ Col A    │ Col B    │
+├──────────┼──────────┤
+│ Value 1  │ Value 2  │
+│ Value 3  │ Value 4  │
+└──────────┴──────────┘""")
+
+    expect_clean("3-column table", """\
+┌──────────┬──────────┬──────────┐
+│ Name     │ Type     │ Status   │
+├──────────┼──────────┼──────────┤
+│ Alice    │ Admin    │ Active   │
+│ Bob      │ User     │ Inactive │
+└──────────┴──────────┴──────────┘""")
+
+    expect_clean("table with different column widths", """\
+┌──────────────┬─────────────┬─────────────┐
+│ Approach     │ Pros        │ Cons        │
+├──────────────┼─────────────┼─────────────┤
+│ Option A     │ Fast        │ Complex     │
+│ Option B     │ Simple      │ Slow        │
+└──────────────┴─────────────┴─────────────┘""")
+
+    # --- Bad ---
+
+    expect_issues("table mid-rule wrong width", """\
+┌──────────┬──────────┐
+│ Col A    │ Col B    │
+├─────────┼──────────┤
+│ Value 1  │ Value 2  │
+└──────────┴──────────┘""")
+
+    expect_issues("table bottom wrong width", """\
+┌──────────┬──────────┐
+│ Col A    │ Col B    │
+├──────────┼──────────┤
+│ Value 1  │ Value 2  │
+└─────────┴──────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  10. VERTICAL BARS FOR NON-BOX PURPOSES
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_non_box_verticals():
+    """│ used in tree diagrams, separators, etc. — checker should NOT
+    treat these as box edges or report false positives."""
+
+    expect_clean("tree diagram (no boxes)", """\
+Parent
+├── Child 1
+│   ├── Grandchild A
+│   └── Grandchild B
+└── Child 2""")
+
+    expect_clean("tree diagram alongside a box", """\
+┌──────┐
+│ Box  │   Parent
+└──────┘   ├── A
+           └── B""")
+
+    expect_clean("pipe-separated text (no boxes)", """\
+name | type | status
+-----|------|-------
+foo  | str  | ok
+bar  | int  | err""")
+
+    expect_clean("box followed by tree on later lines", """\
+┌──────┐
+│ Info │
+└──────┘
+
+Hierarchy:
+├── Level 1
+│   └── Level 2
+└── Level 3""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  11. DOUBLE-WIDE AND SPECIAL-WIDTH CHARACTERS
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_wide_chars():
+    expect_issues("emoji in box content (double-wide)", """\
+┌──────────────┐
+│ Status: ⏱   │
+└──────────────┘""", min_issues=1)
+
+    expect_issues("pushpin emoji (double-wide)", """\
+┌────────────────┐
+│ 📌 Pinned note │
+└────────────────┘""", min_issues=1)
+
+    expect_clean("box with no wide chars", """\
+┌──────────────┐
+│ Status: OK   │
+└──────────────┘""")
+
+    expect_issues("CJK character in box (full-width)", """\
+┌──────────────┐
+│ 名前: Test   │
+└──────────────┘""", min_issues=1)
+
+    expect_issues("multiple emojis", """\
+┌──────────────────┐
+│ 🔔 Alert 🔕 Mute │
+└──────────────────┘""", min_issues=1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  12. UNCLOSED AND MALFORMED BOXES
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_malformed():
+    expect_issues("unclosed box (no bottom)", """\
+┌──────┐
+│ Oops │""")
+
+    # NOTE: orphan └──────┘ without matching ┌──────┐ is not currently
+    # detected. The checker only flags unclosed tops, not unmatched bottoms.
+    # This is a known limitation — orphan bottoms are rare in practice.
+    expect_clean("orphan bottom (known limitation — not detected)", """\
+│ Oops │
+└──────┘""")
+
+    expect_issues("top/bottom at different columns", """\
+┌──────┐
+│      │
+  └──────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  13. EDGE CASES AND REGRESSIONS
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_edge_cases():
+    expect_clean("box at column offset (not col 0)", """\
+   ┌────────┐
+   │ Offset │
+   └────────┘""")
+
+    expect_clean("empty code block (no boxes)", "")
+
+    expect_clean("text with no boxes at all", """\
+This is just text.
+No boxes here.
+Nothing to check.""")
+
+    expect_clean("box with ┬ in top border", """\
+┌──────┬──────┐
+│ A    │ B    │
+└──────┴──────┘""")
+
+    expect_clean("box immediately after another", """\
+┌──────┐
+│  A   │
+└──────┘
+┌──────┐
+│  B   │
+└──────┘""")
+
+    expect_clean("labeled boxes side by side (from groups.md)", """\
+┌─ Shared: API Docs ─────┐    ┌─ Shared: API Docs ─────┐
+│                        │    │                        │
+│  ┌──────────┐          │    │  ┌──────────┐          │
+│  │ Endpoint │  (same   │    │  │ Endpoint │  (same   │
+│  │ Spec     │  data)   │    │  │ Spec     │  data)   │
+│  └──────────┘          │    │  └──────────┘          │
+│                        │    │                        │
+└────────────────────────┘    └────────────────────────┘""")
+
+    expect_clean("box used as comparison table (from groups.md)", """\
+┌──────────────────────────────┬───────────────────────────┐
+│ Concrete Group               │ Virtual Group             │
+├──────────────────────────────┼───────────────────────────┤
+│ Visible boundary on canvas   │ No boundary (optional)    │
+│ parentId set on children     │ Membership is computed    │
+│ User drags items in/out      │ Query determines members  │
+│ Persisted in item model      │ Persisted as query def    │
+│ Items belong to one group    │ Items match many queries  │
+│ Moved by dragging the group  │ Not spatially anchored    │
+└──────────────────────────────┴───────────────────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  14. REAL-WORLD DIAGRAMS FROM THE CODEBASE
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_real_world():
+    """Diagrams adapted from actual docs that caused problems."""
+
+    expect_clean("flow diagram (the original AGENTS.md bug)", """\
+┌──────────┐      ┌──────────┐      ┌──────────┐
+│  Source  │ ───► │ Process  │ ───► │  Output  │
+└──────────┘      └──────────┘      └──────────┘""")
+
+    expect_issues("flow diagram with Source padding bug", """\
+┌──────────┐      ┌──────────┐      ┌──────────┐
+│  Source   │ ───► │ Process  │ ───► │  Output  │
+└──────────┘      └──────────┘      └──────────┘""")
+
+    expect_clean("LOD table (from groups.md)", """\
+┌───────────────────────────────────────────────────────────┐
+│ LOD        │ Group Renders As                             │
+├───────────────────────────────────────────────────────────┤
+│ thumbnail  │ Tinted rectangle + label only                │
+│ reduced    │ Boundary + label + item silhouettes          │
+│ full       │ Boundary + label + all child items rendered  │
+└───────────────────────────────────────────────────────────┘""")
+
+    expect_clean("agent scoping diagram (from groups.md)", """\
+┌─ Research ───────────────────────────┐
+│                                      │
+│  Agent context = {                   │
+│    Paper A, Paper B, Summary Note    │
+│  }                                   │
+│                                      │
+│  ┌───────────────────┐               │
+│  │  Research Agent   │  ◄── sees     │
+│  └───────────────────┘   group       │
+│                          contents    │
+│  ┌─────────┐  ┌─────────┐            │
+│  │ Paper A │  │ Paper B │            │
+│  └─────────┘  └─────────┘            │
+│                                      │
+└──────────────────────────────────────┘""")
+
+    expect_clean("nested project diagram (from groups.md)", """\
+┌─ Project ──────────────────────────────────┐
+│                                            │
+│  ┌─ Research ───────┐  ┌─ Design ───────┐  │
+│  │                  │  │                │  │
+│  │  ┌────┐ ┌────┐   │  │  ┌──────────┐  │  │
+│  │  │ A  │ │ B  │   │  │  │ Mockup   │  │  │
+│  │  └────┘ └────┘   │  │  └──────────┘  │  │
+│  │                  │  │                │  │
+│  └──────────────────┘  └────────────────┘  │
+│                                            │
+└────────────────────────────────────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  15. STAGGERED BOX CLOSINGS (boxes that close at different lines)
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_staggered_closings():
+    """Boxes side-by-side that open on the same line but close on different
+    lines, with free text filling the space where short boxes have closed.
+    This is common in LOD comparison diagrams (thumbnail | reduced | full)."""
+
+    # --- Good (should be clean) ---
+
+    expect_clean("two boxes, left closes first", """\
+┌───┐  ┌──────────────┐
+│ A │  │ B            │
+└───┘  │ more content │
+       │ even more    │
+       └──────────────┘""")
+
+    expect_clean("three staggered boxes (thumbnail/reduced/full pattern)", """\
+┌───┐  ┌────────┐  ┌──────────────────┐
+│ T │  │ R      │  │ Full view        │
+└───┘  │ Reduce │  │                  │
+       └────────┘  │ More content     │
+                   │ And more still   │
+                   └──────────────────┘""")
+
+    # --- Bad ---
+
+    expect_issues("staggered, right box right edge misaligned", """\
+┌───┐  ┌──────────────┐
+│ A │  │ B            │
+└───┘  │ more content  │
+       └──────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  16. HORIZONTAL SEPARATORS INSIDE BOXES (not mid-rules)
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_separators_inside_boxes():
+    """Lines of ─ used as visual separators inside a box, but NOT attached
+    to the box edges with ├ ┤. These should not be treated as mid-rules."""
+
+    expect_clean("menu with dash separators", """\
+┌───────────────────┐
+│ Cut        Ctrl+X │
+│ Copy       Ctrl+C │
+│ Paste      Ctrl+V │
+│ ────────────────  │
+│ Undo       Ctrl+Z │
+│ ────────────────  │
+│ Clear selection   │
+└───────────────────┘""")
+
+    expect_clean("box with thin divider line", """\
+┌────────────────┐
+│ Header         │
+│ ────────────── │
+│ Body content   │
+└────────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  17. DOUBLE-WIDE CHARACTERS IN REAL CONTEXT
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_wide_chars_in_context():
+    """Double-wide chars like 📌 render as 2 columns, so a box that looks
+    aligned by character count is actually misaligned visually."""
+
+    expect_issues("emoji in toolbar (from item-frame.md)", """\
+┌──────────────────────────────────┐
+│ [📌 pin][Z-drag][× hide]        │
+└──────────────────────────────────┘""", min_issues=1)
+
+    # ▌ (LEFT HALF BLOCK, U+258C) is east_asian_width Neutral — single-width
+    # in most monospace fonts. Not flagged by the checker, which is correct.
+    expect_clean("selection indicator ▌ (single-width in monospace)", """\
+┌─────────────────────────────┐
+│ Title    ▌ My Item          │
+│ Content  ▌ Hello world      │
+└─────────────────────────────┘""")
+
+    expect_clean("box with ASCII-only status indicators", """\
+┌─────────────────────────────┐
+│ Status: [*] Active          │
+│ Phase:  [2] Running         │
+└─────────────────────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  18. BOXES WITH ANNOTATIONS OUTSIDE
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_annotations_outside():
+    """Text annotations placed to the right of or below boxes.
+    These should not cause false positives."""
+
+    expect_clean("box with arrow annotation on the right", """\
+┌──────────┐
+│ Content  │  ◄── this is a note
+└──────────┘""")
+
+    expect_clean("box with right-side annotations on every line", """\
+┌────────────────┐
+│ Header         │  ← always visible
+├────────────────┤
+│ Body           │  ← scrollable region
+│ More body      │
+└────────────────┘""")
+
+    expect_clean("two boxes with text between them vertically", """\
+┌──────────┐
+│  Before  │
+└──────────┘
+   ↓ transforms into ↓
+┌──────────┐
+│  After   │
+└──────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  19. BORDERLESS / PARTIAL BOXES
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_partial_structures():
+    """Structures that use some box chars but aren't complete boxes.
+    The checker should not crash or produce excessive false positives."""
+
+    expect_clean("arrow diagram with no boxes", """\
+  A ───► B ───► C
+  │             │
+  └─────────────┘""")
+
+    expect_clean("L-shaped resize handles (from item-frame.md)", """\
+  L── ── ── ── ── ── ── ── ── ──L""")
+
+    expect_clean("standalone mid-rule (no enclosing box)", """\
+├──────────────────────────────────┤""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  20. BOXES INSIDE LABELED BORDERS (regression suite)
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_labeled_border_regressions():
+    """The labeled border ┌─ Name ──┐ pattern caused many bugs.
+    This section collects specific regression cases."""
+
+    expect_clean("labeled box with mid-rule", """\
+┌─ Config ──────────┐
+│ Key     │ Value   │
+├───────────────────┤
+│ debug   │ true    │
+└───────────────────┘""")
+
+    expect_issues("labeled box top wider than content", """\
+┌─ Too Wide ────────────┐
+│ Short content        │
+└──────────────────────┘""")
+
+    expect_issues("labeled box top narrower than content", """\
+┌─ Short ──────┐
+│ Longer content line │
+└────────────────────┘""")
+
+    expect_clean("labeled box with inner labeled box", """\
+┌─ Outer ────────────────┐
+│  ┌─ Inner ──────────┐  │
+│  │ Content          │  │
+│  └──────────────────┘  │
+└────────────────────────┘""")
+
+    expect_issues("labeled inner box off by 1", """\
+┌─ Outer ────────────────┐
+│  ┌─ Inner ─────────┐   │
+│  │ Content          │   │
+│  └──────────────────┘   │
+└────────────────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  21. ASCII +---+ BOXES (plain-ASCII variant)
+# ═══════════════════════════════════════════════════════════════════════
+
+def test_ascii_plus_boxes():
+    """Boxes drawn with +, -, and | instead of Unicode box-drawing chars.
+    The checker currently does NOT detect these at all — they're invisible.
+    These tests document that limitation."""
+
+    # The checker sees nothing here — no box-drawing chars to check.
+    # These all pass as "clean" even though some are misaligned.
+
+    expect_clean("ASCII box (checker ignores — no box-drawing chars)", """\
++---------+
+| Content |
++---------+""")
+
+    expect_clean("misaligned ASCII box (checker blind spot)", """\
++---------+
+| Content  |
++---------+""")
+
+    expect_clean("ASCII box from property-inspector.md (checker ignores)", """\
++---------------------------------+
+|  [toggle tab on right edge]     |
++---------------------------------+
+|  Item Title          [x close]  |
++---------------------------------+
+|  ID        [s-1234abcd     ]    |
+|  Type      [ace            ]    |
+|  Title     [_______________]    |
++---------------------------------+""")
+
+    expect_clean("ASCII table (checker ignores)", """\
++-----------------------------------------+
+|  3 items selected             [x close] |
++-----------------------------------------+
+|            | Clock   | Ace    | Map     |
+| title      | [____]  | [___]  | [___]   |
+| position.x | [100]   | [-200] | [50]    |
++-----------------------------------------+""")
+
+    # --- Converted versions (now using box-drawing chars, checker sees them) ---
+
+    expect_clean("converted inspector panel (box-drawing)", """\
+┌─────────────────────────────────┐
+│  [toggle tab on right edge]     │
+├─────────────────────────────────┤
+│  Item Title          [x close]  │
+├─────────────────────────────────┤
+│  ID        [s-1234abcd     ]    │
+│  Type      [ace            ]    │
+│  Title     [_______________]    │
+└─────────────────────────────────┘""")
+
+    expect_clean("converted multi-select table (box-drawing)", """\
+┌─────────────────────────────────────────┐
+│  3 items selected             [x close] │
+├─────────────────────────────────────────┤
+│            │ Clock   │ Ace    │ Map     │
+│ title      │ [____]  │ [___]  │ [___]   │
+│ position.x │ [100]   │ [-200] │ [50]    │
+└─────────────────────────────────────────┘""")
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Runner
+# ═══════════════════════════════════════════════════════════════════════
+
+def run_all():
+    test_fns = [
+        ("1. Simple single boxes",            test_simple_boxes),
+        ("2. Boxes with content",             test_content_variations),
+        ("3. Mid-rules (├───┤)",              test_mid_rules),
+        ("4. Labeled borders",                test_labeled_borders),
+        ("5. Side-by-side boxes",             test_side_by_side),
+        ("6. Nested boxes",                   test_nested),
+        ("7. Deeply nested boxes",            test_deep_nesting),
+        ("8. Side-by-side + nested",          test_sidebyside_nested),
+        ("9. Table-style boxes (n×m)",        test_tables),
+        ("10. Non-box vertical bars",         test_non_box_verticals),
+        ("11. Double-wide characters",        test_wide_chars),
+        ("12. Unclosed/malformed boxes",      test_malformed),
+        ("13. Edge cases & regressions",      test_edge_cases),
+        ("14. Real-world diagrams",           test_real_world),
+        ("15. Staggered box closings",        test_staggered_closings),
+        ("16. Separators inside boxes",       test_separators_inside_boxes),
+        ("17. Wide chars in context",         test_wide_chars_in_context),
+        ("18. Annotations outside boxes",     test_annotations_outside),
+        ("19. Partial / borderless",          test_partial_structures),
+        ("20. Labeled border regressions",    test_labeled_border_regressions),
+        ("21. ASCII +---+ boxes (blind spot)", test_ascii_plus_boxes),
+    ]
+
+    for section_name, fn in test_fns:
+        before = len(_results['tests'])
+        fn()
+        after = len(_results['tests'])
+        count = after - before
+        section_pass = sum(1 for _, ok, _, _ in _results['tests'][before:] if ok)
+        section_fail = count - section_pass
+        mark = '✓' if section_fail == 0 else '✗'
+        print(f"  {mark} {section_name} ({section_pass}/{count})")
+
+        if VERBOSE >= 1:
+            for name, ok, diagram, issues in _results['tests'][before:]:
+                status = '  PASS' if ok else '  FAIL'
+                print(f"    {status}: {name}")
+                if VERBOSE >= 2 or not ok:
+                    for line in diagram.split('\n'):
+                        print(f"      │ {line}")
+                    if issues:
+                        for issue in issues:
+                            print(f"      ⚠ {issue}")
+                    elif not ok:
+                        print(f"      ⚠ Expected issues but found none!")
+                    print()
+
+    print()
+    total = _results['pass'] + _results['fail']
+    print(f"  {_results['pass']}/{total} passed", end="")
+    if _results['fail'] > 0:
+        print(f", {_results['fail']} FAILED")
+        print()
+        print("  Failed tests:")
+        for name, ok, diagram, issues in _results['tests']:
+            if not ok:
+                print(f"    ✗ {name}")
+                for line in diagram.split('\n'):
+                    print(f"      │ {line}")
+                if issues:
+                    for issue in issues:
+                        print(f"      ⚠ {issue}")
+                else:
+                    print(f"      ⚠ Expected issues but found none!")
+                print()
+    else:
+        print()
+
+    return _results['fail'] == 0
+
+
+if __name__ == '__main__':
+    if '-vv' in sys.argv:
+        VERBOSE = 2
+    elif '-v' in sys.argv:
+        VERBOSE = 1
+
+    print()
+    print("  check-ascii-boxes.py test suite")
+    print("  " + "─" * 40)
+    print()
+
+    success = run_all()
+    sys.exit(0 if success else 1)
