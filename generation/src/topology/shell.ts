@@ -48,9 +48,22 @@ function collectWireEdges(wire: Wire): Array<{ key: string; directed: string }> 
     const k1 = `${round(start.x)},${round(start.y)},${round(start.z)}`;
     const k2 = `${round(end.x)},${round(end.y)},${round(end.z)}`;
     
+    // For closed curves (start == end), use forward flag to distinguish direction
+    const isClosed = oe.edge.curve.isClosed;
+    let directed: string;
+    if (isClosed) {
+      // For closed curves, encode direction using forward flag
+      // "fwd" means traversing curve in its natural direction
+      // "rev" means traversing curve in reverse
+      directed = `${k1}|${oe.forward ? 'fwd' : 'rev'}`;
+    } else {
+      // For open curves, use start->end direction
+      directed = `${k1}->${k2}`;
+    }
+    
     edges.push({
       key: k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`,
-      directed: `${k1}->${k2}`,
+      directed,
     });
   }
   

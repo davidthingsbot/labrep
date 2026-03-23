@@ -1,5 +1,5 @@
 import { point3d, vec3d, plane, Plane, cross, normalize, subtractPoints } from '../core';
-import { PlaneSurface, CylindricalSurface, makePlaneSurface } from '../surfaces';
+import { PlaneSurface, CylindricalSurface, ExtrusionSurface, makePlaneSurface } from '../surfaces';
 import { OperationResult, success, failure } from '../mesh/mesh';
 import { Wire, wireStartPoint } from './wire';
 import { edgeStartPoint } from './edge';
@@ -7,7 +7,7 @@ import { edgeStartPoint } from './edge';
 /**
  * Union type for surfaces that can bound a face.
  */
-export type Surface = PlaneSurface | CylindricalSurface;
+export type Surface = PlaneSurface | CylindricalSurface | ExtrusionSurface;
 
 /**
  * A bounded region of a surface.

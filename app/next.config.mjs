@@ -1,11 +1,17 @@
 /** @type {import('next').NextConfig} */
 
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+// For GitHub Pages deployment, set NEXT_PUBLIC_BASE_PATH=/labrep
+// For local development, leave unset or empty
+const isGitHubPages = process.env.NEXT_PUBLIC_BASE_PATH === '/labrep';
+const basePath = isGitHubPages ? '/labrep' : '';
 
 const nextConfig = {
   output: 'export',
-  basePath: basePath || undefined,
-  assetPrefix: basePath || undefined,
+  // Only set basePath/assetPrefix when deploying to GitHub Pages
+  ...(isGitHubPages && {
+    basePath: '/labrep',
+    assetPrefix: '/labrep',
+  }),
   images: {
     unoptimized: true,
   },
