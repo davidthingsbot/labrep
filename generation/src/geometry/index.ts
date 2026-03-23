@@ -41,3 +41,13 @@ export {
   makeWire2D,
   lengthWire2D,
 } from './wire2d';
+
+export {
+  type Line3D,
+  makeLine3D,
+  makeLine3DFromPointDir,
+  evaluateLine3D,
+  tangentLine3D,
+  lengthLine3D,
+  reverseLine3D,
+} from './line3d';
