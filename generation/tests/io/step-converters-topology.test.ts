@@ -158,21 +158,10 @@ describe('STEP Converters - Topology', () => {
   });
 });
 
-// Helper function to create box faces
+// Helper function to create properly oriented box faces (watertight shell)
+// All faces oriented with outward normals - CCW when viewed from outside.
 function createBoxFaces(w: number, h: number, d: number) {
-  function makeRectFace(x1: number, y1: number, x2: number, y2: number, z: number) {
-    const e1 = makeEdgeFromCurve(makeLine3D(point3d(x1, y1, z), point3d(x2, y1, z)).result!).result!;
-    const e2 = makeEdgeFromCurve(makeLine3D(point3d(x2, y1, z), point3d(x2, y2, z)).result!).result!;
-    const e3 = makeEdgeFromCurve(makeLine3D(point3d(x2, y2, z), point3d(x1, y2, z)).result!).result!;
-    const e4 = makeEdgeFromCurve(makeLine3D(point3d(x1, y2, z), point3d(x1, y1, z)).result!).result!;
-    const wire = makeWire([
-      orientEdge(e1, true), orientEdge(e2, true), 
-      orientEdge(e3, true), orientEdge(e4, true),
-    ]).result!;
-    return makePlanarFace(wire).result!;
-  }
-
-  function makeVerticalFace(coords: [number, number, number][]) {
+  function makeFace(coords: [number, number, number][]) {
     const edges = [];
     for (let i = 0; i < coords.length; i++) {
       const [x1, y1, z1] = coords[i];
@@ -184,11 +173,17 @@ function createBoxFaces(w: number, h: number, d: number) {
   }
 
   return [
-    makeRectFace(0, 0, w, h, 0),  // bottom
-    makeRectFace(0, 0, w, h, d),  // top
-    makeVerticalFace([[0,0,0], [w,0,0], [w,0,d], [0,0,d]]), // front
-    makeVerticalFace([[0,h,0], [w,h,0], [w,h,d], [0,h,d]]), // back
-    makeVerticalFace([[0,0,0], [0,h,0], [0,h,d], [0,0,d]]), // left
-    makeVerticalFace([[w,0,0], [w,h,0], [w,h,d], [w,0,d]]), // right
+    // Bottom (z=0) - normal points -Z, CCW from below
+    makeFace([[0,0,0], [w,0,0], [w,h,0], [0,h,0]]),
+    // Top (z=d) - normal points +Z, CCW from above
+    makeFace([[0,0,d], [0,h,d], [w,h,d], [w,0,d]]),
+    // Front (y=0) - normal points -Y, CCW from front
+    makeFace([[0,0,0], [0,0,d], [w,0,d], [w,0,0]]),
+    // Back (y=h) - normal points +Y, CCW from back
+    makeFace([[0,h,0], [w,h,0], [w,h,d], [0,h,d]]),
+    // Left (x=0) - normal points -X, CCW from left
+    makeFace([[0,0,0], [0,h,0], [0,h,d], [0,0,d]]),
+    // Right (x=w) - normal points +X, CCW from right
+    makeFace([[w,0,0], [w,0,d], [w,h,d], [w,h,0]]),
   ];
 }

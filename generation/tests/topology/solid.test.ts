@@ -31,21 +31,37 @@ describe('Solid', () => {
     return makePlanarFace(wire).result!;
   }
 
-  // Helper: create a box shell
+  // Helper: create a properly oriented box shell (watertight)
+  // All faces oriented with outward normals - CCW when viewed from outside.
   function makeBoxShell(w: number, h: number, d: number) {
-    // Bottom (z=0)
-    const bottom = makeRectFace(0, 0, w, h, 0);
-    // Top (z=d)
-    const top = makeRectFace(0, 0, w, h, d);
-    // Front (y=0)
-    const frontWire = makeWire([
+    // Bottom (z=0) - normal points -Z, CCW from below
+    const bottomWire = makeWire([
       orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, 0, 0), point3d(w, 0, 0)).result!).result!, true),
-      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, 0, 0), point3d(w, 0, d)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, 0, 0), point3d(w, h, 0)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, h, 0), point3d(0, h, 0)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, h, 0), point3d(0, 0, 0)).result!).result!, true),
+    ]).result!;
+    const bottom = makePlanarFace(bottomWire).result!;
+
+    // Top (z=d) - normal points +Z, CCW from above
+    const topWire = makeWire([
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, 0, d), point3d(0, h, d)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, h, d), point3d(w, h, d)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, h, d), point3d(w, 0, d)).result!).result!, true),
       orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, 0, d), point3d(0, 0, d)).result!).result!, true),
-      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, 0, d), point3d(0, 0, 0)).result!).result!, true),
+    ]).result!;
+    const top = makePlanarFace(topWire).result!;
+
+    // Front (y=0) - normal points -Y, CCW from front
+    const frontWire = makeWire([
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, 0, 0), point3d(0, 0, d)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, 0, d), point3d(w, 0, d)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, 0, d), point3d(w, 0, 0)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, 0, 0), point3d(0, 0, 0)).result!).result!, true),
     ]).result!;
     const front = makePlanarFace(frontWire).result!;
-    // Back (y=h)
+
+    // Back (y=h) - normal points +Y, CCW from back
     const backWire = makeWire([
       orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, h, 0), point3d(w, h, 0)).result!).result!, true),
       orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, h, 0), point3d(w, h, d)).result!).result!, true),
@@ -53,7 +69,8 @@ describe('Solid', () => {
       orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, h, d), point3d(0, h, 0)).result!).result!, true),
     ]).result!;
     const back = makePlanarFace(backWire).result!;
-    // Left (x=0)
+
+    // Left (x=0) - normal points -X, CCW from left
     const leftWire = makeWire([
       orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, 0, 0), point3d(0, h, 0)).result!).result!, true),
       orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, h, 0), point3d(0, h, d)).result!).result!, true),
@@ -61,12 +78,13 @@ describe('Solid', () => {
       orientEdge(makeEdgeFromCurve(makeLine3D(point3d(0, 0, d), point3d(0, 0, 0)).result!).result!, true),
     ]).result!;
     const left = makePlanarFace(leftWire).result!;
-    // Right (x=w)
+
+    // Right (x=w) - normal points +X, CCW from right
     const rightWire = makeWire([
-      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, 0, 0), point3d(w, h, 0)).result!).result!, true),
-      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, h, 0), point3d(w, h, d)).result!).result!, true),
-      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, h, d), point3d(w, 0, d)).result!).result!, true),
-      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, 0, d), point3d(w, 0, 0)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, 0, 0), point3d(w, 0, d)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, 0, d), point3d(w, h, d)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, h, d), point3d(w, h, 0)).result!).result!, true),
+      orientEdge(makeEdgeFromCurve(makeLine3D(point3d(w, h, 0), point3d(w, 0, 0)).result!).result!, true),
     ]).result!;
     const right = makePlanarFace(rightWire).result!;
 
