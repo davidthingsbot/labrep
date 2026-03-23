@@ -133,4 +133,58 @@ describe('Transform3D', () => {
     expect(result.y).toBeCloseTo(200, 10);
     expect(result.z).toBeCloseTo(300, 10);
   });
+
+  // Edge cases
+  it('identity transform leaves point unchanged', () => {
+    const p = point3d(1, 2, 3);
+    const result = transformPoint(identity(), p);
+    expect(result).toEqual(p);
+  });
+
+  it('rotation by 0 is identity', () => {
+    const t = rotationZ(0);
+    const p = point3d(1, 2, 3);
+    const result = transformPoint(t, p);
+    expect(result.x).toBeCloseTo(1, 10);
+    expect(result.y).toBeCloseTo(2, 10);
+    expect(result.z).toBeCloseTo(3, 10);
+  });
+
+  it('rotation by 2π is identity', () => {
+    const t = rotationZ(2 * Math.PI);
+    const p = point3d(1, 2, 3);
+    const result = transformPoint(t, p);
+    expect(result.x).toBeCloseTo(1, 10);
+    expect(result.y).toBeCloseTo(2, 10);
+    expect(result.z).toBeCloseTo(3, 10);
+  });
+
+  it('scale by 1 is identity', () => {
+    const t = scaling(1, 1, 1);
+    const p = point3d(5, 6, 7);
+    const result = transformPoint(t, p);
+    expect(result).toEqual(p);
+  });
+
+  it('scale by 0 collapses to origin', () => {
+    const t = scaling(0, 0, 0);
+    const p = point3d(5, 6, 7);
+    const result = transformPoint(t, p);
+    expect(result).toEqual(point3d(0, 0, 0));
+  });
+
+  it('compose with identity returns original', () => {
+    const t = translation(1, 2, 3);
+    const composed = compose(t, identity());
+    const p = point3d(0, 0, 0);
+    expect(transformPoint(composed, p)).toEqual(transformPoint(t, p));
+  });
+
+  it('negative scale mirrors', () => {
+    const t = scaling(-1, 1, 1);
+    const p = point3d(5, 6, 7);
+    const result = transformPoint(t, p);
+    expect(result.x).toBeCloseTo(-5, 10);
+    expect(result.y).toBeCloseTo(6, 10);
+  });
 });

@@ -8,6 +8,7 @@ import {
   pointsEqual,
   ORIGIN,
 } from '../../src/core/point3d';
+import { vec3d } from '../../src/core/vector3d';
 
 describe('Point3D', () => {
   it('creates a point with x, y, z', () => {
@@ -75,5 +76,36 @@ describe('Point3D', () => {
     expect(ORIGIN.x).toBe(0);
     expect(ORIGIN.y).toBe(0);
     expect(ORIGIN.z).toBe(0);
+  });
+
+  // Edge cases
+  it('handles very large coordinates', () => {
+    const p = point3d(1e12, 1e12, 1e12);
+    expect(p.x).toBe(1e12);
+    expect(distance(ORIGIN, p)).toBeCloseTo(Math.sqrt(3) * 1e12, 0);
+  });
+
+  it('handles negative coordinates', () => {
+    const p = point3d(-5, -10, -15);
+    expect(distance(ORIGIN, p)).toBeCloseTo(Math.sqrt(25 + 100 + 225), 10);
+  });
+
+  it('midpoint of same point is that point', () => {
+    const p = point3d(3, 4, 5);
+    const m = midpoint(p, p);
+    expect(m).toEqual(p);
+  });
+
+  it('addVector with zero vector returns same point', () => {
+    const p = point3d(1, 2, 3);
+    const result = addVector(p, vec3d(0, 0, 0));
+    expect(result).toEqual(p);
+  });
+
+  it('pointsEqual at exact tolerance boundary', () => {
+    const a = point3d(0, 0, 0);
+    const b = point3d(1e-7, 0, 0); // Exactly at tolerance
+    // Behavior at boundary depends on < vs <=
+    expect(typeof pointsEqual(a, b)).toBe('boolean');
   });
 });

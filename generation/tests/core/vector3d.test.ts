@@ -126,4 +126,48 @@ describe('Vector3D', () => {
     expect(Y_AXIS).toEqual({ x: 0, y: 1, z: 0 });
     expect(Z_AXIS).toEqual({ x: 0, y: 0, z: 1 });
   });
+
+  // Edge cases
+  it('handles very large vectors', () => {
+    const v = vec3d(1e10, 1e10, 1e10);
+    expect(length(v)).toBeCloseTo(Math.sqrt(3) * 1e10, 0);
+  });
+
+  it('handles very small vectors', () => {
+    const v = vec3d(1e-10, 1e-10, 1e-10);
+    expect(length(v)).toBeCloseTo(Math.sqrt(3) * 1e-10, 20);
+  });
+
+  it('dot product of perpendicular vectors is zero', () => {
+    expect(dot(X_AXIS, Y_AXIS)).toBe(0);
+    expect(dot(Y_AXIS, Z_AXIS)).toBe(0);
+    expect(dot(Z_AXIS, X_AXIS)).toBe(0);
+  });
+
+  it('cross product produces perpendicular vector', () => {
+    const a = vec3d(1, 2, 3);
+    const b = vec3d(4, 5, 6);
+    const c = cross(a, b);
+    expect(dot(a, c)).toBeCloseTo(0, 10);
+    expect(dot(b, c)).toBeCloseTo(0, 10);
+  });
+
+  it('normalize handles near-zero length gracefully', () => {
+    const tiny = vec3d(1e-15, 0, 0);
+    const n = normalize(tiny);
+    // Should not produce NaN or Infinity
+    expect(Number.isFinite(n.x)).toBe(true);
+  });
+
+  it('scale by zero produces zero vector', () => {
+    const v = vec3d(1, 2, 3);
+    const result = scale(v, 0);
+    expect(result).toEqual(vec3d(0, 0, 0));
+  });
+
+  it('scale by negative inverts direction', () => {
+    const v = vec3d(1, 2, 3);
+    const result = scale(v, -1);
+    expect(result).toEqual(vec3d(-1, -2, -3));
+  });
 });

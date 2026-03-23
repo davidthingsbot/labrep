@@ -96,4 +96,41 @@ describe('BoundingBox3D', () => {
     const bb = boundingBox(point3d(0, 0, 0), point3d(1, 1, 1));
     expect(isEmpty(bb)).toBe(false);
   });
+
+  // Edge cases
+  it('handles single-point bounding box', () => {
+    const bb = boundingBox(point3d(5, 5, 5), point3d(5, 5, 5));
+    const s = size(bb);
+    expect(s.x).toBe(0);
+    expect(s.y).toBe(0);
+    expect(s.z).toBe(0);
+    expect(contains(bb, point3d(5, 5, 5))).toBe(true);
+  });
+
+  it('handles flat bounding box (zero depth)', () => {
+    const bb = boundingBox(point3d(0, 0, 0), point3d(10, 10, 0));
+    expect(size(bb).z).toBe(0);
+    expect(contains(bb, point3d(5, 5, 0))).toBe(true);
+  });
+
+  it('intersects detects touching boxes (shared face)', () => {
+    const a = boundingBox(point3d(0, 0, 0), point3d(1, 1, 1));
+    const b = boundingBox(point3d(1, 0, 0), point3d(2, 1, 1));
+    // Touching at x=1 face
+    expect(intersects(a, b)).toBe(true);
+  });
+
+  it('handles negative coordinates', () => {
+    const bb = boundingBox(point3d(-10, -10, -10), point3d(-5, -5, -5));
+    expect(size(bb).x).toBe(5);
+    expect(contains(bb, point3d(-7, -7, -7))).toBe(true);
+  });
+
+  it('center of symmetric box is origin', () => {
+    const bb = boundingBox(point3d(-1, -1, -1), point3d(1, 1, 1));
+    const c = center(bb);
+    expect(c.x).toBeCloseTo(0, 10);
+    expect(c.y).toBeCloseTo(0, 10);
+    expect(c.z).toBeCloseTo(0, 10);
+  });
 });

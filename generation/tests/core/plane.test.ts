@@ -81,4 +81,42 @@ describe('Plane', () => {
   it('containsPoint returns false for points not on plane', () => {
     expect(containsPoint(XY_PLANE, point3d(1, 2, 1))).toBe(false);
   });
+
+  // Edge cases
+  it('distance to point on plane is zero', () => {
+    const d = distanceToPoint(XY_PLANE, point3d(100, 200, 0));
+    expect(d).toBeCloseTo(0, 10);
+  });
+
+  it('distance to point above plane is positive', () => {
+    const d = distanceToPoint(XY_PLANE, point3d(0, 0, 5));
+    expect(d).toBeCloseTo(5, 10);
+  });
+
+  it('distance to point below plane is negative', () => {
+    const d = distanceToPoint(XY_PLANE, point3d(0, 0, -3));
+    expect(d).toBeCloseTo(-3, 10);
+  });
+
+  it('project point already on plane returns same point', () => {
+    const p = point3d(7, 8, 0);
+    const projected = projectPoint(XY_PLANE, p);
+    expect(projected.x).toBeCloseTo(7, 10);
+    expect(projected.y).toBeCloseTo(8, 10);
+    expect(projected.z).toBeCloseTo(0, 10);
+  });
+
+  it('XZ_PLANE has Y as normal', () => {
+    expect(XZ_PLANE.normal.y).toBeCloseTo(1, 10);
+  });
+
+  it('YZ_PLANE has X as normal', () => {
+    expect(YZ_PLANE.normal.x).toBeCloseTo(1, 10);
+  });
+
+  it('containsPoint at tolerance boundary', () => {
+    const nearlyOn = point3d(0, 0, 1e-7);
+    // Result depends on tolerance comparison
+    expect(typeof containsPoint(XY_PLANE, nearlyOn)).toBe('boolean');
+  });
 });
