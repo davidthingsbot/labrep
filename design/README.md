@@ -881,11 +881,13 @@ Each phase has a dedicated design document with full details: OCCT references, d
 
 ### Upcoming Phases (Revised Order)
 
-### Phase 7: Constraint Solver ← **MOVED UP**
+### Phase 7: Constraint Solver ✅ ← **MOVED UP**
 
 **Goal:** Add constraints to sketches, solve for geometry. Enable parametric design.
 
 **Design doc:** [`constraint-solver.md`](constraint-solver.md)
+
+**Status:** Complete — geometric + dimensional constraints, Newton-Raphson solver, parametric design, analysis
 
 **Why moved up:** Parametric design is core to voice/text-controlled CAD. Users need to say "make that 10mm" or "set width = 2 × height" — this requires a constraint solver.
 
@@ -922,9 +924,13 @@ Tests:
 
 ---
 
-### Phase 8: Extrude + STEP
+### Phase 8: Extrude + STEP ✅
 
 **Goal:** Turn 2D profile into 3D solid via extrusion.
+
+**Design doc:** [`extrude.md`](extrude.md)
+
+**Status:** Complete — extrude, extrudeSymmetric, extrudeWithHoles, solidVolume, STEP export of solids
 
 ```
 Functions:
@@ -1256,7 +1262,9 @@ describe('extrude', () => {
 | [step-io.md](./step-io.md) | Phase 4: STEP parser/writer + foundation converters | ✅ Complete |
 | [sketch-system.md](./sketch-system.md) | Phase 5: Sketch, elements, profile detection | ✅ Complete |
 | [basic-3d-geometry.md](./basic-3d-geometry.md) | Phase 6: 3D curves, surfaces, BRep topology | ✅ Complete |
-| [constraint-solver.md](./constraint-solver.md) | Phase 7: Constraint solver for parametric sketches | 📝 Design |
+| [constraint-solver.md](./constraint-solver.md) | Phase 7: Constraint solver for parametric sketches | ✅ Complete |
+| [extrude.md](./extrude.md) | Phase 8: Extrude operations + STEP solid export | ✅ Complete |
+| [occt-gap-analysis.md](./occt-gap-analysis.md) | OCCT structural alignment analysis | ✅ Complete |
 
 ## Adding a Design Document
 

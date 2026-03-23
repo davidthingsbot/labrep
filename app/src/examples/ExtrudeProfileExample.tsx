@@ -132,11 +132,11 @@ export function ExtrudeProfileExample({ animationAngle }: ExampleProps) {
     };
   }, []);
 
-  // Subtle animation
-  const rotation = animationAngle * 0.2;
+  // Animated height for visual interest (same as ExtrudeBasic)
+  const heightScale = 0.8 + 0.2 * Math.sin(animationAngle);
 
   return (
-    <group rotation={[0, 0, rotation]}>
+    <group scale={[1, 1, heightScale]}>
       {/* L-bracket wireframe */}
       {data.lEdges.map((edge, i) => (
         <Line

@@ -127,11 +127,11 @@ export function ExtrudeWithHoleExample({ animationAngle }: ExampleProps) {
     };
   }, []);
 
-  // Rotate for better viewing
-  const rotation = Math.sin(animationAngle) * 0.3;
+  // Animated height for visual interest (same as ExtrudeBasic)
+  const heightScale = 0.8 + 0.2 * Math.sin(animationAngle);
 
   return (
-    <group rotation={[rotation, animationAngle * 0.5, 0]}>
+    <group scale={[1, 1, heightScale]}>
       {/* Outer edges (green) */}
       {data.edges.map((edge, i) => (
         <Line

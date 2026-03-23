@@ -55,7 +55,13 @@ labrep/
 
 ✅ **Phase 5: Sketch System** — Complete (sketch management, profile detection, region finding)
 
-🔲 **Phase 6: Basic 3D Geometry + STEP Topology** — Next up
+✅ **Phase 6: Basic 3D Geometry + STEP Topology** — Complete (Line3D, Circle3D, Arc3D, surfaces, topology, STEP converters)
+
+✅ **Phase 7: Constraint Solver** — Complete (geometric + dimensional constraints, Newton-Raphson solver, parametric design)
+
+✅ **Phase 8: Extrude + STEP** — Complete (extrude, extrudeSymmetric, extrudeWithHoles, solid volume)
+
+🔲 **Phase 9: Boolean Operations + STEP** — Next up
 
 See [`design/README.md`](design/README.md) for full phase breakdown and design docs.
 

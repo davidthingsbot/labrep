@@ -49,7 +49,20 @@ generation/
 ✅ **Phase 5: Sketch System** — Complete
 - `src/sketch/`: Sketch management, Profile2D (area, containsPoint), region detection (planar graph cycle finding with T-junction splitting)
 
-**360 tests passing**
+✅ **Phase 6: Basic 3D Geometry + STEP Topology** — Complete
+- `src/geometry/`: Line3D, Circle3D, Arc3D
+- `src/surfaces/`: PlaneSurface, CylindricalSurface, ExtrusionSurface
+- `src/topology/`: Vertex, Edge, Wire, Face, Shell, Solid
+- `src/io/`: STEP converters for 3D curves, surfaces, and topology
+
+✅ **Phase 7: Constraint Solver** — Complete
+- `src/constraints/`: Types, equations, Jacobian, Newton-Raphson solver, parameter expressions, analysis
+- `src/sketch/`: Constrained sketch management
+
+✅ **Phase 8: Extrude + STEP** — Complete
+- `src/operations/`: extrude, extrudeSymmetric, extrudeWithHoles, solidVolume
+
+**872 tests (869 passed, 3 skipped)**
 
 ## Getting Started
 

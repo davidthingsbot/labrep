@@ -52,11 +52,10 @@ A web application with:
 
 ✅ **Viewer, examples, and API reference functional.**
 
-- 17 examples covering math foundation, 2D curves, transforms, planes, bounding boxes, primitives, STL round-trip, and STEP round-trip
-- API reference with 80+ entries across 5 modules (core, geometry, io, mesh, primitives)
+- 29 examples covering math foundation, 2D curves, transforms, planes, bounding boxes, primitives, STL/STEP round-trip, 3D curves, topology, constraints, and extrude operations
+- API reference with entries across 6 modules (core, geometry, io, mesh, primitives, sketch)
 - Resizable bottom panel with drag handle
 - Billboard text labels (always face camera)
-- 99 tests passing
 
 ## Getting Started
 

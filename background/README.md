@@ -22,6 +22,8 @@ This folder contains deep dives into the concepts, algorithms, and prior art rel
 | [step-format.md](./step-format.md) | STEP file format, entities, API alignment | ✅ Complete |
 | [stl-format.md](./stl-format.md) | STL file format, ASCII/binary, export from Mesh | ✅ Complete |
 | [3mf-format.md](./3mf-format.md) | 3MF file format, ZIP+XML packaging, rich mesh export | ✅ Complete |
+| [cad.md](./cad.md) | CAD concepts, terminology, and workflows | ✅ Complete |
+| [sketch-commands.md](./sketch-commands.md) | Sketch command patterns and reference | ✅ Complete |
 
 ## Document Structure
 
