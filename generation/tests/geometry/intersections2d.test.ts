@@ -310,4 +310,48 @@ describe('Intersections2D', () => {
       }
     });
   });
+
+  describe('edge cases', () => {
+    it('handles very small circles', () => {
+      const c1 = makeCircle2D(point2d(0, 0), 0.001).result!;
+      const c2 = makeCircle2D(point2d(0.001, 0), 0.001).result!;
+      const result = intersectCircle2DCircle2D(c1, c2);
+      expect(result.length).toBe(2); // Two intersection points
+    });
+
+    it('handles circles with very different radii', () => {
+      // Large circle at origin, small circle at edge
+      const c1 = makeCircle2D(point2d(0, 0), 10).result!;
+      const c2 = makeCircle2D(point2d(10, 0), 1).result!;
+      const result = intersectCircle2DCircle2D(c1, c2);
+      // Small circle overlaps edge of large circle
+      expect(result.length).toBe(2);
+    });
+
+    it('handles nearly tangent circles', () => {
+      // Circles that are just barely touching
+      const c1 = makeCircle2D(point2d(0, 0), 1).result!;
+      const c2 = makeCircle2D(point2d(2 + 1e-9, 0), 1).result!;
+      const result = intersectCircle2DCircle2D(c1, c2);
+      // Should find 0 or 1 intersection depending on tolerance
+      expect(result.length).toBeLessThanOrEqual(1);
+    });
+
+    it('handles line through circle center', () => {
+      const line = makeLine2D(point2d(-5, 0), point2d(5, 0)).result!;
+      const circle = makeCircle2D(point2d(0, 0), 2).result!;
+      const result = intersectLine2DCircle2D(line, circle);
+      expect(result.length).toBe(2);
+      // Intersections at (-2,0) and (2,0)
+      expect(result[0].point.y).toBeCloseTo(0);
+      expect(result[1].point.y).toBeCloseTo(0);
+    });
+
+    it('handles vertical line', () => {
+      const line = makeLine2D(point2d(0, -5), point2d(0, 5)).result!;
+      const circle = makeCircle2D(point2d(0, 0), 1).result!;
+      const result = intersectLine2DCircle2D(line, circle);
+      expect(result.length).toBe(2);
+    });
+  });
 });

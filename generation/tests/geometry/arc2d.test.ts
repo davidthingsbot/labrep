@@ -411,4 +411,35 @@ describe('Arc2D', () => {
       }
     });
   });
+
+  describe('edge cases', () => {
+    it('handles negative sweep direction (clockwise)', () => {
+      // Start > end means clockwise arc
+      const result = makeArc2D(point2d(0, 0), 1, Math.PI, 0);
+      expect(result.success).toBe(true);
+      expect(result.result!.startAngle).toBe(Math.PI);
+      expect(result.result!.endAngle).toBe(0);
+    });
+
+    it('handles angles outside 0-2π range', () => {
+      const result = makeArc2D(point2d(0, 0), 1, -Math.PI / 2, Math.PI / 2);
+      expect(result.success).toBe(true);
+    });
+
+    it('handles very small sweep angle', () => {
+      const result = makeArc2D(point2d(0, 0), 1, 0, 0.001);
+      expect(result.success).toBe(true);
+    });
+
+    it('fails for very small radius near tolerance', () => {
+      const result = makeArc2D(point2d(0, 0), 1e-10, 0, 1);
+      expect(result.success).toBe(false);
+    });
+
+    it('handles near-full-circle sweep', () => {
+      // Just under 2π
+      const result = makeArc2D(point2d(0, 0), 1, 0, 2 * Math.PI - 0.01);
+      expect(result.success).toBe(true);
+    });
+  });
 });

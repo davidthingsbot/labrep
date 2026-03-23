@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { point2d, isEqual } from '../../src/core';
 import { makeLine2D } from '../../src/geometry/line2d';
+import { makeCircle2D } from '../../src/geometry/circle2d';
 import { makeArc2D } from '../../src/geometry/arc2d';
 import { makeWire2D, lengthWire2D } from '../../src/geometry/wire2d';
 
@@ -203,6 +204,30 @@ describe('Wire2D', () => {
           expect(len).toBeCloseTo(2 + Math.PI / 2);
         }
       }
+    });
+  });
+
+  describe('edge cases', () => {
+    it('handles single-curve closed loop (circle)', () => {
+      const circle = makeCircle2D(point2d(0, 0), 1);
+      expect(circle.success).toBe(true);
+      
+      const wire = makeWire2D([circle.result!]);
+      expect(wire.success).toBe(true);
+      expect(wire.result!.isClosed).toBe(true);
+      expect(wire.result!.curves.length).toBe(1);
+    });
+
+    it('handles very long wire (many segments)', () => {
+      const curves = [];
+      for (let i = 0; i < 100; i++) {
+        const line = makeLine2D(point2d(i, 0), point2d(i + 1, 0));
+        curves.push(line.result!);
+      }
+      const wire = makeWire2D(curves);
+      expect(wire.success).toBe(true);
+      expect(wire.result!.curves.length).toBe(100);
+      expect(lengthWire2D(wire.result!)).toBeCloseTo(100);
     });
   });
 });

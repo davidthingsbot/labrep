@@ -289,4 +289,23 @@ describe('Circle2D', () => {
       }
     });
   });
+
+  describe('edge cases', () => {
+    it('fails for very small radius near tolerance', () => {
+      const result = makeCircle2D(point2d(0, 0), 1e-10);
+      expect(result.success).toBe(false);
+    });
+
+    it('handles very large radius', () => {
+      const result = makeCircle2D(point2d(0, 0), 1e6);
+      expect(result.success).toBe(true);
+      expect(result.result!.radius).toBe(1e6);
+    });
+
+    it('handles offset center', () => {
+      const result = makeCircle2D(point2d(1000, 2000), 1);
+      expect(result.success).toBe(true);
+      expect(result.result!.center.x).toBe(1000);
+    });
+  });
 });
