@@ -45,3 +45,10 @@ export {
   shellToStep,
   solidToStep,
 } from './step-converters-topology';
+
+// STEP surface converters
+export {
+  planeSurfaceToStep, stepToPlaneSurface,
+  cylindricalSurfaceToStep, stepToCylindricalSurface,
+  extrusionSurfaceToStep, stepToExtrusionSurface,
+} from './step-converters-surfaces';

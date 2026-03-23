@@ -11,6 +11,11 @@ import { type StepEntity, type StepModel } from './step-model';
 import { type StepModelBuilder } from './step-model-builder';
 import { point3DToStep, stepToPoint3D, planeToStep, stepToPlane } from './step-converters';
 import { line3DToStep, stepToLine3D, circle3DToStep, arc3DToStep } from './step-converters-3d';
+import {
+  planeSurfaceToStep,
+  cylindricalSurfaceToStep,
+  extrusionSurfaceToStep,
+} from './step-converters-surfaces';
 
 // ═══════════════════════════════════════════════════════
 // HELPERS
@@ -212,27 +217,24 @@ export function faceToStep(face: Face, builder: StepModelBuilder): StepEntity[] 
 
   // Surface
   let surfaceId: number;
-  if (face.surface.type === 'plane') {
-    const planeEntities = planeToStep(face.surface.plane, builder);
-    entities.push(...planeEntities);
-    const ax2Id = planeEntities[planeEntities.length - 1].id;
+  let surfaceEntities: StepEntity[];
 
-    const planeId = builder.nextId();
-    const planeEntity: StepEntity = {
-      id: planeId,
-      typeName: 'PLANE',
-      attributes: [
-        { type: 'string', value: '' },
-        { type: 'ref', id: ax2Id },
-      ],
-    };
-    builder.addEntity(planeEntity);
-    entities.push(planeEntity);
-    surfaceId = planeId;
-  } else {
-    // Cylindrical or other - for now just use plane
-    return failure('Only planar faces supported for STEP export') as any;
+  switch (face.surface.type) {
+    case 'plane':
+      surfaceEntities = planeSurfaceToStep(face.surface, builder);
+      break;
+    case 'cylinder':
+      surfaceEntities = cylindricalSurfaceToStep(face.surface, builder);
+      break;
+    case 'extrusion':
+      surfaceEntities = extrusionSurfaceToStep(face.surface, builder);
+      break;
+    default:
+      return failure(`Unsupported surface type for STEP export`) as any;
   }
+
+  entities.push(...surfaceEntities);
+  surfaceId = surfaceEntities[surfaceEntities.length - 1].id;
 
   // Outer wire as face bound
   const outerWireEntities = wireToStep(face.outerWire, builder);

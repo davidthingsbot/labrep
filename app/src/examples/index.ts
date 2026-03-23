@@ -22,3 +22,6 @@ export { StepRoundtripExample } from './StepRoundtripExample';
 export { ConstraintSimpleExample } from './ConstraintSimpleExample';
 export { ConstraintParametricExample } from './ConstraintParametricExample';
 export { ConstraintSolverVizExample } from './ConstraintSolverVizExample';
+export { ExtrudeBasicExample } from './ExtrudeBasicExample';
+export { ExtrudeProfileExample } from './ExtrudeProfileExample';
+export { ExtrudeWithHoleExample } from './ExtrudeWithHoleExample';

@@ -24,6 +24,9 @@ import { TopologyStepExample } from './TopologyStepExample';
 import { ConstraintSimpleExample } from './ConstraintSimpleExample';
 import { ConstraintParametricExample } from './ConstraintParametricExample';
 import { ConstraintSolverVizExample } from './ConstraintSolverVizExample';
+import { ExtrudeBasicExample } from './ExtrudeBasicExample';
+import { ExtrudeProfileExample } from './ExtrudeProfileExample';
+import { ExtrudeWithHoleExample } from './ExtrudeWithHoleExample';
 
 /** All registered examples. */
 export const examples: Example[] = [
@@ -750,6 +753,96 @@ while (!state.converged) {
   console.log(\`Iteration \${state.iteration}: residual = \${state.residual}\`);
   // Visualize intermediate geometry
 }
+`,
+  },
+  {
+    id: 'extrude-basic',
+    name: 'Extrude Basic',
+    description: 'Rectangle → Box and Circle → Cylinder with volume calculation',
+    component: ExtrudeBasicExample,
+    code: `// Extrude Basic — Rectangle to Box, Circle to Cylinder
+import {
+  point3d, vec3d, plane,
+  makeLine3D, makeCircle3D, makeEdgeFromCurve,
+  orientEdge, makeWire, extrude, solidVolume,
+} from '@labrep/generation';
+
+// Create a rectangular wire on XY plane
+const corners = [
+  point3d(-5, -3, 0), point3d(5, -3, 0),
+  point3d(5, 3, 0), point3d(-5, 3, 0),
+];
+const edges = corners.map((p, i) =>
+  makeEdgeFromCurve(makeLine3D(p, corners[(i+1)%4]).result).result
+);
+const rectWire = makeWire(edges.map(e => orientEdge(e, true))).result;
+
+// Extrude to create box
+const boxResult = extrude(rectWire, vec3d(0, 0, 1), 8);
+// boxResult.solid — the 3D solid
+// boxResult.bottomFace, topFace — cap faces
+// boxResult.sideFaces — 4 side faces
+
+solidVolume(boxResult.result.solid);  // 10 * 6 * 8 = 480
+`,
+  },
+  {
+    id: 'extrude-profile',
+    name: 'Extrude Profile',
+    description: 'L-bracket and U-channel non-convex profile extrusions',
+    component: ExtrudeProfileExample,
+    code: `// Extrude Profile — Non-convex shapes
+import {
+  point3d, vec3d, makeLine3D, makeEdgeFromCurve,
+  orientEdge, makeWire, extrude, solidVolume,
+} from '@labrep/generation';
+
+// L-bracket profile
+const lPoints = [
+  point3d(0, 0, 0), point3d(10, 0, 0),
+  point3d(10, 15, 0), point3d(20, 15, 0),
+  point3d(20, 25, 0), point3d(0, 25, 0),
+];
+const lEdges = lPoints.map((p, i) =>
+  makeEdgeFromCurve(makeLine3D(p, lPoints[(i+1)%6]).result).result
+);
+const lWire = makeWire(lEdges.map(e => orientEdge(e, true))).result;
+
+// Extrude L-bracket 5mm
+const bracket = extrude(lWire, vec3d(0, 0, 1), 5);
+// 8 faces: 2 L-shaped caps + 6 side faces
+
+// U-channel similarly...
+`,
+  },
+  {
+    id: 'extrude-with-hole',
+    name: 'Extrude with Hole',
+    description: 'Square profile with circular through-hole → housing',
+    component: ExtrudeWithHoleExample,
+    code: `// Extrude with Hole — Through-hole housing
+import {
+  point3d, vec3d, plane,
+  makeLine3D, makeCircle3D, makeEdgeFromCurve,
+  orientEdge, makeWire, extrudeWithHoles, solidVolume,
+} from '@labrep/generation';
+
+// Outer profile: 30x30 square
+const outerWire = makeSquareWire(30);
+
+// Hole: circle with radius 8, reversed orientation
+const holePlane = plane(point3d(0, 0, 0), vec3d(0, 0, 1));
+const circle = makeCircle3D(holePlane, 8).result;
+const holeEdge = makeEdgeFromCurve(circle).result;
+const holeWire = makeWire([orientEdge(holeEdge, false)]).result;
+
+// Extrude with hole
+const housing = extrudeWithHoles(
+  outerWire, [holeWire], vec3d(0, 0, 1), 15
+);
+
+// Volume = (30² - π×8²) × 15 ≈ 10479
+solidVolume(housing.result.solid);
 `,
   },
 ];
