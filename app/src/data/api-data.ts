@@ -26,7 +26,7 @@ export interface ApiEntry {
 }
 
 /** All module names. */
-export const API_MODULES = ['core', 'geometry', 'io', 'mesh', 'primitives'] as const;
+export const API_MODULES = ['core', 'geometry', 'io', 'mesh', 'primitives', 'sketch'] as const;
 
 /** All API entries, extracted from generation/ JSDoc. */
 export const apiEntries: ApiEntry[] = [
@@ -1513,6 +1513,105 @@ export const apiEntries: ApiEntry[] = [
       { name: 'options.segments', type: 'number', description: 'Circumferential divisions (default 32)' },
     ],
     returns: 'The cylinder mesh, or failure if radius or height is non-positive',
+  },
+
+  // ═══════════════════════════════════════════════════════
+  // SKETCH
+  // ═══════════════════════════════════════════════════════
+  {
+    name: 'Sketch',
+    kind: 'interface',
+    module: 'sketch',
+    description: 'A 2D sketch on a plane containing geometry elements that can be analyzed for closed profiles.',
+    properties: [
+      { name: 'plane', type: 'Plane', description: 'The 3D plane this sketch lives on' },
+      { name: 'elements', type: 'readonly SketchElement[]', description: 'All sketch elements' },
+    ],
+  },
+  {
+    name: 'SketchElement',
+    kind: 'interface',
+    module: 'sketch',
+    description: 'An element in a sketch — a piece of geometry with an ID. Construction elements do not form profiles.',
+    properties: [
+      { name: 'id', type: 'string', description: 'Unique identifier within the sketch' },
+      { name: 'geometry', type: 'Curve2D', description: 'The underlying 2D curve' },
+      { name: 'construction', type: 'boolean', description: 'Construction geometry excluded from profiles' },
+    ],
+  },
+  {
+    name: 'Profile2D',
+    kind: 'interface',
+    module: 'sketch',
+    description: 'A closed 2D profile for extrusion/revolution. Outer boundary is CCW, holes are CW.',
+    properties: [
+      { name: 'outer', type: 'Wire2D', description: 'Outer boundary (counter-clockwise)' },
+      { name: 'holes', type: 'readonly Wire2D[]', description: 'Inner boundaries / holes (clockwise)' },
+    ],
+  },
+  {
+    name: 'createSketch',
+    kind: 'function',
+    module: 'sketch',
+    description: 'Create an empty sketch on a plane.',
+    signature: 'createSketch(plane: Plane): Sketch',
+    params: [{ name: 'plane', type: 'Plane', description: 'The 3D plane the sketch lives on' }],
+    returns: 'An empty Sketch',
+  },
+  {
+    name: 'addElement',
+    kind: 'function',
+    module: 'sketch',
+    description: 'Add a geometry element to a sketch. Returns a new sketch (immutable).',
+    signature: 'addElement(sketch: Sketch, geometry: Curve2D, construction?: boolean): Sketch',
+    params: [
+      { name: 'sketch', type: 'Sketch', description: 'The existing sketch' },
+      { name: 'geometry', type: 'Curve2D', description: 'The 2D curve to add' },
+      { name: 'construction', type: 'boolean', description: 'Whether this is construction geometry (default: false)' },
+    ],
+    returns: 'A new Sketch with the element added',
+  },
+  {
+    name: 'removeElement',
+    kind: 'function',
+    module: 'sketch',
+    description: 'Remove an element by ID. Returns a new sketch (immutable).',
+    signature: 'removeElement(sketch: Sketch, id: string): Sketch',
+    params: [
+      { name: 'sketch', type: 'Sketch', description: 'The existing sketch' },
+      { name: 'id', type: 'string', description: 'Element ID to remove' },
+    ],
+    returns: 'A new Sketch without the element',
+  },
+  {
+    name: 'findProfiles',
+    kind: 'function',
+    module: 'sketch',
+    description: 'Find all closed profiles in a sketch using planar graph region detection. Handles T-junctions, holes, and arcs.',
+    signature: 'findProfiles(sketch: Sketch): Profile2D[]',
+    params: [{ name: 'sketch', type: 'Sketch', description: 'The sketch to analyze' }],
+    returns: 'Array of detected profiles (may be empty)',
+  },
+  {
+    name: 'profileArea',
+    kind: 'function',
+    module: 'sketch',
+    description: 'Compute the signed area of a profile outer boundary. Positive = CCW, negative = CW.',
+    signature: 'profileArea(profile: Profile2D): number',
+    params: [{ name: 'profile', type: 'Profile2D', description: 'The profile to measure' }],
+    returns: 'Signed area',
+  },
+  {
+    name: 'profileContainsPoint',
+    kind: 'function',
+    module: 'sketch',
+    description: 'Check if a point is inside a profile, considering holes. Points inside holes return false.',
+    signature: 'profileContainsPoint(profile: Profile2D, point: Point2D): boolean',
+    params: [
+      { name: 'profile', type: 'Profile2D', description: 'The profile to test against' },
+      { name: 'point', type: 'Point2D', description: 'The point to test' },
+    ],
+    returns: 'True if inside the profile (not in a hole)',
   },
 ];
 

@@ -851,9 +851,13 @@ Each phase has a dedicated design document with full details: OCCT references, d
 
 ---
 
-### Phase 5: Sketch System (No Constraints) *(was Phase 3)*
+### Phase 5: Sketch System (No Constraints) ✅ *(was Phase 3)*
+
+**Design doc:** [`sketch-system.md`](sketch-system.md)
 
 **Goal:** Create sketches with elements, find closed profiles.
+
+**Status:** Complete — Sketch management, Profile2D, region detection with T-junction splitting (32 tests)
 
 ```
 Data Types:
@@ -1169,6 +1173,7 @@ describe('extrude', () => {
 | [io-first-refactor.md](./io-first-refactor.md) | I/O-first phase reordering rationale | ✅ Complete |
 | [stl-io.md](./stl-io.md) | Phase 3: STL import/export | ✅ Complete |
 | [step-io.md](./step-io.md) | Phase 4: STEP parser/writer + foundation converters | ✅ Complete |
+| [sketch-system.md](./sketch-system.md) | Phase 5: Sketch, elements, profile detection | ✅ Complete |
 
 ## Adding a Design Document
 

@@ -53,6 +53,10 @@ labrep/
 
 ✅ **Phase 4: STEP Import/Export** — Complete (parser, writer, foundation converters, round-trip tested)
 
+✅ **Phase 5: Sketch System** — Complete (sketch management, profile detection, region finding)
+
+🔲 **Phase 6: Basic 3D Geometry + STEP Topology** — Next up
+
 See [`design/README.md`](design/README.md) for full phase breakdown and design docs.
 
 ## Getting Started

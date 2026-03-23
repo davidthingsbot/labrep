@@ -46,7 +46,10 @@ generation/
 ✅ **Phase 4: STEP I/O Foundation** — Complete
 - `src/io/`: STEP lexer, parser, writer, model builder, foundation converters (Point3D ↔ CARTESIAN_POINT, Vector3D ↔ DIRECTION, Axis ↔ AXIS1_PLACEMENT, Plane ↔ AXIS2_PLACEMENT_3D)
 
-**328 tests passing**
+✅ **Phase 5: Sketch System** — Complete
+- `src/sketch/`: Sketch management, Profile2D (area, containsPoint), region detection (planar graph cycle finding with T-junction splitting)
+
+**360 tests passing**
 
 ## Getting Started
 

@@ -16,5 +16,6 @@ export { Math2DExample } from './Math2DExample';
 export { TransformsExample } from './TransformsExample';
 export { PlanesAxesExample } from './PlanesAxesExample';
 export { BoundingBoxExample } from './BoundingBoxExample';
+export { SketchProfilesExample } from './SketchProfilesExample';
 export { StlRoundtripExample } from './StlRoundtripExample';
 export { StepRoundtripExample } from './StepRoundtripExample';

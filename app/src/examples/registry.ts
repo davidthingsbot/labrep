@@ -16,6 +16,7 @@ import { TransformsExample } from './TransformsExample';
 import { PlanesAxesExample } from './PlanesAxesExample';
 import { BoundingBoxExample } from './BoundingBoxExample';
 import { StlRoundtripExample } from './StlRoundtripExample';
+import { SketchProfilesExample } from './SketchProfilesExample';
 import { StepRoundtripExample } from './StepRoundtripExample';
 
 /** All registered examples. */
@@ -317,6 +318,39 @@ size(box);                          // (2, 1.5, 1)
 contains(box, point3d(0, 0, 0));    // true
 contains(box, point3d(5, 5, 5));    // false
 intersects(box, b);                 // true/false
+`,
+  },
+  {
+    id: 'sketch-profiles',
+    name: 'Sketch Profiles',
+    description: 'Region detection: rectangle, divider, hole, arc+line',
+    component: SketchProfilesExample,
+    code: `// Sketch Profiles — region detection
+import {
+  point2d, XY_PLANE,
+  createSketch, addElement, findProfiles,
+  profileArea, profileContainsPoint,
+  makeLine2D, makeCircle2D, makeArc2D,
+} from '@labrep/generation';
+
+// Create a sketch and add geometry
+let sketch = createSketch(XY_PLANE);
+sketch = addElement(sketch, makeLine2D(point2d(0, 0), point2d(2, 0)).result);
+sketch = addElement(sketch, makeLine2D(point2d(2, 0), point2d(2, 1)).result);
+sketch = addElement(sketch, makeLine2D(point2d(2, 1), point2d(0, 1)).result);
+sketch = addElement(sketch, makeLine2D(point2d(0, 1), point2d(0, 0)).result);
+
+// Add a hole (circle inside the rectangle)
+sketch = addElement(sketch, makeCircle2D(point2d(1, 0.5), 0.3).result);
+
+// Detect closed profiles automatically
+const profiles = findProfiles(sketch);
+// profiles[0].outer — CCW boundary wire
+// profiles[0].holes — array of CW hole wires
+
+profileArea(profiles[0]);                    // signed area
+profileContainsPoint(profiles[0], point2d(0.5, 0.5));  // true
+profileContainsPoint(profiles[0], point2d(1, 0.5));    // false (in hole)
 `,
   },
   {

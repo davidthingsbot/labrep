@@ -15,6 +15,7 @@ describe('example registry', () => {
       'transforms',
       'planes-axes',
       'bounding-boxes',
+      'sketch-profiles',
       'stl-roundtrip',
       'step-roundtrip',
       'curves-line2d',
