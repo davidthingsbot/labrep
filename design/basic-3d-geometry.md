@@ -566,13 +566,87 @@ generation/tests/
 ## Viewer Examples
 
 ### curves-3d
-**Visual:** 3D curves in space — line, circle, arc on tilted planes.
+**Visual:** 3D curves in space — Line3D, Circle3D, Arc3D on tilted planes. Animated point traveling along each curve with tangent vectors shown.
+**Code:**
+```typescript
+import { makeLine3D, makeCircle3D, makeArc3D, evaluateCurve3D, tangentCurve3D } from '@labrep/generation';
+
+const line = makeLine3D(point3d(0, 0, 0), point3d(2, 1, 1));
+const circle = makeCircle3D(XY_PLANE, 1.5);
+const arc = makeArc3D(tiltedPlane, 1, 0, Math.PI);
+
+// Evaluate at parameter t
+const pt = evaluateCurve3D(circle.result, t);
+const tangent = tangentCurve3D(circle.result, t);
+```
 
 ### topology-box
-**Visual:** Unit cube constructed as explicit BRep (8 vertices, 12 edges, 6 faces, 1 shell, 1 solid).
+**Visual:** Unit cube as explicit BRep topology. Vertices shown as small spheres, edges as lines, faces as semi-transparent colored surfaces. Demonstrates the full Vertex → Edge → Wire → Face → Shell → Solid hierarchy.
+**Code:**
+```typescript
+import { makeVertex, makeEdge, makeWire, makePlanarFace, makeShell, makeSolid } from '@labrep/generation';
+
+// 8 vertices
+const v000 = makeVertex(point3d(0, 0, 0));
+const v100 = makeVertex(point3d(1, 0, 0));
+// ... 6 more vertices
+
+// 12 edges connecting vertices
+const e_bottom_front = makeEdge(makeLine3D(v000.point, v100.point).result, v000, v100);
+// ... 11 more edges
+
+// 6 faces from wires
+const bottomFace = makePlanarFace(makeWire([...]).result);
+// ... 5 more faces
+
+// Shell and Solid
+const shell = makeShell([bottomFace, topFace, ...]);
+const solid = makeSolid(shell.result);
+```
 
 ### topology-cylinder
-**Visual:** Cylinder as BRep (planar top/bottom faces + cylindrical side).
+**Visual:** Cylinder as BRep with mixed surface types. Two planar circular faces (top/bottom) and one cylindrical side face. Shows how different surface types combine in a single solid.
+**Code:**
+```typescript
+import { makePlaneSurface, makeCylindricalSurface, makeFace, makeShell, makeSolid } from '@labrep/generation';
+
+// Top and bottom are planar
+const topSurface = makePlaneSurface(topPlane);
+const bottomSurface = makePlaneSurface(bottomPlane);
+
+// Side is cylindrical
+const sideSurface = makeCylindricalSurface(Z_AXIS_3D, radius);
+
+// Build faces with appropriate wires
+const topFace = makeFace(topSurface, topWire);
+const bottomFace = makeFace(bottomSurface, bottomWire);
+const sideFace = makeFace(sideSurface, sideWire);
+
+const cylinder = makeSolid(makeShell([topFace, bottomFace, sideFace]).result);
+```
+
+### topology-step-roundtrip
+**Visual:** Export a BRep solid to STEP, parse it back, show both original and imported side-by-side. Demonstrates full topology serialization.
+**Code:**
+```typescript
+import { makeSolid, solidToStep, writeStep, parseStep, stepToSolid } from '@labrep/generation';
+
+// Build a solid
+const original = makeSolid(...);
+
+// Export to STEP
+const builder = createStepModelBuilder();
+solidToStep(original, builder);
+const stepText = writeStep(builder.build());
+
+// Import back
+const parsed = parseStep(stepText);
+const imported = stepToSolid(parsed.result);
+
+// Compare: same topology, same volume
+solidVolume(original);   // 1.0
+solidVolume(imported);   // 1.0
+```
 
 ---
 
@@ -593,6 +667,9 @@ Phase 6 is complete when:
 - [ ] STEP converters for all new types
 - [ ] Round-trip STEP tests pass
 - [ ] All tests passing
-- [ ] Viewer examples for 3D curves and topology
+- [ ] Viewer example: curves-3d (Line3D, Circle3D, Arc3D with animation)
+- [ ] Viewer example: topology-box (explicit BRep cube)
+- [ ] Viewer example: topology-cylinder (mixed surface types)
+- [ ] Viewer example: topology-step-roundtrip (export/import demo)
 
 **Status:** 🔲 Not Started
