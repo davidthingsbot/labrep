@@ -12,69 +12,84 @@ import {
   solveSketch,
   sketchDOF,
 } from '@labrep/generation';
-import type { ConstrainedSketch, Constraint, SolveResult } from '@labrep/generation';
+import type { ConstrainedSketch, Constraint } from '@labrep/generation';
 import { BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
 
 /** Example demonstrating basic constraint solving with visual annotations. */
 export function ConstraintSimpleExample({ animationAngle }: ExampleProps) {
   const data = useMemo(() => {
-    // Create a constrained sketch
-    let sketch = createConstrainedSketch(XY_PLANE);
+    try {
+      // Create a constrained sketch
+      let sketch = createConstrainedSketch(XY_PLANE);
 
-    // Create 4 lines forming a rough rectangle
-    const bottom = makeLine2D(point2d(-0.8, -1.2), point2d(0.9, -0.8));
-    const right = makeLine2D(point2d(1.6, -0.9), point2d(1.5, 1.1));
-    const top = makeLine2D(point2d(1.4, 0.9), point2d(-0.7, 1.2));
-    const left = makeLine2D(point2d(-0.9, 1.1), point2d(-1.0, -0.9));
+      // Create 4 lines forming a rough rectangle
+      const bottom = makeLine2D(point2d(-0.8, -1.2), point2d(0.9, -0.8));
+      const right = makeLine2D(point2d(1.6, -0.9), point2d(1.5, 1.1));
+      const top = makeLine2D(point2d(1.4, 0.9), point2d(-0.7, 1.2));
+      const left = makeLine2D(point2d(-0.9, 1.1), point2d(-1.0, -0.9));
 
-    // Add lines to sketch
-    if (bottom.result) sketch = addElement(sketch, bottom.result) as ConstrainedSketch;
-    if (right.result) sketch = addElement(sketch, right.result) as ConstrainedSketch;
-    if (top.result) sketch = addElement(sketch, top.result) as ConstrainedSketch;
-    if (left.result) sketch = addElement(sketch, left.result) as ConstrainedSketch;
+      // Add lines to sketch
+      if (bottom.result) sketch = addElement(sketch, bottom.result) as ConstrainedSketch;
+      if (right.result) sketch = addElement(sketch, right.result) as ConstrainedSketch;
+      if (top.result) sketch = addElement(sketch, top.result) as ConstrainedSketch;
+      if (left.result) sketch = addElement(sketch, left.result) as ConstrainedSketch;
 
-    const ids = sketch.elements.map((e) => e.id);
-    const [bottomId, rightId, topId, leftId] = ids;
-
-    // Define constraints
-    const constraints: Constraint[] = [
-      { type: 'horizontal', line: { elementId: bottomId } },
-      { type: 'horizontal', line: { elementId: topId } },
-      { type: 'vertical', line: { elementId: leftId } },
-      { type: 'vertical', line: { elementId: rightId } },
-      { type: 'coincident', point1: { elementId: bottomId, which: 'end' }, point2: { elementId: rightId, which: 'start' } },
-      { type: 'coincident', point1: { elementId: rightId, which: 'end' }, point2: { elementId: topId, which: 'start' } },
-      { type: 'coincident', point1: { elementId: topId, which: 'end' }, point2: { elementId: leftId, which: 'start' } },
-      { type: 'coincident', point1: { elementId: leftId, which: 'end' }, point2: { elementId: bottomId, which: 'start' } },
-    ];
-
-    // Add constraints
-    for (const constraint of constraints) {
-      const result = addConstraint(sketch, constraint);
-      if (result.success && result.result) {
-        sketch = result.result.sketch;
+      if (sketch.elements.length < 4) {
+        return null; // Not enough elements
       }
+
+      const ids = sketch.elements.map((e) => e.id);
+      const [bottomId, rightId, topId, leftId] = ids;
+
+      // Define constraints
+      const constraints: Constraint[] = [
+        { type: 'horizontal', line: { elementId: bottomId } },
+        { type: 'horizontal', line: { elementId: topId } },
+        { type: 'vertical', line: { elementId: leftId } },
+        { type: 'vertical', line: { elementId: rightId } },
+        { type: 'coincident', point1: { elementId: bottomId, which: 'end' }, point2: { elementId: rightId, which: 'start' } },
+        { type: 'coincident', point1: { elementId: rightId, which: 'end' }, point2: { elementId: topId, which: 'start' } },
+        { type: 'coincident', point1: { elementId: topId, which: 'end' }, point2: { elementId: leftId, which: 'start' } },
+        { type: 'coincident', point1: { elementId: leftId, which: 'end' }, point2: { elementId: bottomId, which: 'start' } },
+      ];
+
+      // Add constraints
+      for (const constraint of constraints) {
+        const result = addConstraint(sketch, constraint);
+        if (result.success && result.result) {
+          sketch = result.result.sketch;
+        }
+      }
+
+      // Capture before state
+      const beforeSketch = sketch;
+      const beforeDOF = sketchDOF(beforeSketch);
+
+      // Solve
+      const solveOp = solveSketch(sketch);
+      let afterSketch = sketch;
+      if (solveOp.success && solveOp.result) {
+        afterSketch = solveOp.result.sketch;
+      }
+      const afterDOF = sketchDOF(afterSketch);
+
+      return { beforeSketch, afterSketch, beforeDOF, afterDOF };
+    } catch (e) {
+      console.error('ConstraintSimpleExample error:', e);
+      return null;
     }
-
-    // Capture before state
-    const beforeSketch = sketch;
-    const beforeDOF = sketchDOF(beforeSketch);
-
-    // Solve
-    const solveOp = solveSketch(sketch);
-    let afterSketch = sketch;
-    let solveResult: SolveResult | null = null;
-    if (solveOp.success && solveOp.result) {
-      afterSketch = solveOp.result.sketch;
-      solveResult = solveOp.result.result;
-    }
-    const afterDOF = sketchDOF(afterSketch);
-
-    return { beforeSketch, afterSketch, beforeDOF, afterDOF, solveResult };
   }, []);
 
-  if (!data) return null;
+  if (!data) {
+    return (
+      <group>
+        <BillboardText position={[0, 0, 0]} fontSize={0.2} color="red">
+          Error initializing constraint example
+        </BillboardText>
+      </group>
+    );
+  }
 
   // Animation: interpolate between before and after
   const progress = (Math.sin(animationAngle) + 1) / 2; // 0 to 1
