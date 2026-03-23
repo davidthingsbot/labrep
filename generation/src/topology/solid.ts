@@ -55,57 +55,82 @@ export function solidInnerShells(solid: Solid): readonly Shell[] {
 }
 
 /**
- * Compute the volume of a solid.
+ * Compute the volume of a solid using the divergence theorem.
  *
- * This is a simplified implementation that works for axis-aligned boxes.
- * A full implementation would use the divergence theorem (surface integrals).
+ * Uses the signed tetrahedra method: for each face, triangulate it and sum
+ * the signed volumes of tetrahedra formed with the origin.
+ *
+ * Volume = (1/6) * Σ (v0 · (v1 × v2)) for each triangle (v0, v1, v2)
  *
  * @param solid - The solid
- * @returns Volume (approximate for non-box shapes)
+ * @returns Volume (always positive via absolute value)
  */
 export function solidVolume(solid: Solid): number {
-  // Compute bounding box from all vertices in the shell
-  const outerVolume = computeShellVolume(solid.outerShell);
+  // Compute outer shell volume
+  const outerVolume = Math.abs(computeShellSignedVolume(solid.outerShell));
 
-  // Subtract inner shell volumes
+  // Subtract inner shell volumes (voids)
   let innerVolume = 0;
   for (const inner of solid.innerShells) {
-    innerVolume += computeShellVolume(inner);
+    innerVolume += Math.abs(computeShellSignedVolume(inner));
   }
 
   return outerVolume - innerVolume;
 }
 
 /**
- * Compute volume of a shell using bounding box (works for axis-aligned boxes).
+ * Compute signed volume of a shell using the divergence theorem.
+ *
+ * For each face, we triangulate it by fanning from the first vertex,
+ * then compute the signed volume of each tetrahedron with the origin.
+ *
+ * @param shell - The shell
+ * @returns Signed volume (positive if normals point outward)
  */
-function computeShellVolume(shell: Shell): number {
-  // Collect all vertex points
-  const points: { x: number; y: number; z: number }[] = [];
+function computeShellSignedVolume(shell: Shell): number {
+  let totalVolume = 0;
 
   for (const face of shellFaces(shell)) {
+    // Get all vertices from the outer wire
     const wire = faceOuterWire(face);
+    const vertices: { x: number; y: number; z: number }[] = [];
+
     for (const oe of wire.edges) {
-      const pt = edgeStartPoint(oe.edge);
-      points.push(pt);
+      // Use the effective start point based on orientation
+      const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      vertices.push(pt);
     }
+
+    if (vertices.length < 3) continue;
+
+    // Triangulate by fanning from first vertex
+    const v0 = vertices[0];
+    for (let i = 1; i < vertices.length - 1; i++) {
+      const v1 = vertices[i];
+      const v2 = vertices[i + 1];
+
+      // Signed volume of tetrahedron with origin = (v0 · (v1 × v2)) / 6
+      // Cross product v1 × v2:
+      const crossX = v1.y * v2.z - v1.z * v2.y;
+      const crossY = v1.z * v2.x - v1.x * v2.z;
+      const crossZ = v1.x * v2.y - v1.y * v2.x;
+
+      // Dot product v0 · (v1 × v2):
+      const dotProduct = v0.x * crossX + v0.y * crossY + v0.z * crossZ;
+
+      totalVolume += dotProduct / 6.0;
+    }
+
+    // Note: We ignore inner wires (holes) for volume - they don't contribute
+    // to the solid volume as they represent boundaries on the same face plane
   }
 
-  if (points.length === 0) return 0;
+  return totalVolume;
+}
 
-  // Compute bounding box
-  let minX = points[0].x, maxX = points[0].x;
-  let minY = points[0].y, maxY = points[0].y;
-  let minZ = points[0].z, maxZ = points[0].z;
-
-  for (const pt of points) {
-    minX = Math.min(minX, pt.x);
-    maxX = Math.max(maxX, pt.x);
-    minY = Math.min(minY, pt.y);
-    maxY = Math.max(maxY, pt.y);
-    minZ = Math.min(minZ, pt.z);
-    maxZ = Math.max(maxZ, pt.z);
-  }
-
-  return (maxX - minX) * (maxY - minY) * (maxZ - minZ);
+/**
+ * Helper to get edge end point.
+ */
+function edgeEndPoint(edge: { endVertex: { point: { x: number; y: number; z: number } } }): { x: number; y: number; z: number } {
+  return edge.endVertex.point;
 }

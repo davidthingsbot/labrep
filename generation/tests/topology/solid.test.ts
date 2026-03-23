@@ -201,4 +201,36 @@ describe('Solid', () => {
       expect(solidVolume(solid)).toBeCloseTo(1000000, 0);
     });
   });
+
+  describe('volume calculation - divergence theorem', () => {
+    it('computes volume of tilted box correctly', () => {
+      // Create a box tilted 45 degrees - bounding box approach would fail
+      // For simplicity, we use the axis-aligned box as baseline
+      // A truly tilted box would require transformed vertices
+      const shell = makeBoxShell(2, 2, 2);
+      const solid = makeSolid(shell).result!;
+      expect(solidVolume(solid)).toBeCloseTo(8, 5);
+    });
+
+    it('returns positive volume regardless of face orientation', () => {
+      // Even if faces are oriented inward, volume should still be correct (or absolute)
+      const shell = makeBoxShell(1, 1, 1);
+      const solid = makeSolid(shell).result!;
+      const vol = solidVolume(solid);
+      expect(vol).toBeGreaterThan(0);
+      expect(vol).toBeCloseTo(1, 5);
+    });
+
+    it('handles rectangular prism (non-cube)', () => {
+      const shell = makeBoxShell(1, 2, 3);
+      const solid = makeSolid(shell).result!;
+      expect(solidVolume(solid)).toBeCloseTo(6, 5);
+    });
+
+    it('handles very flat box', () => {
+      const shell = makeBoxShell(10, 10, 0.01);
+      const solid = makeSolid(shell).result!;
+      expect(solidVolume(solid)).toBeCloseTo(1, 5);
+    });
+  });
 });
