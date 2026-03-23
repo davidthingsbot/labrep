@@ -5,3 +5,4 @@ export * from './mesh';
 export * from './primitives';
 export * from './sketch';
 export * from './surfaces';
+export * from './topology';
