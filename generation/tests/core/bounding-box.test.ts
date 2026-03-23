@@ -8,6 +8,7 @@ import {
   size,
   intersects,
   isEmpty,
+  unionBoundingBox,
 } from '../../src/core/bounding-box';
 import { point3d } from '../../src/core/point3d';
 
@@ -132,5 +133,88 @@ describe('BoundingBox3D', () => {
     expect(c.x).toBeCloseTo(0, 10);
     expect(c.y).toBeCloseTo(0, 10);
     expect(c.z).toBeCloseTo(0, 10);
+  });
+
+  describe('unionBoundingBox', () => {
+    it('combines two non-overlapping boxes', () => {
+      const a = boundingBox(point3d(0, 0, 0), point3d(1, 1, 1));
+      const b = boundingBox(point3d(5, 5, 5), point3d(6, 6, 6));
+      const u = unionBoundingBox(a, b);
+      
+      expect(u.min.x).toBe(0);
+      expect(u.min.y).toBe(0);
+      expect(u.min.z).toBe(0);
+      expect(u.max.x).toBe(6);
+      expect(u.max.y).toBe(6);
+      expect(u.max.z).toBe(6);
+    });
+
+    it('combines two overlapping boxes', () => {
+      const a = boundingBox(point3d(0, 0, 0), point3d(5, 5, 5));
+      const b = boundingBox(point3d(3, 3, 3), point3d(8, 8, 8));
+      const u = unionBoundingBox(a, b);
+      
+      expect(u.min.x).toBe(0);
+      expect(u.min.y).toBe(0);
+      expect(u.min.z).toBe(0);
+      expect(u.max.x).toBe(8);
+      expect(u.max.y).toBe(8);
+      expect(u.max.z).toBe(8);
+    });
+
+    it('returns containing box when one contains the other', () => {
+      const outer = boundingBox(point3d(0, 0, 0), point3d(10, 10, 10));
+      const inner = boundingBox(point3d(2, 2, 2), point3d(5, 5, 5));
+      const u = unionBoundingBox(outer, inner);
+      
+      expect(u.min.x).toBe(0);
+      expect(u.max.x).toBe(10);
+    });
+
+    it('handles empty box on left', () => {
+      const empty = emptyBoundingBox();
+      const valid = boundingBox(point3d(1, 2, 3), point3d(4, 5, 6));
+      const u = unionBoundingBox(empty, valid);
+      
+      expect(u.min.x).toBe(1);
+      expect(u.max.x).toBe(4);
+    });
+
+    it('handles empty box on right', () => {
+      const valid = boundingBox(point3d(1, 2, 3), point3d(4, 5, 6));
+      const empty = emptyBoundingBox();
+      const u = unionBoundingBox(valid, empty);
+      
+      expect(u.min.x).toBe(1);
+      expect(u.max.x).toBe(4);
+    });
+
+    it('union of two empty boxes is empty', () => {
+      const u = unionBoundingBox(emptyBoundingBox(), emptyBoundingBox());
+      expect(isEmpty(u)).toBe(true);
+    });
+
+    it('handles boxes with negative coordinates', () => {
+      const a = boundingBox(point3d(-10, -10, -10), point3d(-5, -5, -5));
+      const b = boundingBox(point3d(-3, -3, -3), point3d(2, 2, 2));
+      const u = unionBoundingBox(a, b);
+      
+      expect(u.min.x).toBe(-10);
+      expect(u.min.y).toBe(-10);
+      expect(u.min.z).toBe(-10);
+      expect(u.max.x).toBe(2);
+      expect(u.max.y).toBe(2);
+      expect(u.max.z).toBe(2);
+    });
+
+    it('is commutative', () => {
+      const a = boundingBox(point3d(0, 0, 0), point3d(5, 5, 5));
+      const b = boundingBox(point3d(3, 3, 3), point3d(10, 10, 10));
+      const u1 = unionBoundingBox(a, b);
+      const u2 = unionBoundingBox(b, a);
+      
+      expect(u1.min.x).toBe(u2.min.x);
+      expect(u1.max.x).toBe(u2.max.x);
+    });
   });
 });

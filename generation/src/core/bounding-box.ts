@@ -132,3 +132,50 @@ export function isEmpty(box: BoundingBox3D): boolean {
     box.min.z > box.max.z
   );
 }
+
+/**
+ * Computes the union of two bounding boxes.
+ *
+ * The result is the smallest bounding box that contains both input boxes.
+ * If either box is empty, returns a copy of the other.
+ * If both are empty, returns an empty box.
+ *
+ * @param a - First bounding box
+ * @param b - Second bounding box
+ * @returns A new BoundingBox3D containing both a and b
+ */
+export function unionBoundingBox(a: BoundingBox3D, b: BoundingBox3D): BoundingBox3D {
+  const aEmpty = isEmpty(a);
+  const bEmpty = isEmpty(b);
+
+  if (aEmpty && bEmpty) {
+    return emptyBoundingBox();
+  }
+
+  if (aEmpty) {
+    return boundingBox(
+      point3d(b.min.x, b.min.y, b.min.z),
+      point3d(b.max.x, b.max.y, b.max.z),
+    );
+  }
+
+  if (bEmpty) {
+    return boundingBox(
+      point3d(a.min.x, a.min.y, a.min.z),
+      point3d(a.max.x, a.max.y, a.max.z),
+    );
+  }
+
+  return boundingBox(
+    point3d(
+      Math.min(a.min.x, b.min.x),
+      Math.min(a.min.y, b.min.y),
+      Math.min(a.min.z, b.min.z),
+    ),
+    point3d(
+      Math.max(a.max.x, b.max.x),
+      Math.max(a.max.y, b.max.y),
+      Math.max(a.max.z, b.max.z),
+    ),
+  );
+}
