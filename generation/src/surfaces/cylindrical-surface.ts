@@ -63,12 +63,28 @@ export function makeCylindricalSurface(
     return failure('Radius must be positive');
   }
 
+  // Validate axis has non-zero direction
+  const dirLen = Math.sqrt(
+    axis.direction.x * axis.direction.x +
+    axis.direction.y * axis.direction.y +
+    axis.direction.z * axis.direction.z
+  );
+  if (isZero(dirLen)) {
+    return failure('Axis direction must be non-zero');
+  }
+
+  // Normalize the axis direction
+  const normalizedAxis: Axis = {
+    origin: axis.origin,
+    direction: normalize(axis.direction),
+  };
+
   // Compute a reference direction perpendicular to axis
-  const refDirection = perpendicularTo(axis.direction);
+  const refDirection = perpendicularTo(normalizedAxis.direction);
 
   return success({
     type: 'cylinder',
-    axis,
+    axis: normalizedAxis,
     radius,
     refDirection,
   });

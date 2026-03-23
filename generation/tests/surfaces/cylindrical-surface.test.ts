@@ -217,15 +217,13 @@ describe('CylindricalSurface', () => {
       expect(result.success).toBe(false);
     });
 
-    // TODO: Add validation for degenerate axis (zero direction)
-    it.skip('fails for degenerate axis (zero direction)', () => {
+    it('fails for degenerate axis (zero direction)', () => {
       const badAxis = { origin: point3d(0, 0, 0), direction: vec3d(0, 0, 0) };
       const result = makeCylindricalSurface(badAxis, 1);
       expect(result.success).toBe(false);
     });
 
-    // TODO: Add validation for very small radius
-    it.skip('handles very small radius near tolerance', () => {
+    it('fails for very small radius near tolerance', () => {
       const result = makeCylindricalSurface(Z_AXIS_3D, 1e-10);
       expect(result.success).toBe(false);
     });
@@ -235,8 +233,7 @@ describe('CylindricalSurface', () => {
       expect(result.success).toBe(true);
     });
 
-    // TODO: Normalize axis direction in makeCylindricalSurface
-    it.skip('normalizes non-unit axis direction', () => {
+    it('normalizes non-unit axis direction', () => {
       const nonUnitAxis = { origin: point3d(0, 0, 0), direction: vec3d(0, 0, 5) };
       const result = makeCylindricalSurface(nonUnitAxis, 1);
       expect(result.success).toBe(true);

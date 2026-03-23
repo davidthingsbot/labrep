@@ -197,15 +197,13 @@ describe('Circle3D', () => {
   });
 
   describe('edge cases', () => {
-    // TODO: Add validation for degenerate plane (zero normal)
-    it.skip('fails for degenerate plane (zero normal)', () => {
+    it('fails for degenerate plane (zero normal)', () => {
       const badPlane = plane(point3d(0, 0, 0), vec3d(0, 0, 0), vec3d(1, 0, 0));
       const result = makeCircle3D(badPlane, 1);
       expect(result.success).toBe(false);
     });
 
-    // TODO: Add validation for very small radius
-    it.skip('fails for very small radius near tolerance', () => {
+    it('fails for very small radius near tolerance', () => {
       const result = makeCircle3D(XY_PLANE, 1e-10);
       expect(result.success).toBe(false);
     });

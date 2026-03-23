@@ -58,6 +58,16 @@ export function makeCircle3D(plane: Plane, radius: number): OperationResult<Circ
     return failure('Radius must be positive');
   }
 
+  // Validate plane has non-zero normal
+  const normalLen = Math.sqrt(
+    plane.normal.x * plane.normal.x +
+    plane.normal.y * plane.normal.y +
+    plane.normal.z * plane.normal.z
+  );
+  if (isZero(normalLen)) {
+    return failure('Plane normal must be non-zero');
+  }
+
   // Start point is at θ=0: center + radius * xAxis
   const startPoint = point3d(
     plane.origin.x + radius * plane.xAxis.x,
