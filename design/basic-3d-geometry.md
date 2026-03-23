@@ -653,23 +653,23 @@ solidVolume(imported);   // 1.0
 ## Exit Criteria
 
 Phase 6 is complete when:
-- [ ] Line3D: construction, evaluation, tangent, length
-- [ ] Circle3D: construction, evaluation, tangent, length
-- [ ] Arc3D: construction, evaluation, tangent, length, through-3-points
-- [ ] PlaneSurface: construction, evaluation, normal
-- [ ] CylindricalSurface: construction, evaluation, normal
-- [ ] Vertex: construction
-- [ ] Edge: construction with validation
-- [ ] Wire: construction with connectivity validation
-- [ ] Face: construction from surface + wires
-- [ ] Shell: construction, isClosed detection
-- [ ] Solid: construction, volume calculation
-- [ ] STEP converters for all new types
-- [ ] Round-trip STEP tests pass
-- [ ] All tests passing
+- [x] Line3D: construction, evaluation, tangent, length *(21 tests)*
+- [x] Circle3D: construction, evaluation, tangent, length *(20 tests)*
+- [x] Arc3D: construction, evaluation, tangent, length, through-3-points *(27 tests)*
+- [x] PlaneSurface: construction, evaluation, normal *(13 tests)*
+- [x] CylindricalSurface: construction, evaluation, normal *(17 tests)*
+- [x] Vertex: construction *(6 tests)*
+- [x] Edge: construction with validation *(14 tests)*
+- [x] Wire: construction with connectivity validation *(17 tests)*
+- [x] Face: construction from surface + wires *(11 tests)*
+- [x] Shell: construction, isClosed detection *(7 tests)*
+- [x] Solid: construction, volume calculation *(8 tests)*
+- [x] STEP converters for all new types *(14 tests)*
+- [x] Round-trip STEP tests pass
+- [x] All tests passing *(535 total)*
 - [ ] Viewer example: curves-3d (Line3D, Circle3D, Arc3D with animation)
 - [ ] Viewer example: topology-box (explicit BRep cube)
 - [ ] Viewer example: topology-cylinder (mixed surface types)
 - [ ] Viewer example: topology-step-roundtrip (export/import demo)
 
-**Status:** 🔲 Not Started
+**Status:** 🔄 Core Complete — awaiting viewer examples

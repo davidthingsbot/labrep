@@ -18,6 +18,7 @@ import { BoundingBoxExample } from './BoundingBoxExample';
 import { StlRoundtripExample } from './StlRoundtripExample';
 import { SketchProfilesExample } from './SketchProfilesExample';
 import { StepRoundtripExample } from './StepRoundtripExample';
+import { Curves3DExample } from './Curves3DExample';
 
 /** All registered examples. */
 export const examples: Example[] = [
@@ -548,6 +549,35 @@ if (wire.success) {
   // w.curves   — the curve sequence
   // lengthWire2D(w) — total path length
 }
+`,
+  },
+  {
+    id: 'curves-3d',
+    name: '3D Curves',
+    description: 'Line3D, Circle3D, Arc3D with animated evaluation and tangent vectors',
+    component: Curves3DExample,
+    code: `// 3D Curves — Line3D, Circle3D, Arc3D
+import {
+  point3d, vec3d, plane, XY_PLANE,
+  makeLine3D, makeCircle3D, makeArc3D,
+  evaluateLine3D, evaluateCircle3D, evaluateArc3D,
+  tangentLine3D, tangentCircle3D, tangentArc3D,
+} from '@labrep/generation';
+
+// Line3D — 3D line segment
+const line = makeLine3D(point3d(0, 0, 0), point3d(3, 4, 5));
+evaluateLine3D(line.result, t);  // point at parameter t
+tangentLine3D(line.result, t);   // constant direction
+
+// Circle3D — full circle on a plane
+const circle = makeCircle3D(XY_PLANE, 1.5);
+evaluateCircle3D(circle.result, theta);  // θ in radians
+tangentCircle3D(circle.result, theta);   // perpendicular to radius
+
+// Arc3D — portion of a circle
+const arc = makeArc3D(tiltedPlane, 1.2, 0, Math.PI);
+evaluateArc3D(arc.result, theta);
+tangentArc3D(arc.result, theta);
 `,
   },
 ];
