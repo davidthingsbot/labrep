@@ -2,10 +2,14 @@ import { describe, it, expect } from 'vitest';
 import { point2d } from '../../src/core';
 import { makeLine2D } from '../../src/geometry/line2d';
 import { makeCircle2D } from '../../src/geometry/circle2d';
+import { makeArc2D } from '../../src/geometry/arc2d';
 import { 
   intersectLine2DLine2D,
   intersectLine2DCircle2D,
   intersectCircle2DCircle2D,
+  intersectLine2DArc2D,
+  intersectCircle2DArc2D,
+  intersectArc2DArc2D,
 } from '../../src/geometry/intersections2d';
 
 describe('Intersections2D', () => {
@@ -352,6 +356,148 @@ describe('Intersections2D', () => {
       const circle = makeCircle2D(point2d(0, 0), 1).result!;
       const result = intersectLine2DCircle2D(line, circle);
       expect(result.length).toBe(2);
+    });
+  });
+
+  describe('line-arc intersection', () => {
+    it('finds intersection when line crosses arc', () => {
+      // Horizontal line through unit circle, arc is right half (from -π/2 to π/2)
+      const line = makeLine2D(point2d(-2, 0), point2d(2, 0)).result!;
+      const arc = makeArc2D(point2d(0, 0), 1, -Math.PI / 2, Math.PI / 2).result!;
+      
+      const result = intersectLine2DArc2D(line, arc);
+      
+      expect(result.length).toBe(1);
+      expect(result[0].point.x).toBeCloseTo(1);
+      expect(result[0].point.y).toBeCloseTo(0);
+    });
+
+    it('returns empty when line misses arc but would hit full circle', () => {
+      // Horizontal line through unit circle, but arc is on top half only
+      const line = makeLine2D(point2d(-2, 0), point2d(2, 0)).result!;
+      // Arc from π/4 to 3π/4 (top portion only)
+      const arc = makeArc2D(point2d(0, 0), 1, Math.PI / 4, 3 * Math.PI / 4).result!;
+      
+      const result = intersectLine2DArc2D(line, arc);
+      
+      expect(result.length).toBe(0);
+    });
+
+    it('finds two intersections when line crosses both ends of arc', () => {
+      // Vertical line through arc that spans most of circle
+      const line = makeLine2D(point2d(0, -2), point2d(0, 2)).result!;
+      // Arc spanning from -3π/4 to 3π/4 (covers top and bottom at x=0)
+      const arc = makeArc2D(point2d(0, 0), 1, -3 * Math.PI / 4, 3 * Math.PI / 4).result!;
+      
+      const result = intersectLine2DArc2D(line, arc);
+      
+      expect(result.length).toBe(2);
+    });
+
+    it('finds tangent intersection', () => {
+      // Vertical line tangent to right side of arc
+      const line = makeLine2D(point2d(1, -1), point2d(1, 1)).result!;
+      // Arc including right side
+      const arc = makeArc2D(point2d(0, 0), 1, -Math.PI / 4, Math.PI / 4).result!;
+      
+      const result = intersectLine2DArc2D(line, arc);
+      
+      expect(result.length).toBe(1);
+      expect(result[0].point.x).toBeCloseTo(1);
+      expect(result[0].point.y).toBeCloseTo(0);
+    });
+
+    it('returns empty when line misses arc entirely', () => {
+      const line = makeLine2D(point2d(5, 0), point2d(5, 1)).result!;
+      const arc = makeArc2D(point2d(0, 0), 1, 0, Math.PI).result!;
+      
+      const result = intersectLine2DArc2D(line, arc);
+      
+      expect(result.length).toBe(0);
+    });
+  });
+
+  describe('circle-arc intersection', () => {
+    it('finds intersections when circle crosses arc', () => {
+      // Two overlapping circles, but arc only covers part
+      const circle = makeCircle2D(point2d(1, 0), 1).result!;
+      // Arc is top half of first circle
+      const arc = makeArc2D(point2d(0, 0), 1, 0, Math.PI).result!;
+      
+      const result = intersectCircle2DArc2D(circle, arc);
+      
+      // One intersection in top half at (0.5, √0.75)
+      expect(result.length).toBe(1);
+      expect(result[0].point.x).toBeCloseTo(0.5);
+      expect(result[0].point.y).toBeGreaterThan(0);
+    });
+
+    it('returns empty when circle intersects full circle but not arc portion', () => {
+      // Circle that would intersect bottom of unit circle
+      const circle = makeCircle2D(point2d(0, -1), 0.5).result!;
+      // Arc is top half only
+      const arc = makeArc2D(point2d(0, 0), 1, 0, Math.PI).result!;
+      
+      const result = intersectCircle2DArc2D(circle, arc);
+      
+      expect(result.length).toBe(0);
+    });
+
+    it('finds tangent point', () => {
+      // Circle tangent to arc at one point
+      const circle = makeCircle2D(point2d(2, 0), 1).result!;
+      // Arc covering the right side
+      const arc = makeArc2D(point2d(0, 0), 1, -Math.PI / 2, Math.PI / 2).result!;
+      
+      const result = intersectCircle2DArc2D(circle, arc);
+      
+      expect(result.length).toBe(1);
+      expect(result[0].point.x).toBeCloseTo(1);
+      expect(result[0].point.y).toBeCloseTo(0);
+    });
+  });
+
+  describe('arc-arc intersection', () => {
+    it('finds intersections when arcs overlap', () => {
+      // Two arcs from circles centered 1 unit apart
+      const arc1 = makeArc2D(point2d(0, 0), 1, -Math.PI / 2, Math.PI / 2).result!;
+      const arc2 = makeArc2D(point2d(1, 0), 1, Math.PI / 2, 3 * Math.PI / 2).result!;
+      
+      const result = intersectArc2DArc2D(arc1, arc2);
+      
+      // Both arcs include the intersection region
+      expect(result.length).toBe(2);
+    });
+
+    it('returns empty when arcs from same circle don\'t overlap', () => {
+      // Two arcs on same circle but different portions
+      const arc1 = makeArc2D(point2d(0, 0), 1, 0, Math.PI / 4).result!;
+      const arc2 = makeArc2D(point2d(0, 0), 1, Math.PI / 2, Math.PI).result!;
+      
+      const result = intersectArc2DArc2D(arc1, arc2);
+      
+      expect(result.length).toBe(0);
+    });
+
+    it('finds intersection when circles intersect but only one point in arc ranges', () => {
+      // Two unit circles 1 unit apart, but arcs only cover partial range
+      const arc1 = makeArc2D(point2d(0, 0), 1, 0, Math.PI / 2).result!; // top-right quarter
+      const arc2 = makeArc2D(point2d(1, 0), 1, Math.PI / 2, Math.PI).result!; // top-left quarter
+      
+      const result = intersectArc2DArc2D(arc1, arc2);
+      
+      // Only top intersection point is in both arcs
+      expect(result.length).toBe(1);
+      expect(result[0].point.y).toBeGreaterThan(0);
+    });
+
+    it('returns empty when circles don\'t intersect', () => {
+      const arc1 = makeArc2D(point2d(0, 0), 1, 0, Math.PI).result!;
+      const arc2 = makeArc2D(point2d(5, 0), 1, 0, Math.PI).result!;
+      
+      const result = intersectArc2DArc2D(arc1, arc2);
+      
+      expect(result.length).toBe(0);
     });
   });
 });

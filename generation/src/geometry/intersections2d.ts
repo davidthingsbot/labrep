@@ -1,6 +1,7 @@
 import { Point2D, point2d, isZero, TOLERANCE } from '../core';
 import { Line2D } from './line2d';
 import { Circle2D } from './circle2d';
+import { Arc2D } from './arc2d';
 
 /**
  * Result of a curve-curve intersection.
@@ -249,4 +250,178 @@ function normalizeAngle(angle: number): number {
   let result = angle % twoPi;
   if (result < 0) result += twoPi;
   return result;
+}
+
+/**
+ * Check if an angle is within an arc's range.
+ * Handles both CCW (start < end) and CW (start > end) arcs.
+ */
+function isAngleInArc(angle: number, arc: Arc2D): boolean {
+  const twoPi = 2 * Math.PI;
+  
+  // Normalize the angle
+  let a = angle % twoPi;
+  if (a < 0) a += twoPi;
+  
+  // Normalize arc angles
+  let start = arc.startAngle % twoPi;
+  if (start < 0) start += twoPi;
+  let end = arc.endAngle % twoPi;
+  if (end < 0) end += twoPi;
+  
+  // Handle sweep direction
+  const sweep = arc.endAngle - arc.startAngle;
+  
+  if (sweep >= 0) {
+    // CCW arc: angle is in range if it's between start and end going CCW
+    if (start <= end) {
+      return a >= start - TOLERANCE && a <= end + TOLERANCE;
+    } else {
+      // Arc crosses 0/2π
+      return a >= start - TOLERANCE || a <= end + TOLERANCE;
+    }
+  } else {
+    // CW arc: angle is in range going clockwise from start to end
+    if (start >= end) {
+      return a <= start + TOLERANCE && a >= end - TOLERANCE;
+    } else {
+      // Arc crosses 0/2π in reverse
+      return a <= start + TOLERANCE || a >= end - TOLERANCE;
+    }
+  }
+}
+
+/**
+ * Find intersections between a line and an arc.
+ * 
+ * @param line - The line (treated as infinite)
+ * @param arc - The arc
+ * @returns Array of intersections (0, 1, or 2)
+ */
+export function intersectLine2DArc2D(line: Line2D, arc: Arc2D): Intersection2D[] {
+  // Create a temporary circle with the same center and radius
+  const tempCircle: Circle2D = {
+    type: 'circle2d',
+    center: arc.center,
+    radius: arc.radius,
+    startParam: 0,
+    endParam: 2 * Math.PI,
+    isClosed: true,
+    startPoint: point2d(arc.center.x + arc.radius, arc.center.y),
+    endPoint: point2d(arc.center.x + arc.radius, arc.center.y),
+  };
+  
+  // Get line-circle intersections
+  const circleIntersections = intersectLine2DCircle2D(line, tempCircle);
+  
+  // Filter to only those on the arc
+  const results: Intersection2D[] = [];
+  
+  for (const inter of circleIntersections) {
+    const angle = Math.atan2(inter.point.y - arc.center.y, inter.point.x - arc.center.x);
+    
+    if (isAngleInArc(angle, arc)) {
+      results.push({
+        point: inter.point,
+        paramOnCurve1: inter.paramOnCurve1,
+        paramOnCurve2: angle, // Use actual angle, not normalized
+      });
+    }
+  }
+  
+  return results;
+}
+
+/**
+ * Find intersections between a circle and an arc.
+ * 
+ * @param circle - The circle
+ * @param arc - The arc
+ * @returns Array of intersections (0, 1, or 2)
+ */
+export function intersectCircle2DArc2D(circle: Circle2D, arc: Arc2D): Intersection2D[] {
+  // Create a temporary circle for the arc
+  const arcCircle: Circle2D = {
+    type: 'circle2d',
+    center: arc.center,
+    radius: arc.radius,
+    startParam: 0,
+    endParam: 2 * Math.PI,
+    isClosed: true,
+    startPoint: point2d(arc.center.x + arc.radius, arc.center.y),
+    endPoint: point2d(arc.center.x + arc.radius, arc.center.y),
+  };
+  
+  // Get circle-circle intersections
+  const circleIntersections = intersectCircle2DCircle2D(circle, arcCircle);
+  
+  // Filter to only those on the arc
+  const results: Intersection2D[] = [];
+  
+  for (const inter of circleIntersections) {
+    const angle = Math.atan2(inter.point.y - arc.center.y, inter.point.x - arc.center.x);
+    
+    if (isAngleInArc(angle, arc)) {
+      results.push({
+        point: inter.point,
+        paramOnCurve1: inter.paramOnCurve1,
+        paramOnCurve2: angle,
+      });
+    }
+  }
+  
+  return results;
+}
+
+/**
+ * Find intersections between two arcs.
+ * 
+ * @param arc1 - First arc
+ * @param arc2 - Second arc
+ * @returns Array of intersections (0, 1, or 2)
+ */
+export function intersectArc2DArc2D(arc1: Arc2D, arc2: Arc2D): Intersection2D[] {
+  // Create temporary circles
+  const circle1: Circle2D = {
+    type: 'circle2d',
+    center: arc1.center,
+    radius: arc1.radius,
+    startParam: 0,
+    endParam: 2 * Math.PI,
+    isClosed: true,
+    startPoint: point2d(arc1.center.x + arc1.radius, arc1.center.y),
+    endPoint: point2d(arc1.center.x + arc1.radius, arc1.center.y),
+  };
+  
+  const circle2: Circle2D = {
+    type: 'circle2d',
+    center: arc2.center,
+    radius: arc2.radius,
+    startParam: 0,
+    endParam: 2 * Math.PI,
+    isClosed: true,
+    startPoint: point2d(arc2.center.x + arc2.radius, arc2.center.y),
+    endPoint: point2d(arc2.center.x + arc2.radius, arc2.center.y),
+  };
+  
+  // Get circle-circle intersections
+  const circleIntersections = intersectCircle2DCircle2D(circle1, circle2);
+  
+  // Filter to only those on both arcs
+  const results: Intersection2D[] = [];
+  
+  for (const inter of circleIntersections) {
+    const angle1 = Math.atan2(inter.point.y - arc1.center.y, inter.point.x - arc1.center.x);
+    const angle2 = Math.atan2(inter.point.y - arc2.center.y, inter.point.x - arc2.center.x);
+    
+    if (isAngleInArc(angle1, arc1) && isAngleInArc(angle2, arc2)) {
+      results.push({
+        point: inter.point,
+        paramOnCurve1: angle1,
+        paramOnCurve2: angle2,
+      });
+    }
+  }
+  
+  return results;
 }
