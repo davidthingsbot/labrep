@@ -80,7 +80,7 @@ export function Curves3DExample({ animationAngle }: ExampleProps) {
   }, []);
 
   if (!data) return null;
-  const { line, circle, arc, tiltedPlane } = data;
+  const { line, circle, arc } = data;
 
   // Animated parameter for each curve
   const lineT = (animationAngle / (2 * Math.PI)) * line.segmentLength;

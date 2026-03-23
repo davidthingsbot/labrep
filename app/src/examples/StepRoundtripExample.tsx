@@ -3,16 +3,11 @@
 import { useMemo } from 'react';
 import {
   point3d,
-  vec3d,
-  axis,
-  plane,
-  ORIGIN,
   X_AXIS,
   Y_AXIS,
   Z_AXIS,
   XY_PLANE,
   XZ_PLANE,
-  YZ_PLANE,
   createStepModelBuilder,
   point3DToStep,
   vector3DToStep,
@@ -68,8 +63,8 @@ export function StepRoundtripExample({ animationAngle }: ExampleProps) {
       pointCount: extracted.points.size,
       directionCount: extracted.directions.size,
       planeCount: extracted.planes.size,
-      importedPoints: [...extracted.points.values()],
-      importedPlanes: [...extracted.planes.values()],
+      importedPoints: Array.from(extracted.points.values()),
+      importedPlanes: Array.from(extracted.planes.values()),
       originalPoints: pts,
     };
   }, []);

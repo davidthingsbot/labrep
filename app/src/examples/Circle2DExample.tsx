@@ -51,11 +51,11 @@ export function Circle2DExample({ animationAngle }: ExampleProps) {
     return { c1, c2, p1, p2, p3, circumference1, circumference2 };
   }, []);
 
+  const pts1 = useMemo(() => data ? circlePoints(data.c1.center.x, data.c1.center.y, data.c1.radius) : [], [data]);
+  const pts2 = useMemo(() => data ? circlePoints(data.c2.center.x, data.c2.center.y, data.c2.radius) : [], [data]);
+
   if (!data) return null;
   const { c1, c2, p1, p2, p3, circumference1, circumference2 } = data;
-
-  const pts1 = useMemo(() => circlePoints(c1.center.x, c1.center.y, c1.radius), [c1]);
-  const pts2 = useMemo(() => circlePoints(c2.center.x, c2.center.y, c2.radius), [c2]);
 
   // Animated point on c1
   const movingPoint = evaluateCircle2D(c1, animationAngle);

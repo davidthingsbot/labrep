@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Line, Sphere } from '@react-three/drei';
+import { Line } from '@react-three/drei';
 import {
   point2d,
   XY_PLANE,
@@ -13,8 +13,6 @@ import {
   makeLine2D,
   makeCircle2D,
   makeArc2D,
-  makeWire2D,
-  lengthWire2D,
 } from '@labrep/generation';
 import { PointViz, BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';

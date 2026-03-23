@@ -1,10 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import {
   point3d,
   makeLine3D,
-  makeVertex,
   makeEdgeFromCurve,
   orientEdge,
   makeWire,
@@ -71,7 +70,7 @@ export function TopologyStepExample({ animationAngle }: ExampleProps) {
   }, []);
 
   if (!data) return null;
-  const { volume, stepText, entityCount, w, h, d } = data;
+  const { volume, entityCount, w, h, d } = data;
 
   return (
     <group rotation={[0, animationAngle * 0.2, 0]}>

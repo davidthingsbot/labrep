@@ -64,13 +64,13 @@ export function Arc2DExample({ animationAngle }: ExampleProps) {
     return { arc1, arc2, arc3, arc1Rev, p1, p2, p3, len1, len2, len3 };
   }, []);
 
-  if (!data) return null;
-  const { arc1, arc2, arc3, arc1Rev, p1, p2, p3, len1, len2, len3 } = data;
+  const pts1 = useMemo(() => data ? arcPoints(data.arc1.center.x, data.arc1.center.y, data.arc1.radius, data.arc1.startAngle, data.arc1.endAngle) : [], [data]);
+  const pts2 = useMemo(() => data ? arcPoints(data.arc2.center.x, data.arc2.center.y, data.arc2.radius, data.arc2.startAngle, data.arc2.endAngle) : [], [data]);
+  const pts3 = useMemo(() => data ? arcPoints(data.arc3.center.x, data.arc3.center.y, data.arc3.radius, data.arc3.startAngle, data.arc3.endAngle) : [], [data]);
+  const ptsRev = useMemo(() => data ? arcPoints(data.arc1Rev.center.x, data.arc1Rev.center.y - 1.8, data.arc1Rev.radius, data.arc1Rev.startAngle, data.arc1Rev.endAngle) : [], [data]);
 
-  const pts1 = useMemo(() => arcPoints(arc1.center.x, arc1.center.y, arc1.radius, arc1.startAngle, arc1.endAngle), [arc1]);
-  const pts2 = useMemo(() => arcPoints(arc2.center.x, arc2.center.y, arc2.radius, arc2.startAngle, arc2.endAngle), [arc2]);
-  const pts3 = useMemo(() => arcPoints(arc3.center.x, arc3.center.y, arc3.radius, arc3.startAngle, arc3.endAngle), [arc3]);
-  const ptsRev = useMemo(() => arcPoints(arc1Rev.center.x, arc1Rev.center.y - 1.8, arc1Rev.radius, arc1Rev.startAngle, arc1Rev.endAngle), [arc1Rev]);
+  if (!data) return null;
+  const { arc1, arc2, arc3, p1, p2, p3, len1, len2, len3 } = data;
 
   const frac = animationAngle / (2 * Math.PI);
 

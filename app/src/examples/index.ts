@@ -19,3 +19,6 @@ export { BoundingBoxExample } from './BoundingBoxExample';
 export { SketchProfilesExample } from './SketchProfilesExample';
 export { StlRoundtripExample } from './StlRoundtripExample';
 export { StepRoundtripExample } from './StepRoundtripExample';
+export { ConstraintSimpleExample } from './ConstraintSimpleExample';
+export { ConstraintParametricExample } from './ConstraintParametricExample';
+export { ConstraintSolverVizExample } from './ConstraintSolverVizExample';

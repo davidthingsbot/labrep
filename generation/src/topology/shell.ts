@@ -93,7 +93,7 @@ function analyzeShellClosure(faces: Face[]): boolean {
   // For a closed shell:
   // - Every edge must be used exactly 2 times
   // - The two usages should be in opposite directions
-  for (const [, usages] of edgeUsage) {
+  for (const [, usages] of Array.from(edgeUsage)) {
     if (usages.length !== 2) {
       // Edge is used by != 2 faces (boundary edge or non-manifold)
       return false;

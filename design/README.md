@@ -807,6 +807,12 @@ Boolean operations (union, subtract, intersect) seem simple conceptually but inv
 
 Each phase has a dedicated design document with full details: OCCT references, data types, function signatures, testing approach, and viewer examples.
 
+> **Note on Phase Reordering (2026-03-23):** Constraint solver moved up to Phase 7 because parametric design is core to voice/text-controlled CAD. The ability to say "make that 10mm" or "set width = 2 × height" is fundamental to the labrep vision. Operations like extrude and revolve work fine without constraints (they take explicit dimensions), but true parametric design requires the solver.
+
+---
+
+### Completed Phases
+
 ### Phase 1: Mathematical Foundation ✅
 
 **Goal:** Basic math operations, fully tested.
@@ -827,7 +833,7 @@ Each phase has a dedicated design document with full details: OCCT references, d
 
 ---
 
-### Phase 3: STL Import/Export ✅ *(NEW — I/O-first refactor)*
+### Phase 3: STL Import/Export ✅
 
 **Goal:** Read and write STL files from our Mesh type. Enables mesh-level round-trip testing.
 
@@ -837,7 +843,7 @@ Each phase has a dedicated design document with full details: OCCT references, d
 
 ---
 
-### Phase 4: STEP Import/Export Foundation ✅ *(moved up from Phase 6)*
+### Phase 4: STEP Import/Export Foundation ✅
 
 **Goal:** STEP parser/writer infrastructure + foundation-type converters (Point3D, Vector3D, Axis, Plane). The parser and writer handle all entity types syntactically; semantic conversion starts with foundation types and grows incrementally with each phase.
 
@@ -849,7 +855,7 @@ Each phase has a dedicated design document with full details: OCCT references, d
 
 ---
 
-### Phase 5: Sketch System (No Constraints) ✅ *(was Phase 3)*
+### Phase 5: Sketch System (No Constraints) ✅
 
 **Design doc:** [`sketch-system.md`](sketch-system.md)
 
@@ -857,79 +863,75 @@ Each phase has a dedicated design document with full details: OCCT references, d
 
 **Status:** Complete — Sketch management, Profile2D, region detection with T-junction splitting (32 tests)
 
-```
-Data Types:
-├── Sketch
-├── SketchElement
-└── Profile2D
-
-Functions:
-├── Create sketch on plane
-├── Add/remove elements
-├── Find closed profiles (region detection)
-└── Validate sketch
-
-Tests:
-├── Profile detection for simple shapes
-├── Multiple profiles (with holes)
-├── Open sketch detection
-└── Sketch on arbitrary planes
-```
-
 **Exit Criteria:** Can create sketch, add lines/arcs, detect closed profiles.
 
 ---
 
-### Phase 6: Basic 3D Geometry + Extend STEP *(was Phase 4)*
+### Phase 6: Basic 3D Geometry + STEP Topology ✅
 
-**Goal:** 3D curves, planar surfaces, basic topology.
+**Design doc:** [`basic-3d-geometry.md`](basic-3d-geometry.md)
 
-```
-Data Types:
-├── Curve3D, Line3D, Circle3D, Arc3D
-├── Surface (interface)
-├── PlaneSurface
-├── Vertex, Edge, Wire (3D)
-└── Face (planar only)
+**Goal:** 3D curves, planar surfaces, basic topology (Vertex → Edge → Wire → Face → Shell → Solid).
 
-Functions:
-├── 3D curve construction and evaluation
-├── Planar surface from plane
-├── Topology construction (vertex → edge → wire → face)
-└── Topology validation
+**Status:** Complete — Line3D, Circle3D, Arc3D, PlaneSurface, CylindricalSurface, full BRep topology, STEP converters (175 tests)
 
-Tests:
-├── 3D curve evaluation
-├── Face construction from wire
-├── Topology consistency checks
-└── Normal computation
-```
-
-**Exit Criteria:** Can create 3D edges, wires, and planar faces.
+**Exit Criteria:** Can create 3D edges, wires, planar faces, shells, and solids with STEP round-trip.
 
 ---
 
-### Phase 7: Extrude + Extend STEP *(was Phase 5)*
+### Upcoming Phases (Revised Order)
+
+### Phase 7: Constraint Solver ← **MOVED UP**
+
+**Goal:** Add constraints to sketches, solve for geometry. Enable parametric design.
+
+**Design doc:** [`constraint-solver.md`](constraint-solver.md)
+
+**Why moved up:** Parametric design is core to voice/text-controlled CAD. Users need to say "make that 10mm" or "set width = 2 × height" — this requires a constraint solver.
+
+```
+Data Types:
+├── Constraint (base type + specific constraint types)
+├── DimensionalConstraint (with Parameter reference)
+├── Parameter (name, value, expression)
+└── SolveResult (success, DOF, errors)
+
+Functions:
+├── addConstraint(sketch, constraint)
+├── removeConstraint(sketch, constraintId)
+├── solve(sketch) → SolveResult
+├── getDegreesOfFreedom(sketch)
+├── isFullyConstrained(sketch)
+├── isOverConstrained(sketch)
+├── setParameter(sketch, name, value)
+└── Parameter expressions: "width * 2"
+
+Tests:
+├── Simple constraints (horizontal, vertical)
+├── Combined constraints (rectangle → square)
+├── Dimensional constraints (distance, angle, radius)
+├── Parameter-driven updates
+├── Over-constrained detection
+├── Under-constrained (DOF > 0)
+├── Redundant constraints
+├── Conflicting constraints
+└── Large sketches (performance)
+```
+
+**Exit Criteria:** Sketches can be constrained and solved. Parameters drive geometry updates.
+
+---
+
+### Phase 8: Extrude + STEP
 
 **Goal:** Turn 2D profile into 3D solid via extrusion.
 
 ```
-Data Types:
-├── ExtrusionSurface (Geom_SurfaceOfLinearExtrusion equivalent)
-├── CylindricalSurface (for extruded arcs) — already done
-└── (Shell, Solid already done in Phase 6)
-
 Functions:
 ├── extrude(profile, direction, distance) → Solid
 ├── extrudeSymmetric(profile, direction, distance) → Solid
 ├── extrudeTo(profile, targetFace) → Solid
-├── makeExtrusionSurface(curve3d, direction) → ExtrusionSurface
-└── evaluateExtrusionSurface, normalExtrusionSurface
-
-STEP Extensions:
-├── ExtrusionSurface → SURFACE_OF_LINEAR_EXTRUSION
-├── PCurve support (2D curve on surface for trimmed faces)
-└── ADVANCED_BREP_SHAPE_REPRESENTATION wrapper
+└── STEP: SURFACE_OF_LINEAR_EXTRUSION, ADVANCED_BREP_SHAPE_REPRESENTATION
 
 Tests:
 ├── Extrude rectangle → box (volume check)
@@ -937,14 +939,40 @@ Tests:
 ├── Extrude with holes → solid with through-hole
 ├── Extrude L-shape (non-convex profile)
 ├── Symmetric extrusion
-├── STEP round-trip of extruded solid
+└── STEP round-trip of extruded solid
 ```
 
 **Exit Criteria:** Can extrude sketch profiles into valid solids, export to STEP.
 
 ---
 
-### Phase 8: Sketch on Face *(was Phase 7)*
+### Phase 9: Revolve + STEP
+
+**Goal:** Create solids by revolving profiles.
+
+```
+Data Types:
+├── RevolutionSurface, SphericalSurface
+├── ToroidalSurface, ConicalSurface
+
+Functions:
+├── revolve(profile, axis, angle) → Solid
+├── revolvePartial(profile, axis, startAngle, endAngle) → Solid
+└── STEP: SURFACE_OF_REVOLUTION, SPHERICAL_SURFACE, CONICAL_SURFACE, TOROIDAL_SURFACE
+
+Tests:
+├── Revolve rectangle 360° → cylinder
+├── Revolve right triangle → cone
+├── Revolve semicircle → sphere
+├── 90° partial revolve → quarter solid
+└── STEP round-trip for each surface type
+```
+
+**Exit Criteria:** Can create revolved solids with all analytic surface types.
+
+---
+
+### Phase 10: Sketch on Face
 
 **Goal:** Create sketches on faces of existing solids.
 
@@ -958,132 +986,70 @@ Functions:
 Tests:
 ├── Sketch on top face of box
 ├── Sketch on cylindrical face (unwrap?)
-├── Edge projection correctness
+└── Edge projection correctness
 ```
 
 **Exit Criteria:** Can create sketch on any planar face of solid.
 
 ---
 
-### Phase 9: Boolean Operations + Extend STEP *(was Phase 8)*
+### Phase 11: Boolean Operations + STEP
 
 **Goal:** Combine solids (union, subtract, intersect).
 
 ```
-Prerequisites (from gap analysis):
-├── Proper shell isClosed (edge-connectivity) — Phase 6 fix
-├── Proper solid volume calculation — Phase 6 fix
-├── unionBoundingBox for AABB pre-check — Phase 6 fix
-└── Face normal at UV point
-
-Data Types:
-├── BooleanResult { solid, warnings[] }
-└── FaceClassification (IN, OUT, ON)
-
 Functions:
 ├── union(solid1, solid2) → OperationResult<Solid>
 ├── subtract(solid1, solid2) → OperationResult<Solid>
 ├── intersect(solid1, solid2) → OperationResult<Solid>
-├── classifyFace(face, solid) → FaceClassification
-└── splitFaceAtCurve(face, curve) → Face[]
 
-Internals (see background/boolean-operations.md):
+Internals:
 ├── Stage 1: AABB overlap filtering
 ├── Stage 2: Surface-surface intersection (analytic only)
-│   ├── Plane ∩ Plane → Line3D
-│   ├── Plane ∩ Cylinder → Ellipse/Line
-│   └── Cylinder ∩ Cylinder → Conic
 ├── Stage 3: Face classification (ray casting)
-├── Stage 4: Face trimming and sewing
-└── Topology repair (vertex merging within tolerance)
+└── Stage 4: Face trimming and sewing
 
 Tests:
 ├── Box ∪ box (overlapping, touching, separate)
 ├── Box - cylinder (through hole)
 ├── Box ∩ box (intersection volume)
-├── Known volume results (verify with proper volume calc)
-├── Edge cases: tangent surfaces, coincident faces
-├── Non-manifold result detection
 └── STEP round-trip of boolean result
 ```
 
-**Exit Criteria:** Boolean operations work on analytic surfaces (plane, cylinder). NURBS explicitly excluded.
+**Exit Criteria:** Boolean operations work on analytic surfaces (plane, cylinder). NURBS excluded.
 
 ---
 
-### Phase 10: Revolve + Extend STEP *(was Phase 9)*
+### Phase 12: Command Interface ← **NEW**
 
-**Goal:** Create solids by revolving profiles.
+**Goal:** Text/voice command layer for parametric operations.
 
 ```
-Prerequisites:
-├── rotationAxis(origin, dir, angle) — Phase 6 fix
-└── Arbitrary axis transforms
-
-Data Types:
-├── RevolutionSurface (Geom_SurfaceOfRevolution equivalent)
-├── SphericalSurface (special case: semicircle around diameter)
-├── ToroidalSurface (circle around offset axis)
-└── ConicalSurface (line at angle to axis)
-
 Functions:
-├── revolve(profile, axis, angle) → OperationResult<Solid>
-├── revolvePartial(profile, axis, startAngle, endAngle) → Solid
-├── makeRevolutionSurface(curve3d, axis) → RevolutionSurface
-├── makeSphericalSurface(center, radius) → SphericalSurface
-├── makeConicalSurface(axis, halfAngle) → ConicalSurface
-├── makeToroidalSurface(axis, majorR, minorR) → ToroidalSurface
-└── evaluate/normal for each surface type
+├── parseCommand(text) → Command
+├── executeCommand(model, command) → Result
+├── Natural language → constraint mapping
+└── Parameter modification commands
 
-STEP Extensions:
-├── RevolutionSurface → SURFACE_OF_REVOLUTION
-├── SphericalSurface → SPHERICAL_SURFACE
-├── ConicalSurface → CONICAL_SURFACE
-├── ToroidalSurface → TOROIDAL_SURFACE
-└── Degenerate caps (point vertices at poles)
+Commands:
+├── "make that 10mm"
+├── "set width = 2 × height"
+├── "make these parallel"
+├── "extrude 20mm"
+└── "fillet 2mm"
 
 Tests:
-├── Revolve rectangle 360° → cylinder (volume = πr²h)
-├── Revolve offset rectangle → tube/torus section
-├── Revolve right triangle → cone (volume = ⅓πr²h)
-├── Revolve semicircle → sphere (volume = ⁴⁄₃πr³)
-├── 90° partial revolve → quarter solid
-├── Revolve around offset axis → torus
-├── STEP round-trip for each surface type
+├── Command parsing
+├── Ambiguity resolution
+├── Undo/redo support
+└── Error messages
 ```
 
-**Exit Criteria:** Can create revolved solids with all analytic surface types.
+**Exit Criteria:** Can control CAD operations via text commands.
 
 ---
 
-### Phase 11: Constraint Solver *(was Phase 10)*
-
-**Goal:** Add constraints to sketches, solve for geometry.
-
-```
-Data Types:
-├── Constraint (various types)
-├── DimensionalConstraint
-└── Parameter
-
-Functions:
-├── addConstraint() / removeConstraint()
-├── solve(sketch) → update element positions
-├── Check: over-constrained, under-constrained
-└── Parameter expressions
-
-Tests:
-├── Simple constraints (horizontal, vertical)
-├── Dimensional constraints (distance, angle)
-├── Over-constrained detection
-├── Parameter-driven updates
-```
-
-**Exit Criteria:** Sketches can be constrained and solved.
-
----
-
-### Phase 12: Assemblies + Extend STEP *(was Phase 11)*
+### Phase 13: Assemblies + STEP
 
 **Goal:** Multiple parts with joints.
 
@@ -1091,7 +1057,7 @@ Tests:
 Data Types:
 ├── Part
 ├── Assembly
-└── Joint (various types)
+└── Joint (fixed, revolute, prismatic, etc.)
 
 Functions:
 ├── Add/remove parts
@@ -1102,121 +1068,45 @@ Functions:
 Tests:
 ├── Two parts with fixed joint
 ├── Revolute joint (hinge)
-├── Over-constrained assembly detection
+└── Over-constrained assembly detection
 ```
 
 **Exit Criteria:** Can create simple assemblies with joints.
 
 ---
 
-### Phase 13: BSpline Curves + STEP Import
+### Phase 14: External STEP Import ← **LOW PRIORITY**
 
-**Goal:** Support freeform curves for STEP import compatibility.
+**Goal:** Import complex STEP files from external CAD systems.
 
 ```
-Data Types:
-├── BSplineCurve2D (Geom2d_BSplineCurve equivalent)
-├── BSplineCurve3D (Geom_BSplineCurve equivalent)
-└── BezierCurve (simpler, polynomial only)
-
-Functions:
-├── makeBSplineCurve(poles, knots, multiplicities, degree) → BSplineCurve
-├── makeBezierCurve(poles) → BezierCurve
-├── evaluateBSpline(curve, t) → Point
-├── tangentBSpline(curve, t) → Vector
-├── lengthBSpline(curve) → number (approximate via Gauss quadrature)
-├── insertKnot(curve, u) → BSplineCurve
-├── elevateDegree(curve, newDegree) → BSplineCurve
-└── approximateWithBSpline(points, tolerance) → BSplineCurve
-
-STEP Extensions:
-├── B_SPLINE_CURVE / B_SPLINE_CURVE_WITH_KNOTS
-├── BEZIER_CURVE
-└── RATIONAL_B_SPLINE_CURVE (weights)
+Requires:
+├── BSpline curves (for edge geometry)
+├── Robust topology reconstruction
+└── Tolerance handling for imprecise models
 
 Tests:
-├── Evaluate known BSpline (compare to reference)
-├── Line as degree-1 BSpline
-├── Circle approximation as BSpline
-├── STEP round-trip of BSpline curves
-├── Import real-world STEP file with BSplines
+├── Import real-world STEP files
+├── Handle missing/broken references
+└── Surface type fallbacks
 ```
 
-**Note:** BSpline *surfaces* are explicitly deferred — they require SSI (surface-surface intersection) which is "the dragon." BSpline curves are tractable and enable STEP import of edges.
-
-**Exit Criteria:** Can import STEP files containing BSpline curves.
+**Exit Criteria:** Can import STEP files from SolidWorks, Fusion 360, etc.
 
 ---
 
-### Phase 14: Fillet and Chamfer
-
-**Goal:** Add edge blending operations.
+### Future Phases
 
 ```
-Functions:
-├── filletEdges(solid, edges, radius) → OperationResult<Solid>
-├── filletAllEdges(solid, radius) → OperationResult<Solid>
-├── chamferEdges(solid, edges, distance) → OperationResult<Solid>
-├── chamferEdgesAsymmetric(solid, edges, d1, d2) → OperationResult<Solid>
-└── variableFillet(solid, edge, radiusFunction) → OperationResult<Solid>
-
-Internals:
-├── Rolling ball algorithm for fillet surface generation
-├── Planar cuts for chamfer
-├── Face trimming at fillet/chamfer boundaries
-└── Handle degenerate cases (fillet larger than face)
-
-Tests:
-├── Fillet single edge of box
-├── Fillet all edges of box
-├── Chamfer single edge
-├── Variable radius fillet
-├── Fillet fails gracefully on too-large radius
-├── STEP round-trip of filleted solid
-```
-
-**Exit Criteria:** Can add fillets and chamfers to solid edges.
-
----
-
-### Phase 15: Mass Properties
-
-**Goal:** Full mass property calculations.
-
-```
-Functions:
-├── solidVolume(solid) → number — already done (needs proper impl)
-├── solidSurfaceArea(solid) → number
-├── solidCenterOfMass(solid) → Point3D
-├── solidMomentsOfInertia(solid) → Matrix3x3
-├── faceArea(face) → number
-└── shellSurfaceArea(shell) → number
-
-Internals:
-├── Divergence theorem for volume (already planned)
-├── Surface integrals for area
-├── Weighted centroid calculation
-└── Parallel axis theorem for moments
-
-Tests:
-├── Verify against known shapes (box, cylinder, sphere)
-├── Non-convex solid properties
-├── Solid with voids
-```
-
-**Exit Criteria:** Accurate mass properties for all solid types.
-
----
-
-### Future Phases (Tentative)
-
-```
-Phase 16: Patterns (linear/circular array)
-Phase 17: Mirror operations  
-Phase 18: Shell (hollow out solid)
-Phase 19: Loft (multi-profile sweep)
-Phase 20: Sweep along path
-Phase 21: BSpline surfaces (the dragon)
+Phase 15: Fillet and Chamfer
+Phase 16: Mass Properties (volume, center of mass, moments)
+Phase 17: Patterns (linear/circular array)
+Phase 18: Mirror operations  
+Phase 19: Shell (hollow out solid)
+Phase 20: Loft (multi-profile sweep)
+Phase 21: Sweep along path
+Phase 22: BSpline curves (for STEP import)
+Phase 23: BSpline surfaces (the dragon)
 ```
 
 ---
@@ -1365,6 +1255,8 @@ describe('extrude', () => {
 | [stl-io.md](./stl-io.md) | Phase 3: STL import/export | ✅ Complete |
 | [step-io.md](./step-io.md) | Phase 4: STEP parser/writer + foundation converters | ✅ Complete |
 | [sketch-system.md](./sketch-system.md) | Phase 5: Sketch, elements, profile detection | ✅ Complete |
+| [basic-3d-geometry.md](./basic-3d-geometry.md) | Phase 6: 3D curves, surfaces, BRep topology | ✅ Complete |
+| [constraint-solver.md](./constraint-solver.md) | Phase 7: Constraint solver for parametric sketches | 📝 Design |
 
 ## Adding a Design Document
 

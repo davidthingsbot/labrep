@@ -16,7 +16,7 @@ import {
   cross,
   negate,
 } from '@labrep/generation';
-import { VectorViz, PointViz , BillboardText } from '@/components/Viewer/SceneObjects';
+import { VectorViz, BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
 
 /** Example demonstrating all Vector3D functions. */

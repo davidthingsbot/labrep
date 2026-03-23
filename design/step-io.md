@@ -386,6 +386,145 @@ Add "Import STEP" and "Export STEP" to the app:
 
 ---
 
+---
+
+## Analysis: STEP Import and Phase Organization
+
+### The Problem with Workflow-Driven Phases
+
+The labrep phases are organized around a **workflow-driven progression** — mimicking how a CAD user builds a part from scratch:
+
+1. Math foundation
+2. Sketch in 2D
+3. Extrude/revolve to 3D
+4. Modify (booleans, features)
+5. Assemble
+
+This makes sense for **creating** geometry, but it's suboptimal for **importing arbitrary STEP files**. For arbitrary STEP import, you need support for every geometry type that might appear:
+
+| Geometry Type | Current Phase | Typical in STEP? |
+|--------------|---------------|------------------|
+| Points/Vectors | 1 | Yes |
+| Lines, Circles, Arcs | 2, 6 | Yes |
+| Planes | 1, 6 | Yes |
+| Cylinders | 6 | Yes |
+| Spheres | 10 | Common |
+| Cones | 10 | Common |
+| Tori | 10 | Occasional |
+| **BSpline curves** | **13** | **Very common** |
+| **BSpline surfaces** | **21+** | **Extremely common** |
+
+**The flaw:** BSplines are scattered across phases 13 and 21+, but they're ubiquitous in real STEP files. Any CAD export with fillets, organic shapes, or NURBS modeling produces BSplines. With the current structure, you can't reliably import arbitrary STEP files until ~Phase 13 (curves) and arguably never until Phase 21+ (surfaces).
+
+### OCCT's Implicit "Concentric Rings"
+
+OpenCASCADE doesn't explicitly document "rings," but there's an implicit layering:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  RING 0: MATH (gp package)                                      │
+│  ─────────────────────────                                      │
+│  gp_Pnt, gp_Vec, gp_Trsf, gp_Ax1, gp_Pln                        │
+│  No dependencies. Pure value types.                             │
+├─────────────────────────────────────────────────────────────────┤
+│  RING 1: PARAMETRIC GEOMETRY (Geom, Geom2d)                     │
+│  ──────────────────────────────────────────                     │
+│  Geom_Line, Geom_Circle, Geom_BSplineCurve                      │
+│  Geom_Plane, Geom_CylindricalSurface, Geom_BSplineSurface       │
+│  Depends on Ring 0. Supports evaluation at any parameter.       │
+├─────────────────────────────────────────────────────────────────┤
+│  RING 2: TOPOLOGY (TopoDS)                                      │
+│  ─────────────────────────                                      │
+│  TopoDS_Vertex, TopoDS_Edge, TopoDS_Face, TopoDS_Solid          │
+│  Depends on Rings 0-1. Defines structure without algorithms.    │
+├─────────────────────────────────────────────────────────────────┤
+│  RING 3: BREP BINDING (BRep)                                    │
+│  ─────────────────────────                                      │
+│  Associates geometry with topology.                             │
+│  Edge has curve. Face has surface. Vertex has point.            │
+├─────────────────────────────────────────────────────────────────┤
+│  RING 4: IMPORT/EXPORT                                          │
+│  ─────────────────────────                                      │
+│  STEP reader/writer. IGES reader/writer. STL, etc.              │
+│  Depends on Rings 0-3. Can populate or serialize a model.       │
+├─────────────────────────────────────────────────────────────────┤
+│  RING 5: ALGORITHMS (BRepBuilderAPI, BRepAlgoAPI, etc.)         │
+│  ──────────────────────────────────────────────────────         │
+│  Extrude, revolve, booleans, fillets.                           │
+│  Depends on all lower rings. Creates/modifies models.           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key insight:** OCCT's I/O layer (Ring 4) sits *below* algorithms (Ring 5). You can import/export without being able to do booleans. You can view models without being able to modify them.
+
+### Minimal Functions for a Credible CAD Program
+
+Depends on what "credible" means:
+
+#### Tier A: View-Only (STEP Viewer)
+```
+- STEP parser (all entity types)
+- All geometry types (including BSplines!)
+- Tessellation (for display)
+- Basic topology traversal
+```
+**No algorithms needed.** Achievable quickly but requires BSplines from day 1.
+
+#### Tier B: Parametric Modeling (Create from Scratch)
+```
+- Tier A, plus:
+- Sketch system with constraints
+- Extrude, revolve
+- Boolean operations
+```
+**Doesn't need BSplines for creation** — users draw with lines/arcs/circles. But can't import arbitrary STEP files.
+
+#### Tier C: Full Edit Capability
+```
+- Tier B, plus:
+- BSpline curves and surfaces
+- Fillet/chamfer (creates BSplines!)
+- Edit any imported geometry
+```
+**Where most CAD programs live.** Create simple geometry, import complex geometry.
+
+### Implications for labrep
+
+The current phases conflate two different goals:
+
+1. **Build a CAD modeler** (create geometry from sketches)
+2. **Import arbitrary STEP files** (parse any geometry type)
+
+These have different critical paths:
+
+| Goal | Critical Path |
+|------|---------------|
+| CAD Modeler | Math → Sketches → Extrude → Booleans → (BSplines later, if ever) |
+| STEP Importer | Math → **All Geometry Types** → Topology → Tessellation |
+
+**The dragon (BSpline SSI) only matters for booleans.** You can *represent* BSplines without being able to *intersect* them. Import works. Display works. Just don't try to boolean a filleted model.
+
+### Alternative Phase Structure (Not Currently Adopted)
+
+If importing arbitrary STEP were the priority:
+
+```
+Phase 1: Math Foundation           (same)
+Phase 2: ALL Geometry Types        (lines, circles, arcs, BSplines, all surfaces)
+Phase 3: Topology (BRep)           (vertex, edge, face, shell, solid)
+Phase 4: STEP Parser + Converters  (can now handle arbitrary files)
+Phase 5: Tessellation              (display imported models)
+--- MILESTONE: Working STEP Viewer ---
+Phase 6: Sketch System
+Phase 7: Extrude
+Phase 8: Booleans
+... (modeling operations)
+```
+
+**Current decision:** We're keeping the workflow-driven structure. This prioritizes building a usable modeler over importing arbitrary external files. STEP import will grow incrementally and may never handle 100% of real-world files (BSpline surfaces are Phase 21+, "the dragon").
+
+---
+
 ## Exit Criteria
 
 - [  ] STEP lexer tokenizes valid STEP files

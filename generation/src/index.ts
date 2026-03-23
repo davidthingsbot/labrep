@@ -6,3 +6,4 @@ export * from './primitives';
 export * from './sketch';
 export * from './surfaces';
 export * from './topology';
+export * from './constraints';

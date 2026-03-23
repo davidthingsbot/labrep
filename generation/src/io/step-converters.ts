@@ -279,7 +279,7 @@ export function extractFoundationTypes(model: StepModel): {
   const axes = new Map<number, Axis>();
   const planes = new Map<number, Plane>();
 
-  for (const [id, entity] of model.entities) {
+  for (const [id, entity] of Array.from(model.entities)) {
     switch (entity.typeName) {
       case 'CARTESIAN_POINT': {
         const r = stepToPoint3D(entity);

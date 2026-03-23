@@ -57,11 +57,11 @@ export function Intersections2DExample({ animationAngle }: ExampleProps) {
     return { l1, l2, l3, c1, c2, lineLineHits, lineCircleHits, circleCircleHits };
   }, []);
 
+  const c1pts = useMemo(() => data ? circlePoints(data.c1.center.x, data.c1.center.y, data.c1.radius) : [], [data]);
+  const c2pts = useMemo(() => data ? circlePoints(data.c2.center.x, data.c2.center.y, data.c2.radius) : [], [data]);
+
   if (!data) return null;
   const { l1, l2, l3, c1, c2, lineLineHits, lineCircleHits, circleCircleHits } = data;
-
-  const c1pts = useMemo(() => circlePoints(c1.center.x, c1.center.y, c1.radius), [c1]);
-  const c2pts = useMemo(() => circlePoints(c2.center.x, c2.center.y, c2.radius), [c2]);
 
   // Pulse the intersection points
   const pulse = 0.06 + 0.03 * Math.sin(animationAngle * 3);

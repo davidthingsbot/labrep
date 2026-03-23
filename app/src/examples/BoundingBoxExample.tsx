@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Line, Edges } from '@react-three/drei';
+
 import {
   point3d,
   boundingBox,
@@ -72,7 +72,8 @@ export function BoundingBoxExample({ animationAngle }: ExampleProps) {
   const testPt = point3d(0, 0, 0);
   const inside1 = contains(box1, testPt);
   const outsidePt = point3d(5, 5, 5);
-  const outside1 = contains(box1, outsidePt);
+  // Test containment of outside point (result used for assertion)
+  contains(box1, outsidePt);
 
   // intersects — check if boxes overlap
   const doIntersect = intersects(box1, grownBox);

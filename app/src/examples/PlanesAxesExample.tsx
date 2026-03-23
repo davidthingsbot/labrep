@@ -1,36 +1,24 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Line, Plane as DreiPlane } from '@react-three/drei';
+import { Line } from '@react-three/drei';
 import * as THREE from 'three';
 import {
   point3d,
   ORIGIN,
   vec3d,
   axis,
-  X_AXIS_3D,
-  Y_AXIS_3D,
-  Z_AXIS_3D,
-  plane,
   XY_PLANE,
-  XZ_PLANE,
-  YZ_PLANE,
   distanceToPoint,
   projectPoint,
   containsPoint,
-  X_AXIS,
-  Y_AXIS,
-  Z_AXIS,
 } from '@labrep/generation';
 import { PointViz, VectorViz, LineViz , BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
 
 /** Example demonstrating Axis, Plane, and their query functions. */
 export function PlanesAxesExample({ animationAngle }: ExampleProps) {
-  // Axis constants
-  const xAx = X_AXIS_3D;
-  const yAx = Y_AXIS_3D;
-  const zAx = Z_AXIS_3D;
+  // Axis constants are available as X_AXIS_3D, Y_AXIS_3D, Z_AXIS_3D
 
   // Custom axis
   const customAx = useMemo(() => axis(point3d(0, 0, 0), vec3d(1, 1, 0)), []);
@@ -38,11 +26,7 @@ export function PlanesAxesExample({ animationAngle }: ExampleProps) {
   // Plane constants
   const xyPl = XY_PLANE;
 
-  // Custom plane
-  const tiltedPl = useMemo(
-    () => plane(point3d(0, 0, 0), vec3d(0, 1, 0.5), vec3d(1, 0, 0)),
-    [],
-  );
+  // Custom plane could be created with: plane(point3d(0, 0, 0), vec3d(0, 1, 0.5), vec3d(1, 0, 0))
 
   // Animated point above the XY plane
   const testPoint = point3d(

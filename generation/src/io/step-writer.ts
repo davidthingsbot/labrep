@@ -64,7 +64,7 @@ export function writeStep(model: StepModel): string {
   lines.push('DATA;');
 
   // Sort entities by ID for deterministic output
-  const sorted = [...model.entities.values()].sort((a, b) => a.id - b.id);
+  const sorted = Array.from(model.entities.values()).sort((a, b) => a.id - b.id);
   for (const entity of sorted) {
     lines.push(formatEntity(entity));
   }

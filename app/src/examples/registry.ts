@@ -21,6 +21,9 @@ import { StepRoundtripExample } from './StepRoundtripExample';
 import { Curves3DExample } from './Curves3DExample';
 import { TopologyBoxExample } from './TopologyBoxExample';
 import { TopologyStepExample } from './TopologyStepExample';
+import { ConstraintSimpleExample } from './ConstraintSimpleExample';
+import { ConstraintParametricExample } from './ConstraintParametricExample';
+import { ConstraintSolverVizExample } from './ConstraintSolverVizExample';
 
 /** All registered examples. */
 export const examples: Example[] = [
@@ -648,6 +651,105 @@ const stepText = writeStep(builder.build());
 //   #N = MANIFOLD_SOLID_BREP(...);
 // ENDSEC;
 // END-ISO-10303-21;
+`,
+  },
+  {
+    id: 'constraint-simple',
+    name: 'Constraint Solver',
+    description: 'Rectangle with H/V constraints, coincident corners, solve visualization',
+    component: ConstraintSimpleExample,
+    code: `// Constraint Solving — Rectangle
+import {
+  point2d, XY_PLANE, makeLine2D,
+  createConstrainedSketch, addElement, addConstraint,
+  solveSketch, sketchDOF,
+} from '@labrep/generation';
+
+// Create sketch with imperfect rectangle
+let sketch = createConstrainedSketch(XY_PLANE);
+sketch = addElement(sketch, makeLine2D(point2d(-1.5, -1.0), point2d(1.6, -0.9)).result);
+// ... more lines
+
+// Add constraints
+addConstraint(sketch, { type: 'horizontal', line: { elementId: bottomId } });
+addConstraint(sketch, { type: 'vertical', line: { elementId: leftId } });
+addConstraint(sketch, {
+  type: 'coincident',
+  point1: { elementId: bottomId, which: 'end' },
+  point2: { elementId: rightId, which: 'start' },
+});
+
+// Solve — geometry updates to satisfy constraints
+const result = solveSketch(sketch);
+// result.status === 'solved'
+// Lines are now perfectly H/V and connected
+`,
+  },
+  {
+    id: 'constraint-parametric',
+    name: 'Parametric Design',
+    description: 'L-bracket with live parameter sliders for width, height, thickness',
+    component: ConstraintParametricExample,
+    code: `// Parametric Design — L-Bracket
+import {
+  point2d, XY_PLANE, makeLine2D, makeCircle2D,
+  createConstrainedSketch, addElement,
+  addSketchParameter, setSketchParameter,
+  addConstraint, solveSketch, paramRef,
+} from '@labrep/generation';
+
+// Create bracket shape
+let sketch = createConstrainedSketch(XY_PLANE);
+// ... add lines for L-shape and hole
+
+// Add parameters
+addSketchParameter(sketch, 'width', 3);
+addSketchParameter(sketch, 'height', 2.5);
+addSketchParameter(sketch, 'thickness', 0.8);
+addSketchParameter(sketch, 'holeRadius', 0.3);
+
+// Use parameters in constraints
+addConstraint(sketch, {
+  type: 'horizontalDistance',
+  point1: { elementId: leftId, which: 'start' },
+  point2: { elementId: rightId, which: 'start' },
+  value: paramRef('width'),
+});
+
+// Change parameter → geometry updates
+setSketchParameter(sketch, 'width', 4.0);
+solveSketch(sketch);
+`,
+  },
+  {
+    id: 'constraint-solver-viz',
+    name: 'Solver Visualization',
+    description: 'Step-by-step Newton-Raphson iteration, residual convergence, DOF',
+    component: ConstraintSolverVizExample,
+    code: `// Solver Internals — Step-by-step
+import {
+  point2d, XY_PLANE, makeLine2D,
+  createConstrainedSketch, addElement, addConstraint,
+  initSolverState, solveStep, sketchDOF,
+} from '@labrep/generation';
+
+// Create sketch with bad initial geometry
+let sketch = createConstrainedSketch(XY_PLANE);
+// ... add triangle with misaligned vertices
+
+// Add constraints
+addConstraint(sketch, { type: 'horizontal', line: { elementId: id1 } });
+addConstraint(sketch, { type: 'coincident', ... });
+
+// Initialize solver state
+let state = initSolverState(sketch, sketch.constraints);
+
+// Step through iterations
+while (!state.converged) {
+  state = solveStep(state, sketch.parameters);
+  console.log(\`Iteration \${state.iteration}: residual = \${state.residual}\`);
+  // Visualize intermediate geometry
+}
 `,
   },
 ];

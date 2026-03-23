@@ -86,7 +86,30 @@ export function parseStep(text: string): OperationResult<StepModel> {
   }
 
   function parseHeader(): StepHeader {
-    const h: Partial<StepHeader> = {};
+    // Use a mutable object for building, then return as readonly
+    const h: {
+      description: string[];
+      implementationLevel: string;
+      fileName: string;
+      timeStamp: string;
+      author: string[];
+      organization: string[];
+      preprocessorVersion: string;
+      originatingSystem: string;
+      authorization: string;
+      schemaIdentifiers: string[];
+    } = {
+      description: [],
+      implementationLevel: '',
+      fileName: '',
+      timeStamp: '',
+      author: [],
+      organization: [],
+      preprocessorVersion: '',
+      originatingSystem: '',
+      authorization: '',
+      schemaIdentifiers: [],
+    };
 
     while (pos < tokens.length) {
       const t = peek();

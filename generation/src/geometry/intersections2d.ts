@@ -301,7 +301,7 @@ function isAngleInArc(angle: number, arc: Arc2D): boolean {
 export function intersectLine2DArc2D(line: Line2D, arc: Arc2D): Intersection2D[] {
   // Create a temporary circle with the same center and radius
   const tempCircle: Circle2D = {
-    type: 'circle2d',
+    type: 'circle',
     center: arc.center,
     radius: arc.radius,
     startParam: 0,
@@ -342,7 +342,7 @@ export function intersectLine2DArc2D(line: Line2D, arc: Arc2D): Intersection2D[]
 export function intersectCircle2DArc2D(circle: Circle2D, arc: Arc2D): Intersection2D[] {
   // Create a temporary circle for the arc
   const arcCircle: Circle2D = {
-    type: 'circle2d',
+    type: 'circle',
     center: arc.center,
     radius: arc.radius,
     startParam: 0,
@@ -383,7 +383,7 @@ export function intersectCircle2DArc2D(circle: Circle2D, arc: Arc2D): Intersecti
 export function intersectArc2DArc2D(arc1: Arc2D, arc2: Arc2D): Intersection2D[] {
   // Create temporary circles
   const circle1: Circle2D = {
-    type: 'circle2d',
+    type: 'circle',
     center: arc1.center,
     radius: arc1.radius,
     startParam: 0,
@@ -394,7 +394,7 @@ export function intersectArc2DArc2D(arc1: Arc2D, arc2: Arc2D): Intersection2D[] 
   };
   
   const circle2: Circle2D = {
-    type: 'circle2d',
+    type: 'circle',
     center: arc2.center,
     radius: arc2.radius,
     startParam: 0,
