@@ -20,3 +20,28 @@ export {
   wireStartPoint,
   wireEndPoint,
 } from './wire';
+
+export {
+  type Surface,
+  type Face,
+  makeFace,
+  makePlanarFace,
+  faceOuterWire,
+  faceInnerWires,
+  faceSurface,
+} from './face';
+
+export {
+  type Shell,
+  makeShell,
+  shellFaces,
+  shellIsClosed,
+} from './shell';
+
+export {
+  type Solid,
+  makeSolid,
+  solidOuterShell,
+  solidInnerShells,
+  solidVolume,
+} from './solid';
