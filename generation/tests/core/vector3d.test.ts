@@ -9,6 +9,9 @@ import {
   dot,
   cross,
   negate,
+  angle,
+  isParallel,
+  isNormal,
   X_AXIS,
   Y_AXIS,
   Z_AXIS,
@@ -169,5 +172,95 @@ describe('Vector3D', () => {
     const v = vec3d(1, 2, 3);
     const result = scale(v, -1);
     expect(result).toEqual(vec3d(-1, -2, -3));
+  });
+
+  describe('angle', () => {
+    it('returns 0 for parallel vectors (same direction)', () => {
+      const a = angle(vec3d(1, 0, 0), vec3d(2, 0, 0));
+      expect(a).toBeCloseTo(0, 10);
+    });
+
+    it('returns π for opposite vectors', () => {
+      const a = angle(vec3d(1, 0, 0), vec3d(-1, 0, 0));
+      expect(a).toBeCloseTo(Math.PI, 10);
+    });
+
+    it('returns π/2 for perpendicular vectors', () => {
+      const a = angle(X_AXIS, Y_AXIS);
+      expect(a).toBeCloseTo(Math.PI / 2, 10);
+    });
+
+    it('works for non-unit vectors', () => {
+      const a = angle(vec3d(3, 0, 0), vec3d(0, 5, 0));
+      expect(a).toBeCloseTo(Math.PI / 2, 10);
+    });
+
+    it('works for diagonal vectors', () => {
+      // 45 degree angle
+      const a = angle(vec3d(1, 0, 0), vec3d(1, 1, 0));
+      expect(a).toBeCloseTo(Math.PI / 4, 10);
+    });
+
+    it('returns 0 for zero vectors', () => {
+      // Edge case: zero vector should return 0 or be handled gracefully
+      const a = angle(vec3d(0, 0, 0), vec3d(1, 0, 0));
+      expect(Number.isFinite(a)).toBe(true);
+    });
+  });
+
+  describe('isParallel', () => {
+    it('returns true for same direction', () => {
+      expect(isParallel(vec3d(1, 0, 0), vec3d(2, 0, 0))).toBe(true);
+    });
+
+    it('returns true for opposite direction', () => {
+      expect(isParallel(vec3d(1, 0, 0), vec3d(-3, 0, 0))).toBe(true);
+    });
+
+    it('returns false for perpendicular vectors', () => {
+      expect(isParallel(X_AXIS, Y_AXIS)).toBe(false);
+    });
+
+    it('returns false for arbitrary non-parallel vectors', () => {
+      expect(isParallel(vec3d(1, 0, 0), vec3d(1, 1, 0))).toBe(false);
+    });
+
+    it('handles nearly parallel vectors with tolerance', () => {
+      const v1 = vec3d(1, 0, 0);
+      const v2 = vec3d(1, 1e-9, 0);
+      expect(isParallel(v1, v2, 1e-6)).toBe(true);
+    });
+
+    it('returns true for zero vector (degenerate)', () => {
+      // Zero vector is parallel to everything (no direction)
+      expect(isParallel(vec3d(0, 0, 0), vec3d(1, 0, 0))).toBe(true);
+    });
+  });
+
+  describe('isNormal', () => {
+    it('returns true for perpendicular vectors', () => {
+      expect(isNormal(X_AXIS, Y_AXIS)).toBe(true);
+      expect(isNormal(Y_AXIS, Z_AXIS)).toBe(true);
+      expect(isNormal(Z_AXIS, X_AXIS)).toBe(true);
+    });
+
+    it('returns false for parallel vectors', () => {
+      expect(isNormal(vec3d(1, 0, 0), vec3d(2, 0, 0))).toBe(false);
+    });
+
+    it('returns false for arbitrary non-perpendicular vectors', () => {
+      expect(isNormal(vec3d(1, 0, 0), vec3d(1, 1, 0))).toBe(false);
+    });
+
+    it('handles nearly perpendicular vectors with tolerance', () => {
+      const v1 = vec3d(1, 0, 0);
+      const v2 = vec3d(1e-9, 1, 0);
+      expect(isNormal(v1, v2, 1e-6)).toBe(true);
+    });
+
+    it('handles zero vector', () => {
+      // Zero vector has zero dot product with everything
+      expect(isNormal(vec3d(0, 0, 0), vec3d(1, 0, 0))).toBe(true);
+    });
   });
 });

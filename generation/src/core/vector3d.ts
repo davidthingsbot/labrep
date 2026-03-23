@@ -121,3 +121,84 @@ export function cross(a: Vector3D, b: Vector3D): Vector3D {
 export function negate(v: Vector3D): Vector3D {
   return vec3d(-v.x, -v.y, -v.z);
 }
+
+/**
+ * Compute the angle between two vectors in radians.
+ *
+ * Uses the formula: angle = acos(a·b / (|a||b|))
+ * Returns 0 for zero-length vectors.
+ *
+ * @param a - First vector
+ * @param b - Second vector
+ * @returns Angle in radians [0, π]
+ */
+export function angle(a: Vector3D, b: Vector3D): number {
+  const lenA = length(a);
+  const lenB = length(b);
+  
+  if (isZero(lenA) || isZero(lenB)) {
+    return 0;
+  }
+  
+  // Clamp to handle floating-point errors that might make |cosAngle| > 1
+  const cosAngle = dot(a, b) / (lenA * lenB);
+  const clampedCos = Math.max(-1, Math.min(1, cosAngle));
+  
+  return Math.acos(clampedCos);
+}
+
+/**
+ * Check if two vectors are parallel (same or opposite direction).
+ *
+ * Vectors are parallel if their cross product is zero (within tolerance).
+ * Zero vectors are considered parallel to all vectors.
+ *
+ * @param a - First vector
+ * @param b - Second vector
+ * @param tolerance - Angular tolerance (default: system tolerance)
+ * @returns True if vectors are parallel
+ */
+export function isParallel(a: Vector3D, b: Vector3D, tolerance: number = 1e-7): boolean {
+  const lenA = length(a);
+  const lenB = length(b);
+  
+  // Zero vectors are parallel to everything
+  if (isZero(lenA) || isZero(lenB)) {
+    return true;
+  }
+  
+  // Cross product magnitude / (lenA * lenB) = sin(angle)
+  // For parallel vectors, sin(angle) ≈ 0
+  const c = cross(a, b);
+  const crossMag = length(c);
+  const sinAngle = crossMag / (lenA * lenB);
+  
+  return sinAngle <= tolerance;
+}
+
+/**
+ * Check if two vectors are perpendicular (normal to each other).
+ *
+ * Vectors are perpendicular if their dot product is zero (within tolerance).
+ * Zero vectors are considered perpendicular to all vectors.
+ *
+ * @param a - First vector
+ * @param b - Second vector
+ * @param tolerance - Tolerance for dot product comparison (default: system tolerance)
+ * @returns True if vectors are perpendicular
+ */
+export function isNormal(a: Vector3D, b: Vector3D, tolerance: number = 1e-7): boolean {
+  const lenA = length(a);
+  const lenB = length(b);
+  
+  // Zero vectors are perpendicular to everything (dot product is 0)
+  if (isZero(lenA) || isZero(lenB)) {
+    return true;
+  }
+  
+  // Normalize the dot product for scale-independent comparison
+  const d = dot(a, b);
+  const cosAngle = Math.abs(d) / (lenA * lenB);
+  
+  return cosAngle <= tolerance;
+}
