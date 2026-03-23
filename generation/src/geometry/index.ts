@@ -51,3 +51,21 @@ export {
   lengthLine3D,
   reverseLine3D,
 } from './line3d';
+
+export {
+  type Circle3D,
+  makeCircle3D,
+  evaluateCircle3D,
+  tangentCircle3D,
+  lengthCircle3D,
+} from './circle3d';
+
+export {
+  type Arc3D,
+  makeArc3D,
+  makeArc3DThrough3Points,
+  evaluateArc3D,
+  tangentArc3D,
+  lengthArc3D,
+  reverseArc3D,
+} from './arc3d';
