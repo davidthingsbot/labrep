@@ -1,5 +1,6 @@
 import { Point3D, point3d } from './point3d';
-import { Vector3D, vec3d } from './vector3d';
+import { Vector3D, vec3d, length, normalize } from './vector3d';
+import { isZero } from './tolerance';
 
 /**
  * 4x4 transformation matrix stored in column-major order.
@@ -93,6 +94,87 @@ export function rotationZ(angle: number): Transform3D {
   e[4] = -s; e[5] = c;
   e[10] = 1;
   e[15] = 1;
+  return mat(e);
+}
+
+/**
+ * Create a rotation transform about an arbitrary axis.
+ *
+ * Uses the Rodrigues rotation formula to compute the rotation matrix,
+ * combined with translation to handle axes not passing through the origin.
+ *
+ * @param origin - A point on the rotation axis
+ * @param direction - The direction of the rotation axis (will be normalized)
+ * @param angle - Rotation angle in radians (right-hand rule)
+ * @returns A Transform3D that rotates around the specified axis
+ */
+export function rotationAxis(
+  origin: Point3D,
+  direction: Vector3D,
+  angle: number,
+): Transform3D {
+  // Normalize the direction
+  const len = length(direction);
+  if (isZero(len)) {
+    // Zero-length axis, return identity
+    return identity();
+  }
+
+  const ux = direction.x / len;
+  const uy = direction.y / len;
+  const uz = direction.z / len;
+
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const t = 1 - c;
+
+  // Rodrigues rotation matrix
+  // Row 0: [c + ux²*t,        ux*uy*t - uz*s,   ux*uz*t + uy*s]
+  // Row 1: [uy*ux*t + uz*s,   c + uy²*t,        uy*uz*t - ux*s]
+  // Row 2: [uz*ux*t - uy*s,   uz*uy*t + ux*s,   c + uz²*t     ]
+
+  const r00 = c + ux * ux * t;
+  const r01 = ux * uy * t - uz * s;
+  const r02 = ux * uz * t + uy * s;
+
+  const r10 = uy * ux * t + uz * s;
+  const r11 = c + uy * uy * t;
+  const r12 = uy * uz * t - ux * s;
+
+  const r20 = uz * ux * t - uy * s;
+  const r21 = uz * uy * t + ux * s;
+  const r22 = c + uz * uz * t;
+
+  // If origin is at (0,0,0), just return the rotation matrix
+  if (isZero(origin.x) && isZero(origin.y) && isZero(origin.z)) {
+    const e = new Float64Array(16);
+    // Column-major order
+    e[0] = r00; e[1] = r10; e[2] = r20; e[3] = 0;
+    e[4] = r01; e[5] = r11; e[6] = r21; e[7] = 0;
+    e[8] = r02; e[9] = r12; e[10] = r22; e[11] = 0;
+    e[12] = 0;  e[13] = 0;  e[14] = 0;   e[15] = 1;
+    return mat(e);
+  }
+
+  // For rotation around a point P:
+  // T(P) * R * T(-P) = combined matrix with translation
+  // The translation part is: P - R*P = (I - R) * P
+  const ox = origin.x;
+  const oy = origin.y;
+  const oz = origin.z;
+
+  // Compute translation: P - R*P
+  const tx = ox - (r00 * ox + r01 * oy + r02 * oz);
+  const ty = oy - (r10 * ox + r11 * oy + r12 * oz);
+  const tz = oz - (r20 * ox + r21 * oy + r22 * oz);
+
+  const e = new Float64Array(16);
+  // Column-major order
+  e[0] = r00;  e[1] = r10;  e[2] = r20;  e[3] = 0;
+  e[4] = r01;  e[5] = r11;  e[6] = r21;  e[7] = 0;
+  e[8] = r02;  e[9] = r12;  e[10] = r22; e[11] = 0;
+  e[12] = tx;  e[13] = ty;  e[14] = tz;  e[15] = 1;
+
   return mat(e);
 }
 

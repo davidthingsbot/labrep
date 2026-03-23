@@ -5,6 +5,7 @@ import {
   rotationX,
   rotationY,
   rotationZ,
+  rotationAxis,
   scaling,
   compose,
   inverse,
@@ -186,5 +187,86 @@ describe('Transform3D', () => {
     const result = transformPoint(t, p);
     expect(result.x).toBeCloseTo(-5, 10);
     expect(result.y).toBeCloseTo(6, 10);
+  });
+
+  describe('rotationAxis', () => {
+    it('rotates around Z axis through origin (matches rotationZ)', () => {
+      const p = point3d(1, 0, 0);
+      const t = rotationAxis(point3d(0, 0, 0), vec3d(0, 0, 1), Math.PI / 2);
+      const result = transformPoint(t, p);
+      expect(result.x).toBeCloseTo(0, 10);
+      expect(result.y).toBeCloseTo(1, 10);
+      expect(result.z).toBeCloseTo(0, 10);
+    });
+
+    it('rotates around X axis through origin (matches rotationX)', () => {
+      const p = point3d(0, 1, 0);
+      const t = rotationAxis(point3d(0, 0, 0), vec3d(1, 0, 0), Math.PI / 2);
+      const result = transformPoint(t, p);
+      expect(result.x).toBeCloseTo(0, 10);
+      expect(result.y).toBeCloseTo(0, 10);
+      expect(result.z).toBeCloseTo(1, 10);
+    });
+
+    it('rotates around Y axis through origin (matches rotationY)', () => {
+      const p = point3d(0, 0, 1);
+      const t = rotationAxis(point3d(0, 0, 0), vec3d(0, 1, 0), Math.PI / 2);
+      const result = transformPoint(t, p);
+      expect(result.x).toBeCloseTo(1, 10);
+      expect(result.y).toBeCloseTo(0, 10);
+      expect(result.z).toBeCloseTo(0, 10);
+    });
+
+    it('rotates around diagonal axis', () => {
+      // Rotate 180 degrees around (1,1,0) axis - swaps x and y, negates z
+      const p = point3d(1, 0, 0);
+      const axis = vec3d(1, 1, 0);
+      const t = rotationAxis(point3d(0, 0, 0), axis, Math.PI);
+      const result = transformPoint(t, p);
+      expect(result.x).toBeCloseTo(0, 10);
+      expect(result.y).toBeCloseTo(1, 10);
+      expect(result.z).toBeCloseTo(0, 10);
+    });
+
+    it('rotates around axis NOT through origin', () => {
+      // Rotate 90 degrees around Z axis centered at (1, 0, 0)
+      const p = point3d(2, 0, 0);
+      const t = rotationAxis(point3d(1, 0, 0), vec3d(0, 0, 1), Math.PI / 2);
+      const result = transformPoint(t, p);
+      // Point (2,0,0) relative to (1,0,0) is (1,0,0)
+      // After 90° rotation: (0,1,0)
+      // Back in world coords: (1,1,0)
+      expect(result.x).toBeCloseTo(1, 10);
+      expect(result.y).toBeCloseTo(1, 10);
+      expect(result.z).toBeCloseTo(0, 10);
+    });
+
+    it('angle=0 is identity', () => {
+      const p = point3d(1, 2, 3);
+      const t = rotationAxis(point3d(5, 5, 5), vec3d(1, 1, 1), 0);
+      const result = transformPoint(t, p);
+      expect(result.x).toBeCloseTo(1, 10);
+      expect(result.y).toBeCloseTo(2, 10);
+      expect(result.z).toBeCloseTo(3, 10);
+    });
+
+    it('angle=2π is identity', () => {
+      const p = point3d(1, 2, 3);
+      const t = rotationAxis(point3d(0, 0, 0), vec3d(1, 0, 0), 2 * Math.PI);
+      const result = transformPoint(t, p);
+      expect(result.x).toBeCloseTo(1, 10);
+      expect(result.y).toBeCloseTo(2, 10);
+      expect(result.z).toBeCloseTo(3, 10);
+    });
+
+    it('normalizes the axis direction', () => {
+      // Non-unit axis should still work
+      const p = point3d(1, 0, 0);
+      const t = rotationAxis(point3d(0, 0, 0), vec3d(0, 0, 5), Math.PI / 2);
+      const result = transformPoint(t, p);
+      expect(result.x).toBeCloseTo(0, 10);
+      expect(result.y).toBeCloseTo(1, 10);
+      expect(result.z).toBeCloseTo(0, 10);
+    });
   });
 });
