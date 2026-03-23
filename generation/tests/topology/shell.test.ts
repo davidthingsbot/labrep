@@ -127,4 +127,34 @@ describe('Shell', () => {
       expect(shellIsClosed(shell)).toBe(false);
     });
   });
+
+  describe('edge cases', () => {
+    it('fails for empty face list', () => {
+      const result = makeShell([]);
+      expect(result.success).toBe(false);
+    });
+
+    it('handles single face (open shell)', () => {
+      const face = makeRectFace(0, 0, 1, 1, 0);
+      const result = makeShell([face]);
+      expect(result.success).toBe(true);
+      expect(shellIsClosed(result.result!)).toBe(false);
+    });
+
+    it('handles two disconnected faces', () => {
+      // Faces that don't share any edges
+      const f1 = makeRectFace(0, 0, 1, 1, 0);
+      const f2 = makeRectFace(10, 10, 11, 11, 5); // Far away
+      const result = makeShell([f1, f2]);
+      // Should succeed - shell doesn't require connectivity
+      expect(result.success).toBe(true);
+    });
+
+    it('handles duplicate faces', () => {
+      const face = makeRectFace(0, 0, 1, 1, 0);
+      const result = makeShell([face, face]);
+      // Allowing duplicates (implementation may vary)
+      expect(result.success).toBe(true);
+    });
+  });
 });

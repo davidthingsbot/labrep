@@ -197,4 +197,37 @@ describe('Wire', () => {
       expect(wireEndPoint(wire)).toEqual(point3d(1, 1, 0));
     });
   });
+
+  describe('edge cases', () => {
+    it('handles single-edge wire', () => {
+      const e1 = makeEdgeFromCurve(makeLine3D(point3d(0, 0, 0), point3d(1, 0, 0)).result!).result!;
+      const result = makeWire([orientEdge(e1, true)]);
+      expect(result.success).toBe(true);
+      expect(result.result!.edges.length).toBe(1);
+      expect(result.result!.isClosed).toBe(false);
+    });
+
+    it('fails for empty edge list', () => {
+      const result = makeWire([]);
+      expect(result.success).toBe(false);
+    });
+
+    it('detects closed single-edge loop', () => {
+      // A circular edge that closes on itself
+      const circle = makeCircle3D(XY_PLANE, 1).result!;
+      const edge = makeEdgeFromCurve(circle).result!;
+      const result = makeWire([orientEdge(edge, true)]);
+      expect(result.success).toBe(true);
+      expect(result.result!.isClosed).toBe(true);
+    });
+
+    it('handles edges connected with tolerance', () => {
+      // Edges that almost connect (within tolerance)
+      const e1 = makeEdgeFromCurve(makeLine3D(point3d(0, 0, 0), point3d(1, 0, 0)).result!).result!;
+      const e2 = makeEdgeFromCurve(makeLine3D(point3d(1 + 1e-9, 0, 0), point3d(2, 0, 0)).result!).result!;
+      const result = makeWire([orientEdge(e1, true), orientEdge(e2, true)]);
+      // Should succeed if within tolerance
+      expect(result.success).toBe(true);
+    });
+  });
 });

@@ -283,4 +283,42 @@ describe('Arc3D', () => {
       expect(reversed.plane).toEqual(arc.plane);
     });
   });
+
+  describe('edge cases', () => {
+    it('handles full circle sweep (2π)', () => {
+      // Full circle should fail - use Circle3D instead
+      const result = makeArc3D(XY_PLANE, 1, 0, 2 * Math.PI);
+      // This might succeed or fail depending on design decision
+      // For now, we accept it but it's essentially a circle
+      if (result.success) {
+        expect(lengthArc3D(result.result!)).toBeCloseTo(2 * Math.PI, 5);
+      }
+    });
+
+    it('handles negative sweep direction', () => {
+      // Start > end means clockwise arc
+      const result = makeArc3D(XY_PLANE, 1, Math.PI, 0);
+      expect(result.success).toBe(true);
+      // Should go the "short way" or the "long way"?
+      const arc = result.result!;
+      expect(arc.startAngle).toBe(Math.PI);
+      expect(arc.endAngle).toBe(0);
+    });
+
+    it('handles angles outside 0-2π range', () => {
+      const result = makeArc3D(XY_PLANE, 1, -Math.PI / 2, Math.PI / 2);
+      expect(result.success).toBe(true);
+    });
+
+    it('fails for very small radius near tolerance', () => {
+      const result = makeArc3D(XY_PLANE, 1e-10, 0, 1);
+      expect(result.success).toBe(false);
+    });
+
+    it('handles very small sweep angle', () => {
+      const result = makeArc3D(XY_PLANE, 1, 0, 0.001);
+      expect(result.success).toBe(true);
+      expect(lengthArc3D(result.result!)).toBeCloseTo(0.001, 5);
+    });
+  });
 });

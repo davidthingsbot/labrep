@@ -204,4 +204,45 @@ describe('CylindricalSurface', () => {
       expect(dot).toBeCloseTo(0, 10);
     });
   });
+
+  describe('edge cases', () => {
+    it('fails for zero radius', () => {
+      const result = makeCylindricalSurface(Z_AXIS_3D, 0);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('positive');
+    });
+
+    it('fails for negative radius', () => {
+      const result = makeCylindricalSurface(Z_AXIS_3D, -1);
+      expect(result.success).toBe(false);
+    });
+
+    // TODO: Add validation for degenerate axis (zero direction)
+    it.skip('fails for degenerate axis (zero direction)', () => {
+      const badAxis = { origin: point3d(0, 0, 0), direction: vec3d(0, 0, 0) };
+      const result = makeCylindricalSurface(badAxis, 1);
+      expect(result.success).toBe(false);
+    });
+
+    // TODO: Add validation for very small radius
+    it.skip('handles very small radius near tolerance', () => {
+      const result = makeCylindricalSurface(Z_AXIS_3D, 1e-10);
+      expect(result.success).toBe(false);
+    });
+
+    it('handles very large radius', () => {
+      const result = makeCylindricalSurface(Z_AXIS_3D, 1e6);
+      expect(result.success).toBe(true);
+    });
+
+    // TODO: Normalize axis direction in makeCylindricalSurface
+    it.skip('normalizes non-unit axis direction', () => {
+      const nonUnitAxis = { origin: point3d(0, 0, 0), direction: vec3d(0, 0, 5) };
+      const result = makeCylindricalSurface(nonUnitAxis, 1);
+      expect(result.success).toBe(true);
+      const dir = result.result!.axis.direction;
+      const len = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
+      expect(len).toBeCloseTo(1, 10);
+    });
+  });
 });

@@ -150,4 +150,37 @@ describe('Solid', () => {
       expect(solidVolume(solid)).toBeCloseTo(63, 5);
     });
   });
+
+  describe('edge cases', () => {
+    it('fails if outer shell is not closed', () => {
+      // Single face is not a closed shell
+      const face = makeRectFace(0, 0, 1, 1, 0);
+      const openShell = makeShell([face]).result!;
+      const result = makeSolid(openShell);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('closed');
+    });
+
+    it('handles solid with multiple voids', () => {
+      const outerShell = makeBoxShell(10, 10, 10);
+      const void1 = makeBoxShell(1, 1, 1);
+      const void2 = makeBoxShell(1, 1, 1);
+      const solid = makeSolid(outerShell, [void1, void2]).result!;
+
+      // 1000 - 1 - 1 = 998
+      expect(solidVolume(solid)).toBeCloseTo(998, 5);
+    });
+
+    it('handles very thin box (near-degenerate)', () => {
+      const shell = makeBoxShell(1, 1, 0.001);
+      const solid = makeSolid(shell).result!;
+      expect(solidVolume(solid)).toBeCloseTo(0.001, 6);
+    });
+
+    it('handles large box', () => {
+      const shell = makeBoxShell(100, 100, 100);
+      const solid = makeSolid(shell).result!;
+      expect(solidVolume(solid)).toBeCloseTo(1000000, 0);
+    });
+  });
 });

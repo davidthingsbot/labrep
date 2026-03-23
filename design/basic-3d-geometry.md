@@ -1,4 +1,6 @@
-# Phase 6: Basic 3D Geometry + STEP Topology — Design Document
+# Phase 6: Basic 3D Geometry
+
+> ⚠️ **Testing Requirement:** All implementations MUST include edge case tests — not just happy paths. Test: zero/negative values, degenerate inputs, boundary conditions, near-tolerance values, and known failure modes. Edge cases reveal bugs that happy-path tests miss. + STEP Topology — Design Document
 
 ## Overview
 
