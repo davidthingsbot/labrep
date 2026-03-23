@@ -435,6 +435,6 @@ Phase 2 is complete when:
 - [x] Intersections: line-line, line-circle, circle-circle all working *(19 tests)*
 - [x] Wire2D: construction, validation, closed detection *(13 tests)*
 - [x] All tests pass *(234 total)*
-- [ ] Demo examples in viewer app *(pending)*
+- [x] Demo examples in viewer app *(Line2D, Circle2D, Arc2D, Intersections, Wire2D)*
 
-**Status: ✅ CORE COMPLETE** (awaiting viewer examples)
+**Status: ✅ COMPLETE**
