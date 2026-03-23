@@ -35,3 +35,13 @@ export {
   circle3DToStep, stepToCircle3D,
   arc3DToStep, stepToArc3D,
 } from './step-converters-3d';
+
+// STEP topology converters
+export {
+  vertexToStep, stepToVertex,
+  edgeToStep, stepToEdge,
+  wireToStep,
+  faceToStep,
+  shellToStep,
+  solidToStep,
+} from './step-converters-topology';
