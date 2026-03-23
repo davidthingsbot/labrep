@@ -459,6 +459,114 @@ export function generateSideFace(
 }
 
 /**
+ * Generate a side face for an edge, respecting the wire's edge orientation.
+ * This is important for matching edges with cap faces, especially for holes.
+ * 
+ * @param edge The edge to extrude
+ * @param forward The orientation of this edge in its wire (true = forward, false = reversed)
+ * @param direction Extrusion direction
+ * @param dist Extrusion distance
+ * @param canonicalize Whether to simplify surface types
+ */
+function generateSideFaceOriented(
+  edge: Edge,
+  forward: boolean,
+  direction: Vector3D,
+  dist: number,
+  canonicalize: boolean = true,
+): OperationResult<Face> {
+  const offset = scale(direction, dist);
+  const curve = edge.curve;
+
+  // Translate the edge to get the top edge
+  const topEdgeResult = translateEdge(edge, offset);
+  if (!topEdgeResult.success) {
+    return failure(`Failed to create top edge: ${topEdgeResult.error}`);
+  }
+  const topEdge = topEdgeResult.result!;
+
+  // Create surface for the side face
+  let surface: Surface;
+
+  // Create an extrusion surface from the bottom curve
+  const extSurfResult = makeExtrusionSurface(curve, direction);
+  if (!extSurfResult.success) {
+    return failure(`Failed to create extrusion surface: ${extSurfResult.error}`);
+  }
+
+  if (canonicalize) {
+    surface = canonicalizeExtrusionSurface(extSurfResult.result!);
+  } else {
+    surface = extSurfResult.result!;
+  }
+
+  // Handle closed curves (circles) differently
+  if (curve.isClosed) {
+    // For closed curves, use the wire's edge orientation
+    // The bottom edge orientation must match how the cap face references this edge
+    const bottomStart = forward ? edgeStartPoint(edge) : edgeEndPoint(edge);
+    const topStart = forward ? edgeStartPoint(topEdge) : edgeEndPoint(topEdge);
+
+    // Create a single seam edge connecting bottom to top
+    const seamEdgeResult = makeVerticalEdge(bottomStart, topStart);
+    if (!seamEdgeResult.success) {
+      return failure(`Failed to create seam edge: ${seamEdgeResult.error}`);
+    }
+    const seamEdge = seamEdgeResult.result!;
+
+    // The wire goes: bottom circle → seam up → top circle (reversed) → seam down
+    // Use the same forward orientation as the wire edge for the bottom circle
+    const wireEdges: OrientedEdge[] = [
+      orientEdge(edge, forward),       // bottom circle: same as wire orientation
+      orientEdge(seamEdge, true),      // seam: up
+      orientEdge(topEdge, !forward),   // top circle: opposite orientation
+      orientEdge(seamEdge, false),     // seam: down (back to start)
+    ];
+
+    const wireResult = makeWire(wireEdges);
+    if (!wireResult.success) {
+      return failure(`Failed to create side face wire: ${wireResult.error}`);
+    }
+
+    return makeFace(surface, wireResult.result!);
+  }
+
+  // For open curves, create quadrilateral with vertical edges
+  // Respect the forward flag for edge orientation
+  const bottomStart = forward ? edgeStartPoint(edge) : edgeEndPoint(edge);
+  const bottomEnd = forward ? edgeEndPoint(edge) : edgeStartPoint(edge);
+  const topStart = forward ? edgeStartPoint(topEdge) : edgeEndPoint(topEdge);
+  const topEnd = forward ? edgeEndPoint(topEdge) : edgeStartPoint(topEdge);
+
+  // Create vertical edges
+  const leftEdgeResult = makeVerticalEdge(bottomStart, topStart);
+  const rightEdgeResult = makeVerticalEdge(bottomEnd, topEnd);
+
+  if (!leftEdgeResult.success || !rightEdgeResult.success) {
+    return failure('Failed to create vertical edges');
+  }
+
+  const leftEdge = leftEdgeResult.result!;
+  const rightEdge = rightEdgeResult.result!;
+
+  // Build the wire: bottom → right → top(reversed) → left(reversed)
+  // Use the wire orientation for bottom/top edges
+  const wireEdges: OrientedEdge[] = [
+    orientEdge(edge, forward),         // bottom: same as wire orientation
+    orientEdge(rightEdge, true),       // right: forward (bottom→top)
+    orientEdge(topEdge, !forward),     // top: opposite orientation
+    orientEdge(leftEdge, false),       // left: reversed (top→bottom)
+  ];
+
+  const wireResult = makeWire(wireEdges);
+  if (!wireResult.success) {
+    return failure(`Failed to create side face wire: ${wireResult.error}`);
+  }
+
+  return makeFace(surface, wireResult.result!);
+}
+
+/**
  * Generate all side faces for a wire.
  */
 function generateSideFaces(
@@ -470,8 +578,8 @@ function generateSideFaces(
   const sideFaces: Face[] = [];
 
   for (const oe of wire.edges) {
-    // Use the underlying edge (we handle orientation when creating wires)
-    const faceResult = generateSideFace(oe.edge, direction, dist, canonicalize);
+    // Pass the wire edge orientation to generateSideFace for proper edge matching
+    const faceResult = generateSideFaceOriented(oe.edge, oe.forward, direction, dist, canonicalize);
     if (!faceResult.success) {
       return failure(`Failed to generate side face: ${faceResult.error}`);
     }

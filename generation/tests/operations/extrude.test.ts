@@ -507,6 +507,68 @@ describe('Extrusion with Holes', () => {
       expect(volume).toBeCloseTo(expectedVolume, 0);
     });
   });
+
+  describe('extrude_with_reversed_hole_wire', () => {
+    // Regression test: hole wire with reversed orientation should still produce watertight shell
+    // This was a bug where side face edge orientation didn't respect wire edge orientation
+    it('handles reversed circular hole wire', () => {
+      const outer = makeSquareWire(30, { x: 15, y: 15 });
+      
+      // Create hole wire with REVERSED orientation (edge forward=false)
+      const circlePlane = plane(point3d(15, 15, 0), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const circle = makeCircle3D(circlePlane, 5).result!;
+      const edge = makeEdgeFromCurve(circle).result!;
+      const reversedHole = makeWire([orientEdge(edge, false)]).result!; // reversed!
+
+      const result = extrudeWithHoles(outer, [reversedHole], vec3d(0, 0, 1), 20);
+
+      expect(result.success).toBe(true);
+      expect(result.error).toBeUndefined();
+    });
+
+    it('handles reversed circular hole in concentric circles', () => {
+      // Outer circle forward, inner circle reversed
+      const outerPlane = plane(point3d(0, 0, 0), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const outerCircle = makeCircle3D(outerPlane, 10).result!;
+      const outerEdge = makeEdgeFromCurve(outerCircle).result!;
+      const outer = makeWire([orientEdge(outerEdge, true)]).result!;
+
+      const innerCircle = makeCircle3D(outerPlane, 5).result!;
+      const innerEdge = makeEdgeFromCurve(innerCircle).result!;
+      const reversedHole = makeWire([orientEdge(innerEdge, false)]).result!; // reversed!
+
+      const result = extrudeWithHoles(outer, [reversedHole], vec3d(0, 0, 1), 20);
+
+      expect(result.success).toBe(true);
+      const shell = solidOuterShell(result.result!.solid);
+      const faces = shellFaces(shell);
+      expect(faces.length).toBe(4); // 2 caps + 2 cylindrical sides
+    });
+
+    it('handles mixed forward and reversed hole wires', () => {
+      const outer = makeSquareWire(50, { x: 25, y: 25 });
+      
+      // First hole: forward orientation
+      const hole1Plane = plane(point3d(15, 25, 0), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const hole1Circle = makeCircle3D(hole1Plane, 4).result!;
+      const hole1Edge = makeEdgeFromCurve(hole1Circle).result!;
+      const hole1 = makeWire([orientEdge(hole1Edge, true)]).result!;
+
+      // Second hole: reversed orientation
+      const hole2Plane = plane(point3d(35, 25, 0), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const hole2Circle = makeCircle3D(hole2Plane, 4).result!;
+      const hole2Edge = makeEdgeFromCurve(hole2Circle).result!;
+      const hole2 = makeWire([orientEdge(hole2Edge, false)]).result!; // reversed!
+
+      const result = extrudeWithHoles(outer, [hole1, hole2], vec3d(0, 0, 1), 20);
+
+      expect(result.success).toBe(true);
+      const shell = solidOuterShell(result.result!.solid);
+      const faces = shellFaces(shell);
+      // 2 caps + 4 outer sides + 2 inner cylindrical sides = 8 faces
+      expect(faces.length).toBe(8);
+    });
+  });
 });
 
 // ═══════════════════════════════════════════════════════

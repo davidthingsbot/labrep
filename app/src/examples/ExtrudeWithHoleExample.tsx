@@ -123,6 +123,7 @@ export function ExtrudeWithHoleExample({ animationAngle }: ExampleProps) {
       circlePoints,
       actualVolume: housingResult.success && housingResult.result ? solidVolume(housingResult.result.solid) : 0,
       expectedVolume: expectedVol,
+      errorMsg: housingResult.success ? null : housingResult.error,
     };
   }, []);
 
@@ -170,12 +171,20 @@ export function ExtrudeWithHoleExample({ animationAngle }: ExampleProps) {
       <BillboardText position={[0, 0, 20]} fontSize={0.8} color="#4ade80">
         Housing with Through-Hole
       </BillboardText>
-      <BillboardText position={[0, 0, 18]} fontSize={0.5} color="#94a3b8">
-        Outer: 30×30mm, Hole: ⌀16mm, Height: 15mm
-      </BillboardText>
-      <BillboardText position={[0, 0, 16]} fontSize={0.5} color="#60a5fa">
-        Volume: {data.actualVolume.toFixed(0)} mm³ (expected: {data.expectedVolume.toFixed(0)})
-      </BillboardText>
+      {data.errorMsg ? (
+        <BillboardText position={[0, 0, 17]} fontSize={0.4} color="#ef4444">
+          Error: {data.errorMsg}
+        </BillboardText>
+      ) : (
+        <>
+          <BillboardText position={[0, 0, 18]} fontSize={0.5} color="#94a3b8">
+            Outer: 30×30mm, Hole: ⌀16mm, Height: 15mm
+          </BillboardText>
+          <BillboardText position={[0, 0, 16]} fontSize={0.5} color="#60a5fa">
+            Volume: {data.actualVolume.toFixed(0)} mm³ (expected: {data.expectedVolume.toFixed(0)})
+          </BillboardText>
+        </>
+      )}
       
       {/* Status indicator */}
       <Sphere args={[0.4]} position={[0, 0, -2]}>
