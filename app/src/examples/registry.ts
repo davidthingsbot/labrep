@@ -19,6 +19,8 @@ import { StlRoundtripExample } from './StlRoundtripExample';
 import { SketchProfilesExample } from './SketchProfilesExample';
 import { StepRoundtripExample } from './StepRoundtripExample';
 import { Curves3DExample } from './Curves3DExample';
+import { TopologyBoxExample } from './TopologyBoxExample';
+import { TopologyStepExample } from './TopologyStepExample';
 
 /** All registered examples. */
 export const examples: Example[] = [
@@ -578,6 +580,74 @@ tangentCircle3D(circle.result, theta);   // perpendicular to radius
 const arc = makeArc3D(tiltedPlane, 1.2, 0, Math.PI);
 evaluateArc3D(arc.result, theta);
 tangentArc3D(arc.result, theta);
+`,
+  },
+  {
+    id: 'topology-box',
+    name: 'Topology Box',
+    description: 'Unit cube as explicit BRep: 8 vertices, 12 edges, 6 faces, 1 shell, 1 solid',
+    component: TopologyBoxExample,
+    code: `// Topology Box — explicit BRep structure
+import {
+  point3d, makeLine3D,
+  makeVertex, makeEdgeFromCurve, orientEdge,
+  makeWire, makePlanarFace, makeShell, makeSolid,
+  solidVolume,
+} from '@labrep/generation';
+
+// 8 vertices
+const v0 = makeVertex(point3d(0, 0, 0));
+const v1 = makeVertex(point3d(1, 0, 0));
+// ... 6 more
+
+// 12 edges
+const e0 = makeEdgeFromCurve(makeLine3D(v0.point, v1.point).result);
+// ... 11 more
+
+// 6 faces from wires
+const bottomWire = makeWire([orientEdge(e0, true), ...]);
+const bottomFace = makePlanarFace(bottomWire.result);
+// ... 5 more faces
+
+// Shell and Solid
+const shell = makeShell([bottomFace, topFace, ...]);
+const solid = makeSolid(shell.result);
+solidVolume(solid.result);  // 1.0
+`,
+  },
+  {
+    id: 'topology-step',
+    name: 'STEP Export',
+    description: 'Export BRep solid to STEP format, showing entity count',
+    component: TopologyStepExample,
+    code: `// STEP Export — BRep to STEP serialization
+import {
+  point3d, makeLine3D,
+  makeEdgeFromCurve, orientEdge, makeWire,
+  makePlanarFace, makeShell, makeSolid,
+  createStepModelBuilder, solidToStep, writeStep,
+} from '@labrep/generation';
+
+// Build a box solid
+const faces = [bottomFace, topFace, front, back, left, right];
+const shell = makeShell(faces);
+const solid = makeSolid(shell.result);
+
+// Export to STEP
+const builder = createStepModelBuilder();
+solidToStep(solid.result, builder);
+const stepText = writeStep(builder.build());
+
+// stepText is ISO-10303-21 formatted:
+// ISO-10303-21;
+// HEADER; ... ENDSEC;
+// DATA;
+//   #1 = CARTESIAN_POINT(...);
+//   #2 = DIRECTION(...);
+//   ...
+//   #N = MANIFOLD_SOLID_BREP(...);
+// ENDSEC;
+// END-ISO-10303-21;
 `,
   },
 ];
