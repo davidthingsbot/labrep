@@ -7,12 +7,12 @@ import {
   XY_PLANE,
   makeLine2D,
   createConstrainedSketch,
-  addElement,
+  addConstrainedElement,
   addConstraint,
   solveSketch,
   sketchDOF,
 } from '@labrep/generation';
-import type { ConstrainedSketch, Constraint } from '@labrep/generation';
+import type { Constraint } from '@labrep/generation';
 import { BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
 
@@ -57,9 +57,9 @@ export function ConstraintSolverVizExample({ animationAngle }: ExampleProps) {
       const line2 = makeLine2D(point2d(1.1, -0.5), point2d(0.2, 1.3));
       const line3 = makeLine2D(point2d(-0.1, 1.1), point2d(-1.0, -0.6));
 
-      if (line1.result) sketch = addElement(sketch, line1.result) as ConstrainedSketch;
-      if (line2.result) sketch = addElement(sketch, line2.result) as ConstrainedSketch;
-      if (line3.result) sketch = addElement(sketch, line3.result) as ConstrainedSketch;
+      if (line1.result) sketch = addConstrainedElement(sketch, line1.result);
+      if (line2.result) sketch = addConstrainedElement(sketch, line2.result);
+      if (line3.result) sketch = addConstrainedElement(sketch, line3.result);
 
       if (sketch.elements.length < 3) return null;
 

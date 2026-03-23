@@ -7,12 +7,12 @@ import {
   XY_PLANE,
   makeLine2D,
   createConstrainedSketch,
-  addElement,
+  addConstrainedElement,
   addConstraint,
   solveSketch,
   sketchDOF,
 } from '@labrep/generation';
-import type { ConstrainedSketch, Constraint } from '@labrep/generation';
+import type { Constraint } from '@labrep/generation';
 import { BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
 
@@ -30,10 +30,10 @@ export function ConstraintSimpleExample({ animationAngle }: ExampleProps) {
       const left = makeLine2D(point2d(-0.9, 1.1), point2d(-1.0, -0.9));
 
       // Add lines to sketch
-      if (bottom.result) sketch = addElement(sketch, bottom.result) as ConstrainedSketch;
-      if (right.result) sketch = addElement(sketch, right.result) as ConstrainedSketch;
-      if (top.result) sketch = addElement(sketch, top.result) as ConstrainedSketch;
-      if (left.result) sketch = addElement(sketch, left.result) as ConstrainedSketch;
+      if (bottom.result) sketch = addConstrainedElement(sketch, bottom.result);
+      if (right.result) sketch = addConstrainedElement(sketch, right.result);
+      if (top.result) sketch = addConstrainedElement(sketch, top.result);
+      if (left.result) sketch = addConstrainedElement(sketch, left.result);
 
       if (sketch.elements.length < 4) {
         return null; // Not enough elements

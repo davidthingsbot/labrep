@@ -5,6 +5,7 @@ export {
   type ConstrainedSketch,
   createConstrainedSketch,
   toConstrainedSketch,
+  addConstrainedElement,
   addConstraint,
   removeConstraint,
   getConstraint,

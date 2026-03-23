@@ -81,6 +81,34 @@ export function toConstrainedSketch(sketch: Sketch): ConstrainedSketch {
   };
 }
 
+let nextElementId = 1;
+
+/**
+ * Add an element to a constrained sketch, preserving constraints and parameters.
+ *
+ * @param sketch - The constrained sketch
+ * @param geometry - The curve to add
+ * @param construction - Whether this is a construction element
+ * @returns A new ConstrainedSketch with the element added
+ */
+export function addConstrainedElement(
+  sketch: ConstrainedSketch,
+  geometry: import('../geometry').Curve2D,
+  construction: boolean = false,
+): ConstrainedSketch {
+  const element: SketchElement = {
+    id: `elem_${nextElementId++}`,
+    geometry,
+    construction,
+  };
+  return {
+    plane: sketch.plane,
+    elements: [...sketch.elements, element],
+    constraints: sketch.constraints,
+    parameters: new Map(sketch.parameters),
+  };
+}
+
 // =============================================================================
 // Constraint Management
 // =============================================================================
