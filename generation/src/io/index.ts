@@ -28,3 +28,10 @@ export {
   stepToPlane, planeToStep,
   extractFoundationTypes,
 } from './step-converters';
+
+// STEP 3D curve converters
+export {
+  line3DToStep, stepToLine3D,
+  circle3DToStep, stepToCircle3D,
+  arc3DToStep, stepToArc3D,
+} from './step-converters-3d';
