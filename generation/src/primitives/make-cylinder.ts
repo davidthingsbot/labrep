@@ -1,4 +1,5 @@
 import { Mesh, OperationResult, createMesh, success, failure } from '../mesh/mesh';
+import { isZero } from '../core/tolerance';
 
 /**
  * Create a cylinder mesh centered at the origin, aligned along the Y axis.
@@ -20,8 +21,8 @@ export function makeCylinder(
   height: number,
   options?: { segments?: number },
 ): OperationResult<Mesh> {
-  if (radius <= 0) return failure('radius must be positive');
-  if (height <= 0) return failure('height must be positive');
+  if (radius <= 0 || isZero(radius)) return failure('radius must be positive');
+  if (height <= 0 || isZero(height)) return failure('height must be positive');
 
   const segments = options?.segments ?? 32;
   const halfH = height / 2;

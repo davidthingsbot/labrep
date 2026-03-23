@@ -88,4 +88,31 @@ describe("makeSphere", () => {
     const triCount = meshTriangleCount(result.result!);
     expect(triCount).toBeGreaterThanOrEqual(100);
   });
+
+  // Edge cases
+  it('handles very small radius', () => {
+    const result = makeSphere(0.001);
+    expect(result.success).toBe(true);
+  });
+
+  it('handles very large radius', () => {
+    const result = makeSphere(1e6);
+    expect(result.success).toBe(true);
+  });
+
+  it('handles minimum segments/rings', () => {
+    const result = makeSphere(1, { segments: 4, rings: 2 });
+    expect(result.success).toBe(true);
+  });
+
+  it('handles high resolution', () => {
+    const result = makeSphere(1, { segments: 64, rings: 32 });
+    expect(result.success).toBe(true);
+    expect(meshTriangleCount(result.result!)).toBeGreaterThan(1000);
+  });
+
+  it('returns error for very small radius near zero', () => {
+    const result = makeSphere(1e-10);
+    expect(result.success).toBe(false);
+  });
 });

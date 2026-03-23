@@ -85,4 +85,41 @@ describe('OperationResult', () => {
     expect(r.success).toBe(true);
     expect(r.warnings).toEqual(['minor issue']);
   });
+
+  // Edge cases
+  it('handles empty mesh', () => {
+    const mesh: Mesh = { vertices: new Float32Array(0), normals: new Float32Array(0), indices: new Uint32Array(0) };
+    expect(meshVertexCount(mesh)).toBe(0);
+    expect(meshTriangleCount(mesh)).toBe(0);
+  });
+
+  it('handles single triangle mesh', () => {
+    const mesh: Mesh = {
+      vertices: new Float32Array([0,0,0, 1,0,0, 0,1,0]),
+      normals: new Float32Array([0,0,1, 0,0,1, 0,0,1]),
+      indices: new Uint32Array([0, 1, 2]),
+    };
+    expect(meshVertexCount(mesh)).toBe(3);
+    expect(meshTriangleCount(mesh)).toBe(1);
+  });
+
+  it('validateMesh catches mismatched vertex/normal count', () => {
+    const mesh: Mesh = {
+      vertices: new Float32Array([0,0,0, 1,0,0, 0,1,0]),
+      normals: new Float32Array([0,0,1, 0,0,1]), // Only 2 normals, need 3
+      indices: new Uint32Array([0, 1, 2]),
+    };
+    const result = validateMesh(mesh);
+    expect(result.success).toBe(false);
+  });
+
+  it('validateMesh catches out-of-bounds index', () => {
+    const mesh: Mesh = {
+      vertices: new Float32Array([0,0,0, 1,0,0, 0,1,0]),
+      normals: new Float32Array([0,0,1, 0,0,1, 0,0,1]),
+      indices: new Uint32Array([0, 1, 99]), // 99 is out of bounds
+    };
+    const result = validateMesh(mesh);
+    expect(result.success).toBe(false);
+  });
 });

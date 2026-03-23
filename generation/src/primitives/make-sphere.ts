@@ -5,6 +5,7 @@ import {
   success,
   failure,
 } from "../mesh/mesh";
+import { isZero } from '../core/tolerance';
 
 /**
  * Generate a UV sphere mesh centered at the origin.
@@ -27,7 +28,7 @@ export function makeSphere(
   radius: number,
   options?: { segments?: number; rings?: number },
 ): OperationResult<Mesh> {
-  if (radius <= 0) {
+  if (radius <= 0 || isZero(radius)) {
     return failure<Mesh>(`radius must be positive, got ${radius}`);
   }
 

@@ -146,4 +146,37 @@ describe('makeCylinder', () => {
     const mesh = makeCylinder(1, 2).result!;
     expect(validateMesh(mesh).success).toBe(true);
   });
+
+  // Edge cases
+  it('handles very small radius', () => {
+    const result = makeCylinder(0.001, 1);
+    expect(result.success).toBe(true);
+  });
+
+  it('handles very large dimensions', () => {
+    const result = makeCylinder(1000, 10000);
+    expect(result.success).toBe(true);
+  });
+
+  it('handles minimum segments (3)', () => {
+    const result = makeCylinder(1, 1, { segments: 3 });
+    expect(result.success).toBe(true);
+    // Triangular prism - 3 sides + 2 caps
+  });
+
+  it('handles high segment count', () => {
+    const result = makeCylinder(1, 1, { segments: 128 });
+    expect(result.success).toBe(true);
+    expect(meshVertexCount(result.result!)).toBeGreaterThan(100);
+  });
+
+  it('handles thin cylinder (small height)', () => {
+    const result = makeCylinder(10, 0.01);
+    expect(result.success).toBe(true);
+  });
+
+  it('returns error for very small radius near zero', () => {
+    const result = makeCylinder(1e-10, 1);
+    expect(result.success).toBe(false);
+  });
 });

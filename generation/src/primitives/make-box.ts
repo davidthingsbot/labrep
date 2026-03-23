@@ -1,4 +1,5 @@
 import { Mesh, OperationResult, createMesh, success, failure } from '../mesh/mesh';
+import { isZero } from '../core/tolerance';
 
 /**
  * Create an axis-aligned box mesh centered at the origin.
@@ -20,6 +21,9 @@ export function makeBox(
 ): OperationResult<Mesh> {
   if (width <= 0 || height <= 0 || depth <= 0) {
     return failure('All dimensions must be positive');
+  }
+  if (isZero(width) || isZero(height) || isZero(depth)) {
+    return failure('Dimensions must be greater than tolerance');
   }
 
   const hw = width / 2;

@@ -89,4 +89,27 @@ describe('makeBox', () => {
     expect(sumY / count).toBeCloseTo(0, 5);
     expect(sumZ / count).toBeCloseTo(0, 5);
   });
+
+  // Edge cases
+  it('handles very small dimensions', () => {
+    const result = makeBox(0.001, 0.001, 0.001);
+    expect(result.success).toBe(true);
+    expect(meshTriangleCount(result.result!)).toBe(12);
+  });
+
+  it('handles very large dimensions', () => {
+    const result = makeBox(1e6, 1e6, 1e6);
+    expect(result.success).toBe(true);
+  });
+
+  it('handles non-uniform dimensions', () => {
+    const result = makeBox(1, 100, 0.01);
+    expect(result.success).toBe(true);
+    expect(meshTriangleCount(result.result!)).toBe(12);
+  });
+
+  it('returns error for very small dimension near zero', () => {
+    const result = makeBox(1e-10, 1, 1);
+    expect(result.success).toBe(false);
+  });
 });
