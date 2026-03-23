@@ -1065,6 +1065,27 @@ Tests:
 
 ---
 
+## Design Validation Against OCCT
+
+> ⚠️ **MANDATORY:** Before implementing any phase, assess the design for completeness against OpenCASCADE (OCCT). Ask:
+>
+> 1. **What functions does OCCT provide for this data type?** (e.g., `Geom_Circle` has 20+ methods)
+> 2. **Which functions are essential for downstream operations?** (e.g., extrude needs `evaluate`, `tangent`, `length`)
+> 3. **What edge cases does OCCT handle?** (degenerate inputs, tolerances, special configurations)
+> 4. **What does the STEP representation require?** (which attributes must survive round-trip)
+>
+> **Document gaps explicitly.** If we choose to defer functionality, note it as "NOT IMPLEMENTED — reason" in the design doc.
+>
+> **Check the OCCT class reference** for each data type:
+> - [Geom Package](https://dev.opencascade.org/doc/refman/html/package_geom.html) — 3D curves and surfaces
+> - [Geom2d Package](https://dev.opencascade.org/doc/refman/html/package_geom2d.html) — 2D curves
+> - [TopoDS Package](https://dev.opencascade.org/doc/refman/html/package_topods.html) — Topology
+> - [BRep Package](https://dev.opencascade.org/doc/refman/html/package_brep.html) — BRep geometry bindings
+>
+> This step prevents discovering missing functionality late in implementation when it's expensive to add.
+
+---
+
 ## TDD Approach
 
 Every phase follows this pattern:
@@ -1099,6 +1120,20 @@ Every phase follows this pattern:
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### Edge Case Testing Requirement
+
+> ⚠️ **All implementations MUST include edge case tests** — not just happy paths.
+>
+> **Test categories:**
+> - **Zero/negative values:** What happens with `radius = 0`? `length = -1`?
+> - **Degenerate inputs:** Zero-length vectors, coincident points, collinear points
+> - **Boundary conditions:** Values at exactly the tolerance threshold
+> - **Near-tolerance values:** `1e-8` when tolerance is `1e-7`
+> - **Extreme values:** Very large (`1e10`) and very small (`1e-10`) inputs
+> - **Known failure modes:** Cases that break naive implementations
+>
+> **Edge cases reveal bugs that happy-path tests miss.** If a function can fail, test that it fails correctly.
 
 ### Test Organization
 
