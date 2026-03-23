@@ -105,11 +105,11 @@ describe('Shell', () => {
   });
 
   describe('shellIsClosed', () => {
-    it('returns true for 6-face box (heuristic)', () => {
+    it('returns true for 6-face box with proper edge connectivity', () => {
       const faces = makeBoxFaces();
       const shell = makeShell(faces).result!;
 
-      // Simple heuristic: 6 faces implies closed box
+      // A properly constructed 6-face box should be closed
       expect(shellIsClosed(shell)).toBe(true);
     });
 
@@ -123,6 +123,25 @@ describe('Shell', () => {
     it('returns false for 5 faces (open box)', () => {
       const faces = makeBoxFaces().slice(0, 5); // Remove one face
       const shell = makeShell(faces).result!;
+
+      expect(shellIsClosed(shell)).toBe(false);
+    });
+
+    it('returns false for 2 faces that share one edge', () => {
+      // Two adjacent faces share one edge but have 6 boundary edges total
+      const f1 = makeRectFace(0, 0, 1, 1, 0);
+      const f2 = makeRectFace(1, 0, 2, 1, 0);
+      const shell = makeShell([f1, f2]).result!;
+
+      // Even though we have faces, they don't form a closed shell
+      expect(shellIsClosed(shell)).toBe(false);
+    });
+
+    it('returns false for disconnected faces', () => {
+      // Two faces far apart
+      const f1 = makeRectFace(0, 0, 1, 1, 0);
+      const f2 = makeRectFace(100, 100, 101, 101, 0);
+      const shell = makeShell([f1, f2]).result!;
 
       expect(shellIsClosed(shell)).toBe(false);
     });

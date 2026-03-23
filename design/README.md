@@ -466,7 +466,7 @@ solveAssembly(assembly: Assembly): AssemblySolveResult  // Position parts per jo
 
 ## What We Exclude (For Now)
 
-These features are explicitly **out of scope** for initial development:
+Features explicitly **out of scope** for initial development (may be added in later phases):
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -474,19 +474,19 @@ These features are explicitly **out of scope** for initial development:
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  GEOMETRY                                                       │
-│  • NURBS freeform curves/surfaces (use analytic only)           │
+│  • BSpline/NURBS surfaces (Phase 21+ — "the dragon")            │
 │  • Offset surfaces                                              │
-│  • Loft, sweep with guide rails                                 │
-│  • Blend/fillet surfaces                                        │
+│  • Ellipse, parabola, hyperbola curves                          │
 │                                                                 │
-│  OPERATIONS                                                     │
-│  • Fillets and chamfers                                         │
-│  • Shell (hollow out)                                           │
-│  • Draft angles                                                 │
-│  • Patterns (linear, circular array)                            │
-│  • Mirror operations                                            │
+│  OPERATIONS (planned in future phases)                          │
+│  • Fillets/chamfers — Phase 14                                  │
+│  • Patterns — Phase 16                                          │
+│  • Mirror — Phase 17                                            │
+│  • Shell — Phase 18                                             │
+│  • Loft — Phase 19                                              │
+│  • Sweep — Phase 20                                             │
 │                                                                 │
-│  DOMAIN-SPECIFIC                                                │
+│  DOMAIN-SPECIFIC (no current plans)                             │
 │  • Sheet metal features                                         │
 │  • Mold/casting tools                                           │
 │  • Weldments                                                    │
@@ -494,15 +494,13 @@ These features are explicitly **out of scope** for initial development:
 │                                                                 │
 │  ANALYSIS                                                       │
 │  • FEA integration                                              │
-│  • Mass properties beyond volume                                │
 │  • Tolerance analysis                                           │
 │                                                                 │
 │  RENDERING                                                      │
 │  • Materials and textures                                       │
 │  • Photorealistic rendering                                     │
-│  • Animation                                                    │
 │                                                                 │
-│  These can be added later. Focus enables progress.              │
+│  Focus enables progress — add incrementally as needed.          │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -917,25 +915,32 @@ Tests:
 
 ```
 Data Types:
-├── CylindricalSurface (for extruded arcs)
-├── Shell
-└── Solid
+├── ExtrusionSurface (Geom_SurfaceOfLinearExtrusion equivalent)
+├── CylindricalSurface (for extruded arcs) — already done
+└── (Shell, Solid already done in Phase 6)
 
 Functions:
 ├── extrude(profile, direction, distance) → Solid
-├── Shell construction from faces
-├── Solid validation (closed, consistent normals)
-└── Volume computation
+├── extrudeSymmetric(profile, direction, distance) → Solid
+├── extrudeTo(profile, targetFace) → Solid
+├── makeExtrusionSurface(curve3d, direction) → ExtrusionSurface
+└── evaluateExtrusionSurface, normalExtrusionSurface
+
+STEP Extensions:
+├── ExtrusionSurface → SURFACE_OF_LINEAR_EXTRUSION
+├── PCurve support (2D curve on surface for trimmed faces)
+└── ADVANCED_BREP_SHAPE_REPRESENTATION wrapper
 
 Tests:
-├── Extrude rectangle → box
-├── Extrude circle → cylinder
+├── Extrude rectangle → box (volume check)
+├── Extrude circle → cylinder  
 ├── Extrude with holes → solid with through-hole
+├── Extrude L-shape (non-convex profile)
 ├── Symmetric extrusion
-└── Volume correctness
+├── STEP round-trip of extruded solid
 ```
 
-**Exit Criteria:** Can extrude sketch profiles into valid solids.
+**Exit Criteria:** Can extrude sketch profiles into valid solids, export to STEP.
 
 ---
 
@@ -965,25 +970,44 @@ Tests:
 **Goal:** Combine solids (union, subtract, intersect).
 
 ```
+Prerequisites (from gap analysis):
+├── Proper shell isClosed (edge-connectivity) — Phase 6 fix
+├── Proper solid volume calculation — Phase 6 fix
+├── unionBoundingBox for AABB pre-check — Phase 6 fix
+└── Face normal at UV point
+
+Data Types:
+├── BooleanResult { solid, warnings[] }
+└── FaceClassification (IN, OUT, ON)
+
 Functions:
-├── union(solid1, solid2) → Solid
-├── subtract(solid1, solid2) → Solid
-├── intersect(solid1, solid2) → Solid
+├── union(solid1, solid2) → OperationResult<Solid>
+├── subtract(solid1, solid2) → OperationResult<Solid>
+├── intersect(solid1, solid2) → OperationResult<Solid>
+├── classifyFace(face, solid) → FaceClassification
+└── splitFaceAtCurve(face, curve) → Face[]
 
 Internals (see background/boolean-operations.md):
-├── Surface-surface intersection
-├── Face splitting
-├── Face classification
-├── Result construction
+├── Stage 1: AABB overlap filtering
+├── Stage 2: Surface-surface intersection (analytic only)
+│   ├── Plane ∩ Plane → Line3D
+│   ├── Plane ∩ Cylinder → Ellipse/Line
+│   └── Cylinder ∩ Cylinder → Conic
+├── Stage 3: Face classification (ray casting)
+├── Stage 4: Face trimming and sewing
+└── Topology repair (vertex merging within tolerance)
 
 Tests:
 ├── Box ∪ box (overlapping, touching, separate)
-├── Box - cylinder (hole)
-├── Known volume results
-├── Edge cases (tangent, coincident faces)
+├── Box - cylinder (through hole)
+├── Box ∩ box (intersection volume)
+├── Known volume results (verify with proper volume calc)
+├── Edge cases: tangent surfaces, coincident faces
+├── Non-manifold result detection
+└── STEP round-trip of boolean result
 ```
 
-**Exit Criteria:** Boolean operations work on primitives and extruded shapes.
+**Exit Criteria:** Boolean operations work on analytic surfaces (plane, cylinder). NURBS explicitly excluded.
 
 ---
 
@@ -992,23 +1016,43 @@ Tests:
 **Goal:** Create solids by revolving profiles.
 
 ```
+Prerequisites:
+├── rotationAxis(origin, dir, angle) — Phase 6 fix
+└── Arbitrary axis transforms
+
 Data Types:
-├── SphericalSurface
-├── ToroidalSurface
-└── ConicalSurface
+├── RevolutionSurface (Geom_SurfaceOfRevolution equivalent)
+├── SphericalSurface (special case: semicircle around diameter)
+├── ToroidalSurface (circle around offset axis)
+└── ConicalSurface (line at angle to axis)
 
 Functions:
-├── revolve(profile, axis, angle) → Solid
-└── Handle full revolution and partial arcs
+├── revolve(profile, axis, angle) → OperationResult<Solid>
+├── revolvePartial(profile, axis, startAngle, endAngle) → Solid
+├── makeRevolutionSurface(curve3d, axis) → RevolutionSurface
+├── makeSphericalSurface(center, radius) → SphericalSurface
+├── makeConicalSurface(axis, halfAngle) → ConicalSurface
+├── makeToroidalSurface(axis, majorR, minorR) → ToroidalSurface
+└── evaluate/normal for each surface type
+
+STEP Extensions:
+├── RevolutionSurface → SURFACE_OF_REVOLUTION
+├── SphericalSurface → SPHERICAL_SURFACE
+├── ConicalSurface → CONICAL_SURFACE
+├── ToroidalSurface → TOROIDAL_SURFACE
+└── Degenerate caps (point vertices at poles)
 
 Tests:
-├── Revolve rectangle → cylinder
-├── Revolve offset rectangle → tube
-├── Revolve triangle → cone
-├── 90° partial revolve
+├── Revolve rectangle 360° → cylinder (volume = πr²h)
+├── Revolve offset rectangle → tube/torus section
+├── Revolve right triangle → cone (volume = ⅓πr²h)
+├── Revolve semicircle → sphere (volume = ⁴⁄₃πr³)
+├── 90° partial revolve → quarter solid
+├── Revolve around offset axis → torus
+├── STEP round-trip for each surface type
 ```
 
-**Exit Criteria:** Can create revolved solids.
+**Exit Criteria:** Can create revolved solids with all analytic surface types.
 
 ---
 
@@ -1062,6 +1106,118 @@ Tests:
 ```
 
 **Exit Criteria:** Can create simple assemblies with joints.
+
+---
+
+### Phase 13: BSpline Curves + STEP Import
+
+**Goal:** Support freeform curves for STEP import compatibility.
+
+```
+Data Types:
+├── BSplineCurve2D (Geom2d_BSplineCurve equivalent)
+├── BSplineCurve3D (Geom_BSplineCurve equivalent)
+└── BezierCurve (simpler, polynomial only)
+
+Functions:
+├── makeBSplineCurve(poles, knots, multiplicities, degree) → BSplineCurve
+├── makeBezierCurve(poles) → BezierCurve
+├── evaluateBSpline(curve, t) → Point
+├── tangentBSpline(curve, t) → Vector
+├── lengthBSpline(curve) → number (approximate via Gauss quadrature)
+├── insertKnot(curve, u) → BSplineCurve
+├── elevateDegree(curve, newDegree) → BSplineCurve
+└── approximateWithBSpline(points, tolerance) → BSplineCurve
+
+STEP Extensions:
+├── B_SPLINE_CURVE / B_SPLINE_CURVE_WITH_KNOTS
+├── BEZIER_CURVE
+└── RATIONAL_B_SPLINE_CURVE (weights)
+
+Tests:
+├── Evaluate known BSpline (compare to reference)
+├── Line as degree-1 BSpline
+├── Circle approximation as BSpline
+├── STEP round-trip of BSpline curves
+├── Import real-world STEP file with BSplines
+```
+
+**Note:** BSpline *surfaces* are explicitly deferred — they require SSI (surface-surface intersection) which is "the dragon." BSpline curves are tractable and enable STEP import of edges.
+
+**Exit Criteria:** Can import STEP files containing BSpline curves.
+
+---
+
+### Phase 14: Fillet and Chamfer
+
+**Goal:** Add edge blending operations.
+
+```
+Functions:
+├── filletEdges(solid, edges, radius) → OperationResult<Solid>
+├── filletAllEdges(solid, radius) → OperationResult<Solid>
+├── chamferEdges(solid, edges, distance) → OperationResult<Solid>
+├── chamferEdgesAsymmetric(solid, edges, d1, d2) → OperationResult<Solid>
+└── variableFillet(solid, edge, radiusFunction) → OperationResult<Solid>
+
+Internals:
+├── Rolling ball algorithm for fillet surface generation
+├── Planar cuts for chamfer
+├── Face trimming at fillet/chamfer boundaries
+└── Handle degenerate cases (fillet larger than face)
+
+Tests:
+├── Fillet single edge of box
+├── Fillet all edges of box
+├── Chamfer single edge
+├── Variable radius fillet
+├── Fillet fails gracefully on too-large radius
+├── STEP round-trip of filleted solid
+```
+
+**Exit Criteria:** Can add fillets and chamfers to solid edges.
+
+---
+
+### Phase 15: Mass Properties
+
+**Goal:** Full mass property calculations.
+
+```
+Functions:
+├── solidVolume(solid) → number — already done (needs proper impl)
+├── solidSurfaceArea(solid) → number
+├── solidCenterOfMass(solid) → Point3D
+├── solidMomentsOfInertia(solid) → Matrix3x3
+├── faceArea(face) → number
+└── shellSurfaceArea(shell) → number
+
+Internals:
+├── Divergence theorem for volume (already planned)
+├── Surface integrals for area
+├── Weighted centroid calculation
+└── Parallel axis theorem for moments
+
+Tests:
+├── Verify against known shapes (box, cylinder, sphere)
+├── Non-convex solid properties
+├── Solid with voids
+```
+
+**Exit Criteria:** Accurate mass properties for all solid types.
+
+---
+
+### Future Phases (Tentative)
+
+```
+Phase 16: Patterns (linear/circular array)
+Phase 17: Mirror operations  
+Phase 18: Shell (hollow out solid)
+Phase 19: Loft (multi-profile sweep)
+Phase 20: Sweep along path
+Phase 21: BSpline surfaces (the dragon)
+```
 
 ---
 
