@@ -351,27 +351,43 @@ The 2D polygon clipping approach from OCCT:
 
 ## Implementation Status
 
-### What Works (2026-03-23)
+### What Works (2026-03-23, updated end of day)
 
-- **Plane-plane intersection** — 6 tests passing (parallel, perpendicular, angled, coincident)
-- **Point-in-solid (ray casting)** — 6 tests passing (inside, outside, above, below, offset)
-- **Boolean intersect** — Box ∩ Box produces correct volume (36 for 3×3×4 overlap)
-- **Boolean subtract** — Box - Box produces approximately correct result (~40, expected 28 — coplanar face error)
-- **Boolean union** — Box ∪ Box produces approximately correct result (~83, expected 92 — coplanar face error)
-- **No-overlap detection** — Intersect of disjoint boxes correctly returns failure
+- **Plane-plane intersection** — 7 tests passing
+- **Point-in-solid (ray casting)** — 6 tests passing
+- **Boolean intersect** — Exact volume (36.0 for 3×3×4 overlap) ✓
+- **Boolean union** — Exact volume (92.0 for two 4×4×4 boxes offset by (1,1,0)) ✓
+- **Boolean subtract** — Correct face topology but wrong volume (16 instead of 28)
+- **No-overlap detection** — Intersect of disjoint boxes returns failure ✓
+- **STEP round-trip** — All three operations write/parse successfully ✓
+- **App examples** — 3 examples (basic with orbiting box, L-bracket shapes, STEP round-trip)
 
-### Known Issues
+### Fixes Applied (session 2, 2026-03-23)
 
-1. **Coplanar face handling is incomplete** — Top/bottom faces (z=0, z=4 for boxes sharing the same base plane) are not being split into their overlapping and non-overlapping regions. This causes volume errors of ~20-30% for subtract and union. Intersect is accurate because coplanar faces classified as "on" are handled correctly via Sutherland-Hodgman polygon clipping.
+1. **CCW polygon normalization** — `faceToPolygon2D` now ensures CCW winding before Sutherland-Hodgman clipping. Root cause of z=0 coplanar faces being silently skipped (CW polygons → zero-area intersections).
 
-2. **Shell closure** — Boolean results create new face objects with independent edges. The shell closure check fails because edges aren't shared objects. Currently bypassed by creating the solid without closure validation. The volume computation via divergence theorem still works.
+2. **Polygon difference (`polygonDifference`)** — Splits polygon A by each edge of B, keeps fragments whose centroids are outside B. Used for subtract A-side (A \ overlap) and union B-side (B \ overlap).
 
-3. **Face splitting precision** — Split faces created from 2D polygon clipping have slight coordinate differences from the original faces, preventing exact edge matching.
+3. **Union volume now exact** — 92.0 (was 82.7).
 
-### Path to Full Accuracy
+### Remaining Issue: Subtract Face Winding
 
-1. **Fix coplanar face splitting for subtract/union** — For the "A on B, same normal" case in subtract, the non-overlapping region of A needs to be computed (polygon subtraction, not just intersection). This requires implementing polygon difference (A minus A∩B).
+**Subtract volume is 16 instead of expected 28.** The coplanar face fragments have correct vertices and areas, but their winding direction is wrong for the divergence theorem.
 
-2. **Vertex merging** — After creating all result faces, merge vertices that are within tolerance. This would fix the shell closure issue.
+**Root cause:** `makePlanarFace` infers the normal from wire point cross products. For the bottom face of a box, the original wire is CW (viewed from +Z), giving outward-facing n=(0,0,-1). After polygon difference, fragments come out CCW (normalized for Sutherland-Hodgman), so `makePlanarFace` assigns them n=(0,0,+1). The divergence theorem then treats bottom fragments as ceiling faces, **canceling** volume instead of adding it.
 
-3. **Multi-ray classification** — Cast rays in multiple directions and vote on the majority result. This handles edge cases where a single ray passes through an edge or vertex.
+**Fix approach (for next session):**
+1. After creating each coplanar fragment face via `polygonToFace`, check if the inferred normal matches the original face's intended outward direction
+2. If `dot(inferredNormal, originalNormal) < 0`, reverse the wire to fix winding
+3. Use `makeFace(originalSurface, correctedWire)` instead of `makePlanarFace`
+4. Alternative: add an explicit `orientation` flag to Face (like OCCT's `IsForward`), avoiding dependence on wire winding for normal direction
+
+**Key OCCT insight:** OCCT tracks face orientation via a separate boolean flag, decoupled from wire winding. This avoids exactly this class of bug.
+
+### Other Known Issues
+
+1. **Shell closure** — Boolean results create independent edge objects. Shell closure check fails. Bypassed by creating the solid without closure validation. Volume still works.
+
+2. **Face splitting precision** — Split faces have slight coordinate differences from originals, preventing exact edge matching. Vertex merging would fix this.
+
+3. **Side face splitting incomplete** — Transverse (non-coplanar) face splitting works for simple cases but may miss some configurations. A's front face (y=-2) is correctly kept whole when outside B, but more complex overlaps may need refinement.

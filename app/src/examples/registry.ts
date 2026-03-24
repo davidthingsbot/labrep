@@ -38,6 +38,7 @@ import { ExtrudeStepExample } from './ExtrudeStepExample';
 import { RevolveStepExample } from './RevolveStepExample';
 import { SketchOnFaceStepExample } from './SketchOnFaceStepExample';
 import { BooleanBasicExample } from './BooleanBasicExample';
+import { BooleanShapesExample } from './BooleanShapesExample';
 import { BooleanStepExample } from './BooleanStepExample';
 
 /** All registered examples. */
@@ -1054,7 +1055,7 @@ for (const solid of [boxSolid, cylSolid]) {
   {
     id: 'boolean-basic',
     name: 'Boolean Basic',
-    description: 'Box-box union/subtract/intersect with animated overlap',
+    description: 'Box B orbits Box A on a tilted path — cycles through intersect, subtract, union',
     component: BooleanBasicExample,
     code: `// Boolean Operations — union, subtract, intersect
 import { extrude, booleanUnion, booleanSubtract,
@@ -1066,6 +1067,25 @@ const boxB = extrude(wireB, dir, 4).result!.solid;
 const union = booleanUnion(boxA, boxB);     // A ∪ B
 const subtract = booleanSubtract(boxA, boxB); // A - B
 const intersect = booleanIntersect(boxA, boxB); // A ∩ B
+`,
+  },
+  {
+    id: 'boolean-shapes',
+    name: 'Boolean Shapes',
+    description: 'L-bracket with orbiting box — subtract and intersect on complex profiles',
+    component: BooleanShapesExample,
+    code: `// Boolean with complex shapes — L-bracket and box
+import { extrude, booleanSubtract, booleanIntersect } from '@labrep/generation';
+
+// L-shaped profile extruded into a solid
+const lSolid = extrude(lWire, dir, 4).result!.solid;
+// Box orbiting through the L
+const boxSolid = extrude(boxWire, dir, 3).result!.solid;
+
+// Cut a notch from the L
+const notch = booleanSubtract(lSolid, boxSolid);
+// Or show only the overlap
+const overlap = booleanIntersect(lSolid, boxSolid);
 `,
   },
   {

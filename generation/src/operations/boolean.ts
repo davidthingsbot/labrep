@@ -138,29 +138,98 @@ function polygonArea2D(poly: Pt2[]): number {
   return area / 2;
 }
 
-/** Subtract polygon B from polygon A. Returns polygon(s) for the difference. */
-function subtractPolygon(subject: Pt2[], clip: Pt2[]): Pt2[] {
-  // Reverse the clip polygon to get the "outside" region
-  // Then clip subject by each half-plane of the original clip (inverted)
-  // This is a simplification — for convex polygons, we can clip by the
-  // complement. For general polygons, we'd need a proper polygon boolean.
-  //
-  // For our case (axis-aligned boxes), both polygons are convex, so
-  // the difference A - B can be computed as A clipped by each edge of B (inverted).
-  // However, the result may not be convex, so we return the original face
-  // minus the intersection.
-  //
-  // Simpler approach: don't compute the difference polygon directly.
-  // Instead, return the intersection and let the caller figure out the rest.
-  return clipPolygon(subject, clip);
+/**
+ * Split polygon A by polygon B's edges. Returns fragments of A that are
+ * OUTSIDE B (i.e., A \ B — the polygon difference).
+ *
+ * Works by progressively cutting A with each edge of B. After all cuts,
+ * fragments whose centroids are outside B are collected.
+ */
+function polygonDifference(subject: Pt2[], clip: Pt2[]): Pt2[][] {
+  if (subject.length < 3 || clip.length < 3) return [subject];
+
+  // Start with the subject as a single fragment
+  let fragments: Pt2[][] = [subject];
+
+  // Cut by each edge of the clip polygon
+  for (let i = 0; i < clip.length; i++) {
+    const edgeStart = clip[i];
+    const edgeEnd = clip[(i + 1) % clip.length];
+
+    const nextFragments: Pt2[][] = [];
+    for (const frag of fragments) {
+      const [inside, outside] = splitPolygonByLine(frag, edgeStart, edgeEnd);
+      if (inside.length >= 3) nextFragments.push(inside);
+      if (outside.length >= 3) nextFragments.push(outside);
+    }
+    fragments = nextFragments;
+  }
+
+  // Keep only fragments whose centroids are outside the clip polygon
+  const result: Pt2[][] = [];
+  for (const frag of fragments) {
+    const cx = frag.reduce((s, p) => s + p.x, 0) / frag.length;
+    const cy = frag.reduce((s, p) => s + p.y, 0) / frag.length;
+    if (!pointInPolygon2DSimple({ x: cx, y: cy }, clip)) {
+      result.push(frag);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Split a polygon by a directed line (defined by two points).
+ * Returns [insidePart, outsidePart] where "inside" is the left side
+ * of the directed line.
+ */
+function splitPolygonByLine(poly: Pt2[], lineStart: Pt2, lineEnd: Pt2): [Pt2[], Pt2[]] {
+  const inside: Pt2[] = [];
+  const outside: Pt2[] = [];
+
+  for (let j = 0; j < poly.length; j++) {
+    const current = poly[j];
+    const previous = poly[(j + poly.length - 1) % poly.length];
+
+    const currInside = isInsideEdge(current, lineStart, lineEnd);
+    const prevInside = isInsideEdge(previous, lineStart, lineEnd);
+
+    if (currInside) {
+      if (!prevInside) {
+        const inter = lineIntersect2D(previous, current, lineStart, lineEnd);
+        if (inter) { inside.push(inter); outside.push(inter); }
+      }
+      inside.push(current);
+    } else {
+      if (prevInside) {
+        const inter = lineIntersect2D(previous, current, lineStart, lineEnd);
+        if (inter) { inside.push(inter); outside.push(inter); }
+      }
+      outside.push(current);
+    }
+  }
+
+  return [inside, outside];
+}
+
+/** Simple 2D point-in-polygon (ray casting) */
+function pointInPolygon2DSimple(pt: Pt2, poly: Pt2[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    if ((poly[i].y > pt.y) !== (poly[j].y > pt.y) &&
+        pt.x < poly[j].x + (poly[i].x - poly[j].x) * (pt.y - poly[j].y) / (poly[i].y - poly[j].y)) {
+      inside = !inside;
+    }
+  }
+  return inside;
 }
 
 // ═══════════════════════════════════════════════════════
 // FACE UTILITIES
 // ═══════════════════════════════════════════════════════
 
-/** Get 2D polygon vertices from a planar face */
-function faceToPolygon2D(face: Face, pl: Plane): Pt2[] {
+/** Get 2D polygon vertices from a planar face in their original winding order */
+function faceToPolygon2DRaw(face: Face, pl: Plane): Pt2[] {
   const verts: Pt2[] = [];
   for (const oe of face.outerWire.edges) {
     const pt3d = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
@@ -169,8 +238,24 @@ function faceToPolygon2D(face: Face, pl: Plane): Pt2[] {
   return verts;
 }
 
-/** Create a planar face from a 2D polygon on a plane */
-function polygonToFace(poly: Pt2[], pl: Plane): OperationResult<Face> {
+/** Get 2D polygon vertices, always CCW (for Sutherland-Hodgman) */
+function faceToPolygon2D(face: Face, pl: Plane): Pt2[] {
+  const verts = faceToPolygon2DRaw(face, pl);
+  if (polygonArea2D(verts) < 0) {
+    verts.reverse();
+  }
+  return verts;
+}
+
+/** Check if the original face winding is CW in the given plane */
+function faceIsCW(face: Face, pl: Plane): boolean {
+  const verts = faceToPolygon2DRaw(face, pl);
+  return polygonArea2D(verts) < 0;
+}
+
+/** Create a planar face from a 2D polygon on a plane.
+ *  If sourceSurface is provided, use it instead of inferring from points. */
+function polygonToFace(poly: Pt2[], pl: Plane, sourceSurface?: PlaneSurface): OperationResult<Face> {
   if (poly.length < 3) return failure('Polygon has fewer than 3 vertices');
 
   // Remove near-duplicate consecutive vertices
@@ -209,6 +294,9 @@ function polygonToFace(poly: Pt2[], pl: Plane): OperationResult<Face> {
   const wireResult = makeWireFromEdges(edges);
   if (!wireResult.success) return failure(`Wire creation failed: ${wireResult.error}`);
 
+  if (sourceSurface) {
+    return makeFace(sourceSurface, wireResult.result!);
+  }
   return makePlanarFace(wireResult.result!);
 }
 
@@ -360,36 +448,40 @@ export function booleanOperation(
 
       if (op === 'union') {
         if (sameNormal) {
-          // "A on B, same normal" → keep one. We'll keep A and skip B later.
+          // "A on B, same normal" → keep A whole, skip B's copy later
           allFacesA.push({ face: faceA, classification: 'on' });
         } else {
           // "A on B, opposite normal" → discard both (internal face)
-          // Don't add faceA
         }
       } else if (op === 'subtract') {
         if (sameNormal) {
-          // Keep A's portion outside B (A - overlap)
-          // The non-overlapping part of A
-          // For simplicity with convex faces: if overlap is total, discard A
-          const areaA = Math.abs(polygonArea2D(polyA));
-          if (intersectionArea / areaA > 0.99) {
-            // Almost completely overlapping → discard A
-          } else {
-            allFacesA.push({ face: faceA, classification: 'outside' });
+          // Keep A's portion OUTSIDE B (A \ overlap)
+          const diffFragments = polygonDifference(polyA, polyB);
+          const originalCW = faceIsCW(faceA, planeA);
+          for (const frag of diffFragments) {
+            // Restore original winding direction
+            const oriented = originalCW ? [...frag].reverse() : frag;
+            const fragFace = polygonToFace(oriented, planeA);
+            if (fragFace.success) {
+              allFacesA.push({ face: fragFace.result!, classification: 'outside' });
+            }
           }
+          // Also need the intersection region with flipped normal (it becomes
+          // part of the cavity boundary). This is handled by B's inside faces.
         } else {
           // "A on B, opposite normal" → keep A
           allFacesA.push({ face: faceA, classification: 'outside' });
         }
       } else { // intersect
         if (sameNormal) {
-          // Keep the intersection region
-          const intFaceResult = polygonToFace(intersection, planeA);
+          // Keep the intersection region, preserving original winding
+          const originalCW = faceIsCW(faceA, planeA);
+          const oriented = originalCW ? [...intersection].reverse() : intersection;
+          const intFaceResult = polygonToFace(oriented, planeA);
           if (intFaceResult.success) {
             allFacesA.push({ face: intFaceResult.result!, classification: 'inside' });
           }
         }
-        // opposite normal → discard
       }
 
       wasCoplanarSplit = true;
@@ -432,12 +524,28 @@ export function booleanOperation(
       if (op === 'union') {
         if (sameNormal) {
           // "B on A, same normal" → skip (A's copy is kept)
+          // But keep B's non-overlapping portion
+          const diffFragments = polygonDifference(polyB, polyA);
+          const originalCWb = faceIsCW(faceB, planeB);
+          for (const frag of diffFragments) {
+            const oriented = originalCWb ? [...frag].reverse() : frag;
+            const fragFace = polygonToFace(oriented, planeB);
+            if (fragFace.success) {
+              allFacesB.push({ face: fragFace.result!, classification: 'outside' });
+            }
+          }
         } else {
           // "B on A, opposite normal" → discard
         }
       } else if (op === 'subtract') {
         if (sameNormal) {
-          // Skip — A already handles this
+          // For subtract: the overlap region of B becomes the cavity floor/ceiling.
+          const originalCWbs = faceIsCW(faceB, planeB);
+          const orientedInt = originalCWbs ? [...intersection].reverse() : intersection;
+          const intFace = polygonToFace(orientedInt, planeB);
+          if (intFace.success) {
+            allFacesB.push({ face: intFace.result!, classification: 'inside' });
+          }
         } else {
           // "B on A, opposite normal" → discard
         }

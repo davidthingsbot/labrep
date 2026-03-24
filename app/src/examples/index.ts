@@ -36,4 +36,5 @@ export { ExtrudeStepExample } from './ExtrudeStepExample';
 export { RevolveStepExample } from './RevolveStepExample';
 export { SketchOnFaceStepExample } from './SketchOnFaceStepExample';
 export { BooleanBasicExample } from './BooleanBasicExample';
+export { BooleanShapesExample } from './BooleanShapesExample';
 export { BooleanStepExample } from './BooleanStepExample';
