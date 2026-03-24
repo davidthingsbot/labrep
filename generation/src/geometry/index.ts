@@ -71,5 +71,20 @@ export {
 } from './arc3d';
 
 export {
+  type ArcInterval,
+  type ClipCircle,
+  clipCircleByHalfSpaces,
+} from './clip-curve';
+
+export {
   intersectPlanePlane,
+  intersectPlaneSphere,
+  intersectPlaneCylinder,
+  intersectPlaneCone,
+  type PlaneSphereResult,
+  type PlaneCylinderResult,
+  type PlaneConeResult,
+  type PlaneCircleIntersection,
+  type PlaneEllipseIntersection,
+  type PlaneLinesIntersection,
 } from './intersections3d';

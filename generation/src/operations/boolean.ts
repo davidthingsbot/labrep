@@ -1,9 +1,6 @@
 import {
   Point3D,
   point3d,
-  Point2D,
-  point2d,
-  Vector3D,
   vec3d,
   Plane,
   plane,
@@ -21,15 +18,16 @@ import {
   intersects as bboxIntersects,
 } from '../core';
 import { OperationResult, success, failure } from '../mesh/mesh';
-import { Line3D, makeLine3D } from '../geometry/line3d';
-import { intersectPlanePlane } from '../geometry/intersections3d';
+import { makeLine3D } from '../geometry/line3d';
+import { intersectPlanePlane, intersectPlaneSphere, intersectPlaneCylinder, intersectPlaneCone } from '../geometry/intersections3d';
 import { Edge, makeEdgeFromCurve, edgeStartPoint, edgeEndPoint } from '../topology/edge';
 import { Wire, OrientedEdge, orientEdge, makeWire, makeWireFromEdges } from '../topology/wire';
-import { Face, makeFace, makePlanarFace, faceOuterWire } from '../topology/face';
+import { Face, Surface, makeFace, makePlanarFace, faceOuterWire } from '../topology/face';
 import { Shell, makeShell, shellIsClosed, shellFaces } from '../topology/shell';
 import { Solid, makeSolid, solidVolume } from '../topology/solid';
 import { PlaneSurface, makePlaneSurface } from '../surfaces';
 import { pointInSolid } from './point-in-solid';
+import { trimCurvedFaceByPlanes } from './trim-curved-face';
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -300,14 +298,13 @@ function polygonToFace(poly: Pt2[], pl: Plane, sourceSurface?: PlaneSurface): Op
   return makePlanarFace(wireResult.result!);
 }
 
-/** Flip a face's normal (reverse wire, negate surface normal) */
+/**
+ * Flip a face's normal by reversing the wire winding.
+ * For planar faces: also negates the surface normal.
+ * For curved faces: reverses wire winding; the tessellator uses wire winding
+ * to determine normal direction via triangle orientation.
+ */
 function flipFace(face: Face): OperationResult<Face> {
-  if (face.surface.type !== 'plane') return failure('flipFace only supports planar faces');
-
-  const p = face.surface.plane;
-  const flippedPlane = plane(p.origin, vec3d(-p.normal.x, -p.normal.y, -p.normal.z), p.xAxis);
-  const flippedSurface = makePlaneSurface(flippedPlane);
-
   const reversedEdges: OrientedEdge[] = [];
   for (let i = face.outerWire.edges.length - 1; i >= 0; i--) {
     const oe = face.outerWire.edges[i];
@@ -317,7 +314,78 @@ function flipFace(face: Face): OperationResult<Face> {
   const wireResult = makeWire(reversedEdges);
   if (!wireResult.success) return failure(`Failed to reverse wire: ${wireResult.error}`);
 
-  return makeFace(flippedSurface, wireResult.result!);
+  if (face.surface.type === 'plane') {
+    const p = face.surface.plane;
+    const flippedPlane = plane(p.origin, vec3d(-p.normal.x, -p.normal.y, -p.normal.z), p.xAxis);
+    const flippedSurface = makePlaneSurface(flippedPlane);
+    return makeFace(flippedSurface, wireResult.result!);
+  }
+
+  // For curved surfaces, keep the surface as-is but with reversed wire.
+  // The reversed wire winding produces correctly-oriented triangles during tessellation.
+  return makeFace(face.surface, wireResult.result!);
+}
+
+// ═══════════════════════════════════════════════════════
+// PLANE-CURVED SURFACE HELPERS
+// ═══════════════════════════════════════════════════════
+
+/**
+ * Intersect a plane with a curved surface, returning circle info if applicable.
+ * Only handles circle intersections (the common case for booleans).
+ */
+function intersectPlaneWithCurvedSurface(
+  pl: Plane,
+  surface: Surface,
+): { center: Point3D; radius: number; normal: { x: number; y: number; z: number } } | null {
+  if (surface.type === 'sphere') {
+    const result = intersectPlaneSphere(pl, surface);
+    if (!result.success || !result.result) return null;
+    return result.result;
+  }
+  if (surface.type === 'cylinder') {
+    const result = intersectPlaneCylinder(pl, surface);
+    if (!result.success || !result.result || result.result.type !== 'circle') return null;
+    return result.result;
+  }
+  if (surface.type === 'cone') {
+    const result = intersectPlaneCone(pl, surface);
+    if (!result.success || !result.result || result.result.type !== 'circle') return null;
+    return result.result;
+  }
+  return null;
+}
+
+/**
+ * Approximate a 3D circle as a 2D polygon on a given plane.
+ * The circle is projected onto the plane's local 2D coordinate system.
+ */
+function circleToPolygon2D(
+  facePlane: Plane,
+  circleCenter: Point3D,
+  circleRadius: number,
+  circleNormal: { x: number; y: number; z: number },
+  segments: number,
+): Pt2[] {
+  // Build a coordinate system for the circle
+  const n = normalize(vec3d(circleNormal.x, circleNormal.y, circleNormal.z));
+  let xRef = cross(n, vec3d(0, 0, 1));
+  if (length(xRef) < 1e-6) xRef = cross(n, vec3d(1, 0, 0));
+  const xAxis = normalize(xRef);
+  const yAxis = normalize(cross(n, xAxis));
+
+  const pts: Pt2[] = [];
+  for (let i = 0; i < segments; i++) {
+    const angle = (2 * Math.PI * i) / segments;
+    const c = Math.cos(angle), s = Math.sin(angle);
+    const pt3d = point3d(
+      circleCenter.x + circleRadius * (c * xAxis.x + s * yAxis.x),
+      circleCenter.y + circleRadius * (c * xAxis.y + s * yAxis.y),
+      circleCenter.z + circleRadius * (c * xAxis.z + s * yAxis.z),
+    );
+    pts.push(worldToSketch(facePlane, pt3d));
+  }
+  return pts;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -325,6 +393,7 @@ function flipFace(face: Face): OperationResult<Face> {
 // ═══════════════════════════════════════════════════════
 
 const COPLANAR_TOL = 1e-5;
+const NUDGE_EPS = 1e-4;
 
 /** Check if two planar faces are coplanar */
 function areFacesCoplanar(faceA: Face, faceB: Face): boolean {
@@ -369,8 +438,26 @@ function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on
   const centroid = point3d(cx / n, cy / n, cz / n);
 
   // Nudge slightly along face normal to avoid "on" classification
+  let normal: { x: number; y: number; z: number } | null = null;
   if (face.surface.type === 'plane') {
-    const normal = face.surface.plane.normal;
+    normal = face.surface.plane.normal;
+  } else if (face.surface.type === 'sphere') {
+    // For a sphere, the outward normal at the centroid points radially from center
+    const s = face.surface;
+    const dx = centroid.x - s.center.x, dy = centroid.y - s.center.y, dz = centroid.z - s.center.z;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (len > 1e-10) normal = { x: dx / len, y: dy / len, z: dz / len };
+  } else if (face.surface.type === 'cylinder') {
+    // Radial outward from axis
+    const s = face.surface;
+    const rel = { x: centroid.x - s.axis.origin.x, y: centroid.y - s.axis.origin.y, z: centroid.z - s.axis.origin.z };
+    const axComp = rel.x * s.axis.direction.x + rel.y * s.axis.direction.y + rel.z * s.axis.direction.z;
+    const radial = { x: rel.x - axComp * s.axis.direction.x, y: rel.y - axComp * s.axis.direction.y, z: rel.z - axComp * s.axis.direction.z };
+    const rLen = Math.sqrt(radial.x ** 2 + radial.y ** 2 + radial.z ** 2);
+    if (rLen > 1e-10) normal = { x: radial.x / rLen, y: radial.y / rLen, z: radial.z / rLen };
+  }
+
+  if (normal) {
     const nudged = point3d(
       centroid.x + normal.x * 1e-6,
       centroid.y + normal.y * 1e-6,
@@ -381,6 +468,43 @@ function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on
   }
 
   return pointInSolid(centroid, otherSolid);
+}
+
+/**
+ * Check if a face's outward normal (relative to its own solid) points into another solid.
+ *
+ * Used to detect interior coplanar faces: if face A's outward normal points into B,
+ * then the coplanar overlap region is interior to A ∪ B and should be discarded.
+ */
+function faceOutwardPointsInto(face: Face, ownSolid: Solid, otherSolid: Solid): boolean {
+  if (face.surface.type !== 'plane') return false;
+
+  const wire = face.outerWire;
+  let cx = 0, cy = 0, cz = 0, n = 0;
+  for (const oe of wire.edges) {
+    const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    cx += pt.x; cy += pt.y; cz += pt.z; n++;
+  }
+  if (n === 0) return false;
+
+  const normal = face.surface.plane.normal;
+  const nudgePos = point3d(
+    cx / n + normal.x * NUDGE_EPS,
+    cy / n + normal.y * NUDGE_EPS,
+    cz / n + normal.z * NUDGE_EPS,
+  );
+  const nudgeNeg = point3d(
+    cx / n - normal.x * NUDGE_EPS,
+    cy / n - normal.y * NUDGE_EPS,
+    cz / n - normal.z * NUDGE_EPS,
+  );
+
+  // Determine outward direction: the one that goes outside the face's own solid
+  const posInOwn = pointInSolid(nudgePos, ownSolid);
+  const outwardIsPositive = posInOwn !== 'inside';
+  const outwardPt = outwardIsPositive ? nudgePos : nudgeNeg;
+
+  return pointInSolid(outwardPt, otherSolid) === 'inside';
 }
 
 // ═══════════════════════════════════════════════════════
@@ -423,7 +547,15 @@ export function booleanOperation(
   // Process faces of A
   for (const faceA of facesOfA) {
     if (faceA.surface.type !== 'plane') {
-      allFacesA.push({ face: faceA, classification: classifyFace(faceA, b) });
+      // Try to trim curved face by B's planar faces
+      const trimResult = trimCurvedFaceByPlanes(faceA, b);
+      if (trimResult.success && trimResult.result) {
+        // Trimmed face — classify the trimmed version
+        allFacesA.push({ face: trimResult.result, classification: classifyFace(trimResult.result, b) });
+      } else {
+        // No trimming possible — classify whole face
+        allFacesA.push({ face: faceA, classification: classifyFace(faceA, b) });
+      }
       continue;
     }
 
@@ -448,8 +580,23 @@ export function booleanOperation(
 
       if (op === 'union') {
         if (sameNormal) {
-          // "A on B, same normal" → keep A whole, skip B's copy later
-          allFacesA.push({ face: faceA, classification: 'on' });
+          // Check if the coplanar overlap is interior to the union
+          // (A's outward normal points into B → overlap is internal)
+          if (faceOutwardPointsInto(faceA, a, b)) {
+            // Interior overlap — keep only A's non-overlapping portion
+            const diffFragments = polygonDifference(polyA, polyB);
+            const originalCW = faceIsCW(faceA, planeA);
+            for (const frag of diffFragments) {
+              const oriented = originalCW ? [...frag].reverse() : frag;
+              const fragFace = polygonToFace(oriented, planeA, faceA.surface as PlaneSurface);
+              if (fragFace.success) {
+                allFacesA.push({ face: fragFace.result!, classification: 'outside' });
+              }
+            }
+          } else {
+            // Boundary overlap — keep A whole, B will keep only B\A
+            allFacesA.push({ face: faceA, classification: 'on' });
+          }
         } else {
           // "A on B, opposite normal" → discard both (internal face)
         }
@@ -502,7 +649,13 @@ export function booleanOperation(
   // Process faces of B (same logic, swapped)
   for (const faceB of facesOfB) {
     if (faceB.surface.type !== 'plane') {
-      allFacesB.push({ face: faceB, classification: classifyFace(faceB, a) });
+      // Try to trim curved face by A's planar faces
+      const trimResult = trimCurvedFaceByPlanes(faceB, a);
+      if (trimResult.success && trimResult.result) {
+        allFacesB.push({ face: trimResult.result, classification: classifyFace(trimResult.result, a) });
+      } else {
+        allFacesB.push({ face: faceB, classification: classifyFace(faceB, a) });
+      }
       continue;
     }
 
@@ -601,27 +754,144 @@ export function booleanOperation(
     }
   }
 
-  if (selectedFaces.length < 4) {
-    return failure(`Boolean ${op} produced only ${selectedFaces.length} faces (A: ${allFacesA.map(f => f.classification).join(',')}, B: ${allFacesB.map(f => f.classification).join(',')}) — result is degenerate`);
+  if (selectedFaces.length < 2) {
+    return failure(`Boolean ${op} produced only ${selectedFaces.length} faces — result is degenerate`);
   }
 
-  // Stage 5: Assemble
-  const shellResult = makeShell(selectedFaces);
+  // Stage 5: Stitch edges so adjacent faces share vertices, then assemble
+  const stitched = stitchEdges(selectedFaces);
+
+  const shellResult = makeShell(stitched);
   if (!shellResult.success) return failure(`Shell creation failed: ${shellResult.error}`);
 
-  // Try creating a proper solid (requires closed shell)
-  let solid: Solid;
   const solidResult = makeSolid(shellResult.result!);
-  if (solidResult.success) {
-    solid = solidResult.result!;
-  } else {
-    // Shell isn't closed — common for boolean results where split faces
-    // don't perfectly share edges. Create solid anyway by using the shell
-    // as-is. Volume computation still works via divergence theorem.
-    solid = { outerShell: shellResult.result!, innerShells: [] };
+  if (!solidResult.success) {
+    return failure(`Solid creation failed (shell not closed): ${solidResult.error}`);
   }
 
-  return success({ solid, facesFromA, facesFromB });
+  return success({
+    solid: solidResult.result!,
+    facesFromA,
+    facesFromB,
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// EDGE STITCHING
+// ═══════════════════════════════════════════════════════
+
+const STITCH_TOL = 1e-6;
+
+/**
+ * Ensure adjacent faces share edges by splitting edges at intermediate vertices.
+ *
+ * After boolean face splitting and selection, face A's bottom might have a long
+ * edge (-2,-2,0)→(-2,2,0) while an adjacent split side face has a shorter edge
+ * (-2,-1,0)→(-2,-2,0). The bottom face's edge must be split at (-2,-1,0) so the
+ * two faces share that sub-edge.
+ */
+function stitchEdges(faces: Face[]): Face[] {
+  // Collect all unique vertices from all faces
+  const allVerts: Point3D[] = [];
+  for (const face of faces) {
+    for (const oe of face.outerWire.edges) {
+      pushUnique(allVerts, edgeStartPoint(oe.edge));
+      pushUnique(allVerts, edgeEndPoint(oe.edge));
+    }
+  }
+
+  const result: Face[] = [];
+  for (const face of faces) {
+    const splitEdges: Edge[] = [];
+    let anySplit = false;
+
+    for (const oe of face.outerWire.edges) {
+      const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+
+      const dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z;
+      const lenSq = dx * dx + dy * dy + dz * dz;
+      if (lenSq < STITCH_TOL * STITCH_TOL) {
+        // Degenerate edge — keep as-is
+        splitEdges.push(oe.edge);
+        continue;
+      }
+
+      // Find vertices that lie strictly between start and end on this edge
+      const intermediates: { t: number; pt: Point3D }[] = [];
+      for (const v of allVerts) {
+        if (distance(v, start) < STITCH_TOL || distance(v, end) < STITCH_TOL) continue;
+
+        // Project v onto the edge line
+        const vx = v.x - start.x, vy = v.y - start.y, vz = v.z - start.z;
+        const t = (vx * dx + vy * dy + vz * dz) / lenSq;
+        if (t < STITCH_TOL || t > 1 - STITCH_TOL) continue;
+
+        // Check perpendicular distance
+        const px = start.x + t * dx - v.x;
+        const py = start.y + t * dy - v.y;
+        const pz = start.z + t * dz - v.z;
+        if (Math.sqrt(px * px + py * py + pz * pz) > STITCH_TOL) continue;
+
+        intermediates.push({ t, pt: v });
+      }
+
+      if (intermediates.length === 0) {
+        splitEdges.push(oe.edge);
+        continue;
+      }
+
+      // Sort by parameter and create sub-edges
+      anySplit = true;
+      intermediates.sort((a, b) => a.t - b.t);
+
+      let current = start;
+      for (const inter of intermediates) {
+        const lineRes = makeLine3D(current, inter.pt);
+        if (lineRes.success) {
+          const edgeRes = makeEdgeFromCurve(lineRes.result!);
+          if (edgeRes.success) splitEdges.push(edgeRes.result!);
+        }
+        current = inter.pt;
+      }
+      const lineRes = makeLine3D(current, end);
+      if (lineRes.success) {
+        const edgeRes = makeEdgeFromCurve(lineRes.result!);
+        if (edgeRes.success) splitEdges.push(edgeRes.result!);
+      }
+    }
+
+    if (!anySplit) {
+      result.push(face);
+      continue;
+    }
+
+    // Rebuild face with split edges
+    const wireRes = makeWireFromEdges(splitEdges);
+    if (!wireRes.success) {
+      result.push(face); // Fallback
+      continue;
+    }
+
+    const faceRes = face.surface.type === 'plane'
+      ? makeFace(face.surface as PlaneSurface, wireRes.result!)
+      : makePlanarFace(wireRes.result!);
+    if (faceRes.success) {
+      result.push(faceRes.result!);
+    } else {
+      result.push(face);
+    }
+  }
+
+  return result;
+}
+
+/** Push a point into an array only if no existing point is within STITCH_TOL. */
+function pushUnique(arr: Point3D[], pt: Point3D): void {
+  for (const existing of arr) {
+    if (distance(existing, pt) < STITCH_TOL) return;
+  }
+  arr.push(pt);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -630,203 +900,122 @@ export function booleanOperation(
 
 /**
  * Split a planar face by all faces of another solid (transverse intersections only).
+ *
+ * Uses progressive 2D line splitting: for each non-coplanar face of the other solid,
+ * compute the plane-plane intersection line, project it to the face's 2D coordinate
+ * system, and split all current polygon fragments along that line. This is robust
+ * because splitPolygonByLine always works when the line crosses the polygon (no
+ * requirement for exactly 2 boundary hits from a finite segment).
+ *
+ * After splitting, fragments are converted back to faces. Each fragment's centroid
+ * is then classified by the caller using pointInSolid.
  */
 function splitFaceByAllFaces(face: Face, otherFaces: readonly Face[]): Face[] {
   if (face.surface.type !== 'plane') return [face];
 
-  let currentFaces: Face[] = [face];
+  const pl = face.surface.plane;
+  let fragments: Pt2[][] = [faceToPolygon2D(face, pl)];
+  const originalCW = faceIsCW(face, pl);
 
   for (const otherFace of otherFaces) {
-    if (otherFace.surface.type !== 'plane') continue;
-    if (areFacesCoplanar(face, otherFace)) continue; // Skip coplanar (handled separately)
+    if (otherFace.surface.type === 'plane') {
+      if (areFacesCoplanar(face, otherFace)) continue;
 
-    const bboxA = boundingBoxFromFace(face);
-    const bboxB = boundingBoxFromFace(otherFace);
-    if (!bboxIntersects(bboxA, bboxB)) continue;
+      // Compute plane-plane intersection → 3D line
+      const lineResult = intersectPlanePlane(pl, otherFace.surface.plane);
+      if (!lineResult.success || !lineResult.result) continue;
 
-    // Compute plane-plane intersection
-    const lineResult = intersectPlanePlane(face.surface.plane, otherFace.surface.plane);
-    if (!lineResult.success || !lineResult.result) continue;
+      const intLine = lineResult.result;
 
-    const intLine = lineResult.result;
+      // Project the 3D intersection line to 2D on the face's plane
+      const lineOrigin2d = worldToSketch(pl, intLine.origin);
+      const lineFar3d = point3d(
+        intLine.origin.x + intLine.direction.x,
+        intLine.origin.y + intLine.direction.y,
+        intLine.origin.z + intLine.direction.z,
+      );
+      const lineFar2d = worldToSketch(pl, lineFar3d);
 
-    // Clip intersection line to the other face's boundary
-    const segments = clipLineToFace(intLine, otherFace);
-    if (segments.length === 0) continue;
+      // Split all current fragments by this infinite line
+      const nextFragments: Pt2[][] = [];
+      for (const frag of fragments) {
+        const [inside, outside] = splitPolygonByLine(frag, lineOrigin2d, lineFar2d);
+        if (inside.length >= 3) nextFragments.push(inside);
+        if (outside.length >= 3) nextFragments.push(outside);
+      }
+      if (nextFragments.length > 0) {
+        fragments = nextFragments;
+      }
+    } else {
+      // Curved surface: compute plane-surface intersection → circle/ellipse
+      // Project to 2D on the face's plane as a high-resolution polygon, then clip
+      const circleIntersection = intersectPlaneWithCurvedSurface(pl, otherFace.surface);
+      if (!circleIntersection) continue;
 
-    // Try splitting each current face by each segment
-    const nextFaces: Face[] = [];
-    for (const cf of currentFaces) {
-      let wasSplit = false;
-      for (const seg of segments) {
-        if (wasSplit) break;
-        const splitResult = splitPlanarFaceBySegment(cf, seg.start, seg.end);
-        if (splitResult.success) {
-          nextFaces.push(splitResult.result![0], splitResult.result![1]);
-          wasSplit = true;
+      // Approximate the circle as splitting lines through the face.
+      // Instead of polygon clipping (which can't compute the exterior of a circle),
+      // we split by the bounding-box edges of the circle, which partitions the
+      // face into regions that classifyFace can then label correctly.
+      const circleIntersection2D = worldToSketch(pl, circleIntersection.center);
+      const cr = circleIntersection.radius;
+
+      // Split by 4 tangent lines of the circle (axis-aligned bounding box)
+      // This creates fragments that are clearly inside or outside the circle
+      const tangentLines: [Pt2, Pt2][] = [
+        [{ x: circleIntersection2D.x - cr, y: -1000 }, { x: circleIntersection2D.x - cr, y: 1000 }], // left tangent
+        [{ x: circleIntersection2D.x + cr, y: 1000 }, { x: circleIntersection2D.x + cr, y: -1000 }], // right tangent
+        [{ x: -1000, y: circleIntersection2D.y - cr }, { x: 1000, y: circleIntersection2D.y - cr }], // bottom tangent
+        [{ x: 1000, y: circleIntersection2D.y + cr }, { x: -1000, y: circleIntersection2D.y + cr }], // top tangent
+      ];
+
+      for (const [lineStart, lineEnd] of tangentLines) {
+        const nextFragments: Pt2[][] = [];
+        for (const frag of fragments) {
+          const [inside, outside] = splitPolygonByLine(frag, lineStart, lineEnd);
+          if (inside.length >= 3) nextFragments.push(inside);
+          if (outside.length >= 3) nextFragments.push(outside);
+        }
+        if (nextFragments.length > 0) {
+          fragments = nextFragments;
         }
       }
-      if (!wasSplit) nextFaces.push(cf);
-    }
-    currentFaces = nextFaces;
-  }
 
-  return currentFaces;
-}
-
-/**
- * Clip an infinite line to a planar face's boundary.
- */
-function clipLineToFace(
-  line: Line3D,
-  face: Face,
-): { start: Point3D; end: Point3D }[] {
-  if (face.surface.type !== 'plane') return [];
-
-  const pl = face.surface.plane;
-  const polygon = faceToPolygon2D(face, pl);
-
-  // Project line to 2D
-  const lineOrigin2d = worldToSketch(pl, line.origin);
-  const lineFar3d = point3d(
-    line.origin.x + line.direction.x * 200,
-    line.origin.y + line.direction.y * 200,
-    line.origin.z + line.direction.z * 200,
-  );
-  const lineNegFar3d = point3d(
-    line.origin.x - line.direction.x * 200,
-    line.origin.y - line.direction.y * 200,
-    line.origin.z - line.direction.z * 200,
-  );
-  const lineFar2d = worldToSketch(pl, lineFar3d);
-  const lineNeg2d = worldToSketch(pl, lineNegFar3d);
-
-  // Find intersections of the line with polygon edges
-  const hits: { t: number; pt: Pt2 }[] = [];
-  const dx = lineFar2d.x - lineNeg2d.x;
-  const dy = lineFar2d.y - lineNeg2d.y;
-
-  for (let i = 0; i < polygon.length; i++) {
-    const j = (i + 1) % polygon.length;
-    const ex = polygon[j].x - polygon[i].x;
-    const ey = polygon[j].y - polygon[i].y;
-    const denom = dx * ey - dy * ex;
-    if (Math.abs(denom) < 1e-12) continue;
-
-    const tLine = ((polygon[i].x - lineNeg2d.x) * ey - (polygon[i].y - lineNeg2d.y) * ex) / denom;
-    const tEdge = ((polygon[i].x - lineNeg2d.x) * dy - (polygon[i].y - lineNeg2d.y) * dx) / denom;
-
-    if (tEdge >= -1e-8 && tEdge <= 1 + 1e-8) {
-      const ptx = lineNeg2d.x + tLine * dx;
-      const pty = lineNeg2d.y + tLine * dy;
-      hits.push({ t: tLine, pt: { x: ptx, y: pty } });
+      // Also split by diagonal tangent lines for better resolution
+      const diag = cr * Math.SQRT1_2;
+      const cx2d = circleIntersection2D.x, cy2d = circleIntersection2D.y;
+      const diagLines: [Pt2, Pt2][] = [
+        [{ x: cx2d - diag, y: cy2d - diag - 1000 }, { x: cx2d + diag + 1000, y: cy2d + diag }],
+        [{ x: cx2d + diag, y: cy2d - diag - 1000 }, { x: cx2d - diag - 1000, y: cy2d + diag }],
+      ];
+      for (const [lineStart, lineEnd] of diagLines) {
+        const nextFragments: Pt2[][] = [];
+        for (const frag of fragments) {
+          const [inside, outside] = splitPolygonByLine(frag, lineStart, lineEnd);
+          if (inside.length >= 3) nextFragments.push(inside);
+          if (outside.length >= 3) nextFragments.push(outside);
+        }
+        if (nextFragments.length > 0) {
+          fragments = nextFragments;
+        }
+      }
     }
   }
 
-  hits.sort((a, b) => a.t - b.t);
+  // If no splits happened, return the original face
+  if (fragments.length <= 1) return [face];
 
-  // Deduplicate close hits
-  const deduped: typeof hits = [];
-  for (const h of hits) {
-    if (deduped.length === 0 || Math.abs(h.t - deduped[deduped.length - 1].t) > 1e-8) {
-      deduped.push(h);
+  // Convert 2D fragments back to 3D faces
+  const result: Face[] = [];
+  for (const frag of fragments) {
+    // Restore original winding direction (faceToPolygon2D always returns CCW)
+    const oriented = originalCW ? [...frag].reverse() : frag;
+    const fragFace = polygonToFace(oriented, pl, face.surface as PlaneSurface);
+    if (fragFace.success) {
+      result.push(fragFace.result!);
     }
   }
 
-  // Pair up entry/exit points
-  const segments: { start: Point3D; end: Point3D }[] = [];
-  for (let i = 0; i + 1 < deduped.length; i += 2) {
-    const start3d = sketchToWorld(pl, point2d(deduped[i].pt.x, deduped[i].pt.y));
-    const end3d = sketchToWorld(pl, point2d(deduped[i + 1].pt.x, deduped[i + 1].pt.y));
-    if (distance(start3d, end3d) > 1e-8) {
-      segments.push({ start: start3d, end: end3d });
-    }
-  }
-
-  return segments;
-}
-
-/**
- * Split a planar face along a line segment.
- */
-function splitPlanarFaceBySegment(
-  face: Face,
-  splitStart: Point3D,
-  splitEnd: Point3D,
-): OperationResult<[Face, Face]> {
-  if (face.surface.type !== 'plane') return failure('Not a planar face');
-
-  const pl = face.surface.plane;
-  const polygon = faceToPolygon2D(face, pl);
-  const s2d = worldToSketch(pl, splitStart);
-  const e2d = worldToSketch(pl, splitEnd);
-
-  // Find where the split segment intersects the polygon boundary
-  const dx = e2d.x - s2d.x, dy = e2d.y - s2d.y;
-  const segLen = Math.sqrt(dx * dx + dy * dy);
-  if (segLen < 1e-10) return failure('Split segment too short');
-
-  type Hit = { tSeg: number; edgeIdx: number; pt: Pt2 };
-  const hits: Hit[] = [];
-
-  for (let i = 0; i < polygon.length; i++) {
-    const j = (i + 1) % polygon.length;
-    const ex = polygon[j].x - polygon[i].x;
-    const ey = polygon[j].y - polygon[i].y;
-    const denom = dx * ey - dy * ex;
-    if (Math.abs(denom) < 1e-12) continue;
-
-    const tSeg = ((polygon[i].x - s2d.x) * ey - (polygon[i].y - s2d.y) * ex) / denom;
-    const tEdge = ((polygon[i].x - s2d.x) * dy - (polygon[i].y - s2d.y) * dx) / denom;
-
-    if (tEdge >= -1e-6 && tEdge <= 1 + 1e-6 && tSeg >= -1e-6 && tSeg <= 1 + 1e-6) {
-      const pt = { x: s2d.x + tSeg * dx, y: s2d.y + tSeg * dy };
-      hits.push({ tSeg, edgeIdx: i, pt });
-    }
-  }
-
-  // Deduplicate
-  const deduped: Hit[] = [];
-  for (const h of hits) {
-    if (!deduped.some(d => Math.abs(d.tSeg - h.tSeg) < 1e-6)) {
-      deduped.push(h);
-    }
-  }
-
-  if (deduped.length !== 2) {
-    return failure(`Split line hits ${deduped.length} boundary points (need 2)`);
-  }
-
-  deduped.sort((a, b) => a.edgeIdx !== b.edgeIdx ? a.edgeIdx - b.edgeIdx : a.tSeg - b.tSeg);
-
-  const hit0 = deduped[0];
-  const hit1 = deduped[1];
-
-  // Build two sub-polygons
-  const buildSubPoly = (startHit: Hit, endHit: Hit): Pt2[] => {
-    const poly: Pt2[] = [startHit.pt];
-    let idx = (startHit.edgeIdx + 1) % polygon.length;
-    const endIdx = (endHit.edgeIdx + 1) % polygon.length;
-    let safety = 0;
-    while (idx !== endIdx && safety < polygon.length + 2) {
-      poly.push(polygon[idx]);
-      idx = (idx + 1) % polygon.length;
-      safety++;
-    }
-    poly.push(endHit.pt);
-    return poly;
-  };
-
-  const poly1 = buildSubPoly(hit0, hit1);
-  const poly2 = buildSubPoly(hit1, hit0);
-
-  const face1 = polygonToFace(poly1, pl);
-  const face2 = polygonToFace(poly2, pl);
-
-  if (!face1.success) return failure(`Sub-face 1: ${face1.error}`);
-  if (!face2.success) return failure(`Sub-face 2: ${face2.error}`);
-
-  return success([face1.result!, face2.result!]);
+  return result.length > 0 ? result : [face];
 }
 
 // ═══════════════════════════════════════════════════════

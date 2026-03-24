@@ -8,11 +8,16 @@ import {
   cross,
   worldToSketch,
   isZero,
+  distance,
+  subtractPoints,
 } from '../core';
 import { Solid } from '../topology/solid';
 import { shellFaces } from '../topology/shell';
-import { faceOuterWire, faceInnerWires } from '../topology/face';
+import { Face, faceOuterWire, faceInnerWires } from '../topology/face';
 import { edgeStartPoint, edgeEndPoint } from '../topology/edge';
+import type { SphericalSurface } from '../surfaces/spherical-surface';
+import type { CylindricalSurface } from '../surfaces/cylindrical-surface';
+import type { ConicalSurface } from '../surfaces/conical-surface';
 
 /**
  * Test whether a point is inside, outside, or on the boundary of a solid.
@@ -34,6 +39,10 @@ export function pointInSolid(
   const ON_TOL = 1e-6;
   let crossings = 0;
 
+  // Track unique spheres to avoid double-counting (a sphere split into 2+ faces
+  // is one geometric surface — the ray intersects it 0 or 2 times total)
+  const processedSpheres = new Set<string>();
+
   for (const face of shellFaces(solid.outerShell)) {
     const surface = face.surface;
 
@@ -41,9 +50,21 @@ export function pointInSolid(
       const result = rayIntersectsPlanarFace(pt, face.outerWire, surface.plane);
       if (result === 'on') return 'on';
       if (result === 'hit') crossings++;
+    } else if (surface.type === 'sphere') {
+      // Deduplicate: only test each sphere once regardless of how many faces it's split into
+      const key = `${surface.center.x},${surface.center.y},${surface.center.z},${surface.radius}`;
+      if (!processedSpheres.has(key)) {
+        processedSpheres.add(key);
+        crossings += rayIntersectsSphere(pt, surface);
+      }
+    } else if (surface.type === 'cylinder') {
+      const hits = rayIntersectsCylinder(pt, surface, face);
+      crossings += hits;
+    } else if (surface.type === 'cone') {
+      const hits = rayIntersectsCone(pt, surface, face);
+      crossings += hits;
     } else {
-      // For non-planar faces, approximate using wire boundary vertices
-      // as a polygon (rough approximation)
+      // For other non-planar faces, approximate using wire boundary vertices
       const result = rayIntersectsPolygonFace(pt, face);
       if (result === 'on') return 'on';
       if (result === 'hit') crossings++;
@@ -231,4 +252,119 @@ function pointOnPolygonBoundary2D(
     if (dist < tol) return true;
   }
   return false;
+}
+
+// ═══════════════════════════════════════════════════════
+// ANALYTIC RAY-SURFACE INTERSECTION
+// ═══════════════════════════════════════════════════════
+
+/**
+ * Count intersections of a +X ray from pt with a sphere.
+ * Ray: P(t) = pt + t*(1,0,0), t > 0
+ * Sphere: |P - center|² = r²
+ * Expanding: (pt.x + t - cx)² + (pt.y - cy)² + (pt.z - cz)² = r²
+ * → t² + 2*(pt.x - cx)*t + [(pt.x-cx)² + (pt.y-cy)² + (pt.z-cz)² - r²] = 0
+ */
+function rayIntersectsSphere(pt: Point3D, sphere: SphericalSurface): number {
+  const dx = pt.x - sphere.center.x;
+  const dy = pt.y - sphere.center.y;
+  const dz = pt.z - sphere.center.z;
+  const a = 1;
+  const b = 2 * dx;
+  const c = dx * dx + dy * dy + dz * dz - sphere.radius * sphere.radius;
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) return 0;
+
+  const sqrtD = Math.sqrt(discriminant);
+  const t1 = (-b - sqrtD) / 2;
+  const t2 = (-b + sqrtD) / 2;
+
+  let hits = 0;
+  if (t1 > 1e-8) hits++;
+  if (t2 > 1e-8) hits++;
+  return hits;
+}
+
+/**
+ * Count intersections of a +X ray with a cylinder.
+ * Only counts hits within the cylinder's axial extent (bounded by the face's wire).
+ */
+function rayIntersectsCylinder(pt: Point3D, cyl: CylindricalSurface, face: Face): number {
+  const ax = cyl.axis;
+  const r = cyl.radius;
+
+  // Ray direction is (1,0,0). Project everything perpendicular to cylinder axis.
+  // The cylinder equation in the plane perpendicular to axis:
+  // |P_perp - axisOrigin_perp|² = r²
+
+  // Vector from axis origin to ray origin
+  const ox = pt.x - ax.origin.x, oy = pt.y - ax.origin.y, oz = pt.z - ax.origin.z;
+
+  // Components of ray direction perpendicular to axis
+  const d = ax.direction;
+  const rayDotAxis = d.x; // dot((1,0,0), axis_dir)
+  const rayPerpX = 1 - rayDotAxis * d.x;
+  const rayPerpY = 0 - rayDotAxis * d.y;
+  const rayPerpZ = 0 - rayDotAxis * d.z;
+
+  // Components of offset perpendicular to axis
+  const oDotAxis = ox * d.x + oy * d.y + oz * d.z;
+  const oPerpX = ox - oDotAxis * d.x;
+  const oPerpY = oy - oDotAxis * d.y;
+  const oPerpZ = oz - oDotAxis * d.z;
+
+  // Quadratic: |oPerp + t*rayPerp|² = r²
+  const a = rayPerpX * rayPerpX + rayPerpY * rayPerpY + rayPerpZ * rayPerpZ;
+  const b = 2 * (oPerpX * rayPerpX + oPerpY * rayPerpY + oPerpZ * rayPerpZ);
+  const c = oPerpX * oPerpX + oPerpY * oPerpY + oPerpZ * oPerpZ - r * r;
+
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0 || a < 1e-12) return 0;
+
+  const sqrtD = Math.sqrt(discriminant);
+  const t1 = (-b - sqrtD) / (2 * a);
+  const t2 = (-b + sqrtD) / (2 * a);
+
+  // Check each hit is within the cylinder's axial extent
+  let hits = 0;
+  for (const t of [t1, t2]) {
+    if (t <= 1e-8) continue;
+    // Intersection point
+    const ix = pt.x + t, iy = pt.y, iz = pt.z;
+    // Axial position
+    const axialPos = (ix - ax.origin.x) * d.x + (iy - ax.origin.y) * d.y + (iz - ax.origin.z) * d.z;
+    // Check if within face's axial range (approximate from wire vertices)
+    if (isWithinFaceAxialRange(face, ax, axialPos)) {
+      hits++;
+    }
+  }
+  return hits;
+}
+
+/**
+ * Count intersections of a +X ray with a cone.
+ */
+function rayIntersectsCone(pt: Point3D, cone: ConicalSurface, face: Face): number {
+  // For simplicity, fall back to wire-polygon approximation for cones.
+  // Full analytic ray-cone is complex (apex handling, two nappes).
+  const result = rayIntersectsPolygonFace(pt, face);
+  return result === 'hit' ? 1 : 0;
+}
+
+/**
+ * Check if an axial position is within the face's axial extent.
+ * Examines wire vertex positions to determine the v-range.
+ */
+function isWithinFaceAxialRange(face: Face, ax: { origin: Point3D; direction: Vector3D }, axialPos: number): boolean {
+  let vMin = Infinity, vMax = -Infinity;
+  for (const oe of face.outerWire.edges) {
+    for (const p of [edgeStartPoint(oe.edge), edgeEndPoint(oe.edge)]) {
+      const v = (p.x - ax.origin.x) * ax.direction.x +
+                (p.y - ax.origin.y) * ax.direction.y +
+                (p.z - ax.origin.z) * ax.direction.z;
+      if (v < vMin) vMin = v;
+      if (v > vMax) vMax = v;
+    }
+  }
+  return axialPos >= vMin - 1e-6 && axialPos <= vMax + 1e-6;
 }

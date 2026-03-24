@@ -70,7 +70,17 @@ function wireVertices(face: Face): Point3D[] {
 function sampleWireForTessellation(face: Face, segments: number = 24): Point3D[] {
   const pts: Point3D[] = [];
 
+  // Detect seam edges: the same Edge appearing twice in the wire (forward + reversed).
+  // These form zero-width slits that don't contribute to the face boundary area.
+  // Skip them so the polygon represents only the real geometric boundary.
+  const edgeCounts = new Map<object, number>();
   for (const oe of face.outerWire.edges) {
+    edgeCounts.set(oe.edge, (edgeCounts.get(oe.edge) ?? 0) + 1);
+  }
+
+  for (const oe of face.outerWire.edges) {
+    if (edgeCounts.get(oe.edge)! > 1) continue; // Skip seam edges
+
     const curve = oe.edge.curve;
 
     if (curve.type === 'circle3d') {
@@ -221,6 +231,9 @@ function earClipTriangulate(pts: Point2D[]): number[] {
 function tessellatePlanarFace(face: Face): FaceTessellation | null {
   if (face.surface.type !== 'plane') return null;
 
+  const pl = face.surface.plane;
+  const n = pl.normal;
+
   // Check if any edge is curved — if so, use sampled wire
   const hasCurvedEdge = face.outerWire.edges.some(
     oe => oe.edge.curve.type === 'circle3d' || oe.edge.curve.type === 'arc3d'
@@ -228,9 +241,6 @@ function tessellatePlanarFace(face: Face): FaceTessellation | null {
 
   const verts = hasCurvedEdge ? sampleWireForTessellation(face) : wireVertices(face);
   if (verts.length < 3) return null;
-
-  const pl = face.surface.plane;
-  const n = pl.normal;
 
   // Project to 2D for ear clipping triangulation
   const pts2d = verts.map(v => worldToSketch(pl, v));

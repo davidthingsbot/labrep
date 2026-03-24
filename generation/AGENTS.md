@@ -18,6 +18,40 @@ Instructions for AI agents writing the labrep library.
 
 No exceptions. No "I'll add tests later." The test comes first.
 
+## No Deferred Work. No Ignored Failures.
+
+**NEVER leave broken things for later.** These patterns are strictly forbidden:
+
+- "Implement later" / "TODO: fix this" / "Decided to defer"
+- Skipping or `.skip()`-ing a failing test instead of fixing the code
+- Loose test tolerances that paper over wrong answers (e.g., ±13% "close enough")
+- Silently swallowing errors (e.g., producing an invalid result instead of failing)
+- Comments like "approximate — may have ~30% error"
+
+If a test fails, **fix the code until it passes**. If code produces wrong results, **fix the algorithm**. If you can't fix it right now, **say so and stop** — do not hide the problem behind a loose assertion or a TODO comment. Every workaround becomes permanent. Every ignored failure trains the next agent to accept broken output.
+
+## Research Before Implementing
+
+**Do not "first principles" everything.** Before writing complex geometric algorithms:
+
+1. **Read the OCCT source** in `library/opencascade/`. It solves these problems to a very high level. Understand the approach before writing your own version.
+2. **Search the web** for blog posts, papers, and open-source implementations. Surface-surface intersection, boolean operations, and tessellation are well-studied — leverage existing knowledge.
+3. **Read `background/`** for curated notes on algorithms, formats, and architecture.
+
+You are not inventing computational geometry from scratch. You are implementing known algorithms in TypeScript, guided by production-quality reference implementations.
+
+## Test Quality: No False Positives
+
+Tests must be **aggressive**, not ceremonial:
+
+- **Test edge cases and known trouble spots**, not just the happy path. For geometry: tangent configurations, degenerate inputs, near-tolerance values, axis-aligned and non-axis-aligned cases.
+- **Use tight tolerances.** If the expected answer is 92, assert `toBeCloseTo(92, 1)` — not `toBeGreaterThan(75)`.
+- **Test topology, not just volume.** Check shell closure, face counts, normal consistency — not just that a number looks roughly right.
+- **Vary inputs.** If all tests use the same two axis-aligned boxes, they prove nothing about the general case. Test different offsets, orientations, containment, touching, and non-overlapping configurations.
+- **Test the invariants.** For booleans: V(A) + V(B) = V(union) + V(intersect). For tessellation: triangle area sums to face area. These catch bugs that individual tests miss.
+
+A test suite that passes on broken code is worse than no tests — it gives false confidence.
+
 ## Code Standards
 
 ### TypeScript

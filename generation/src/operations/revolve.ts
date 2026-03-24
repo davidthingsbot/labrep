@@ -409,16 +409,6 @@ function generateFullRevolveFace(
     );
   } else {
     // End vertex is on axis (pole) — 3-edge face
-    // circle@start → seam (forward) → seam (reversed... no, we need to think)
-    // Actually: seam forward goes from start to end (pole)
-    // So: circle@start (forward) → seam (reversed: from pole to start) → seam (forward: start to pole)...
-    // Let me think again.
-    //
-    // The face wraps around. The boundary should be:
-    // seam (forward: start → end/pole) → seam (reversed: pole → start) → circle@start (reversed)
-    // No, that's wrong too. Let me follow the same pattern as startOnAxis but flipped:
-    //
-    // seam (forward: start → pole) → seam (reversed: pole → start) → circle@start (reversed)
     const startCircleResult = makeSweepEdge(startPt, ax, 0, 2 * Math.PI);
     if (!startCircleResult.success) {
       return failure('Failed to create sweep circle');

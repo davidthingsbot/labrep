@@ -43,6 +43,7 @@ import { MeshComplexExample } from './MeshComplexExample';
 import { BooleanBasicExample } from './BooleanBasicExample';
 import { BooleanShapesExample } from './BooleanShapesExample';
 import { BooleanStepExample } from './BooleanStepExample';
+// BooleanCurvedExample removed — requires Phase 13 (PCurve infrastructure) to work correctly
 
 /** All registered examples. */
 export const examples: Example[] = [
@@ -1167,6 +1168,7 @@ const stepText = writeStep(builder.build());
 const parsed = parseStep(stepText); // Round-trip!
 `,
   },
+  // "Boolean: Curved Shapes" example planned for Phase 13 (PCurve infrastructure)
 ];
 
 /** Get an example by its ID. */

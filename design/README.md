@@ -479,12 +479,12 @@ Features explicitly **out of scope** for initial development (may be added in la
 │  • Ellipse, parabola, hyperbola curves                          │
 │                                                                 │
 │  OPERATIONS (planned in future phases)                          │
-│  • Fillets/chamfers — Phase 14                                  │
-│  • Patterns — Phase 16                                          │
-│  • Mirror — Phase 17                                            │
-│  • Shell — Phase 18                                             │
-│  • Loft — Phase 19                                              │
-│  • Sweep — Phase 20                                             │
+│  • Fillets/chamfers — Phase 17                                  │
+│  • Patterns — Phase 18                                          │
+│  • Mirror — Phase 19                                            │
+│  • Shell — Phase 20                                             │
+│  • Loft — Phase 21                                              │
+│  • Sweep — Phase 22                                             │
 │                                                                 │
 │  DOMAIN-SPECIFIC (no current plans)                             │
 │  • Sheet metal features                                         │
@@ -999,9 +999,9 @@ Tests:
 
 ---
 
-### Phase 11: Boolean Operations + STEP
+### Phase 11: Boolean Operations (Planar) + STEP
 
-**Goal:** Combine solids (union, subtract, intersect).
+**Goal:** Combine planar solids (union, subtract, intersect).
 
 ```
 Functions:
@@ -1011,18 +1011,24 @@ Functions:
 
 Internals:
 ├── Stage 1: AABB overlap filtering
-├── Stage 2: Surface-surface intersection (analytic only)
-├── Stage 3: Face classification (ray casting)
-└── Stage 4: Face trimming and sewing
+├── Stage 2: Face splitting (plane-plane intersection, 2D polygon clipping)
+├── Stage 3: Face classification (ray casting, pointInSolid)
+├── Stage 4: Face selection per operation rules
+└── Stage 5: Edge stitching and shell assembly
 
 Tests:
-├── Box ∪ box (overlapping, touching, separate)
-├── Box - cylinder (through hole)
-├── Box ∩ box (intersection volume)
+├── Box ∪ box (overlapping, touching, separate, identical, stacked)
+├── Box ∩ box (Z-offset, B-inside-A, XY-only overlap)
+├── Box - box (volume consistency, inclusion-exclusion)
+├── Shell closure on all results
 └── STEP round-trip of boolean result
 ```
 
-**Exit Criteria:** Boolean operations work on analytic surfaces (plane, cylinder). NURBS excluded.
+**Exit Criteria:** Boolean operations work correctly for planar-face solids (extruded shapes). Closed shells, exact volumes, tight tolerances.
+
+**Status (2026-03-24):** Complete for planar solids. 48 boolean tests passing. Analytic plane-surface intersection functions (plane-sphere, plane-cylinder, plane-cone) implemented but curved face trimming requires PCurve infrastructure (Phase 13).
+
+**Limitation:** Curved surface booleans (box-sphere, box-cylinder) do NOT work correctly. Non-planar faces are classified whole by centroid — they cannot be split or trimmed. This requires the PCurve infrastructure in Phase 13.
 
 ---
 
@@ -1071,7 +1077,98 @@ App Examples:
 
 ---
 
-### Phase 13: Command Interface
+### Phase 13: PCurve Infrastructure + Curved Boolean Operations
+
+**Goal:** Boolean operations between arbitrary curved solids (box-sphere, box-cylinder, L-bracket-sphere, etc.) with exact B-rep results.
+
+This is the hardest geometry kernel phase. It requires the PCurve (parameter-space curve) infrastructure that enables exact face trimming along curved intersection boundaries.
+
+```
+Infrastructure (new data structures):
+├── PCurve: Curve2D representation of an edge in a face's UV parameter space
+├── CurveOnSurface: links a 3D edge curve to its 2D parametric form on a surface
+├── Extended Edge: stores 3D curve + list of PCurves (one per adjacent face)
+│
+├── Based on OCCT's:
+│   ├── BRep_TEdge (edge with multiple curve representations)
+│   ├── BRep_CurveOnSurface (2D curve + surface + UV bounds)
+│   └── IntTools_Curve (3D curve + two PCurves from face-face intersection)
+
+Surface-Surface Intersection (analytic — already partially implemented):
+├── intersectPlaneSphere → circle (✅ done)
+├── intersectPlaneCylinder → circle/ellipse/lines (✅ done)
+├── intersectPlaneCone → circle/ellipse/lines/parabola (✅ done)
+├── intersectCylinderCylinder → conic sections (new)
+├── intersectSphereSphere → circle (new)
+│
+├── For each intersection: produce 3D curve + PCurve in each surface's UV space
+│
+├── Based on OCCT's IntAna_QuadQuadGeo (analytic quadric-quadric)
+│   See: library/opencascade/src/ModelingData/TKGeomBase/IntAna/
+
+PCurve Construction:
+├── projectCurveToSurface(curve3D, surface) → Curve2D
+│   Project a 3D intersection curve onto a surface's (u,v) parameter space
+│
+├── For plane: trivial (worldToSketch)
+├── For sphere: (θ, φ) from inverse trig
+├── For cylinder: (θ, v) from projection onto axis + angular position
+├── For cone: similar to cylinder with semi-angle correction
+
+Face Splitting via Pave Blocks (OCCT's approach):
+├── For each face pair, compute face-face intersection → IntTools_Curve
+├── Find where intersection curves cross face edges → split points (pave points)
+├── Split edges at pave points → pave blocks (sub-edges)
+├── Rebuild faces from the pave block network
+├── Each rebuilt face gets exact trim boundaries from PCurves
+│
+├── Based on OCCT's BOPAlgo_PaveFiller + BOPAlgo_BuilderFace
+│   See: library/opencascade/src/ModelingAlgorithms/TKBO/BOPAlgo/
+
+Trimmed Face Tessellation:
+├── tessellateTrimmedFace(face, pcurveBoundary) → mesh
+├── Generate parametric grid within the PCurve boundary
+├── Cull/clip grid cells outside the trim boundary
+├── Produce smooth normals from the surface definition
+│
+├── Extends existing tessellateCurvedFace with boundary awareness
+
+Tests (must verify geometry, not just success):
+├── Box − sphere: volume = box_vol − spherical_cap_vol (within 1%)
+├── Box − cylinder (through-hole): volume = box_vol − π·r²·h (within 1%)
+├── Box − cone: volume = box_vol − cone_cap_vol (within 1%)
+├── L-bracket − sphere: correct cavity, non-convex solid handling
+├── Sphere ∩ box: volume = spherical_cap (within 1%)
+├── Cylinder ∪ box: correct union geometry
+├── Volume consistency: V(A) + V(B) = V(union) + V(intersect)
+├── Shell closure on ALL results
+├── All results tessellatable with correct normals
+├── STEP round-trip of curved boolean results
+│
+├── Edge cases:
+│   ├── Tangent configurations (sphere touching plane)
+│   ├── Near-degenerate intersections
+│   ├── Multiple intersection loops
+│   └── Non-convex solid trimming (the L-bracket case)
+
+App Examples:
+├── "Boolean: Curved Shapes" — L-bracket − sphere with animated position
+├── "Boolean: Through Hole" — Box − cylinder
+└── Shaded mesh with smooth normals on curved cavity surfaces
+```
+
+**Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled.
+
+**Key reference:** OCCT source in `library/opencascade/src/`:
+- `ModelingData/TKBRep/BRep/BRep_TEdge.hxx` — Edge with PCurve list
+- `ModelingData/TKBRep/BRep/BRep_CurveOnSurface.hxx` — PCurve data structure
+- `ModelingAlgorithms/TKBO/IntTools/IntTools_Curve.hxx` — Intersection result (3D + 2 PCurves)
+- `ModelingAlgorithms/TKBO/IntTools/IntTools_FaceFace.hxx` — Face-face intersection
+- `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_BuilderFace.hxx` — Face reconstruction from split edges
+
+---
+
+### Phase 14: Command Interface
 
 **Goal:** Text/voice command layer for parametric operations.
 
@@ -1100,7 +1197,7 @@ Tests:
 
 ---
 
-### Phase 14: Assemblies + STEP
+### Phase 15: Assemblies + STEP
 
 **Goal:** Multiple parts with joints.
 
@@ -1126,7 +1223,7 @@ Tests:
 
 ---
 
-### Phase 15: External STEP Import ← **LOW PRIORITY**
+### Phase 16: External STEP Import ← **LOW PRIORITY**
 
 **Goal:** Import complex STEP files from external CAD systems.
 

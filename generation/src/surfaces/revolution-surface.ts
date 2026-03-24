@@ -373,13 +373,11 @@ function canonicalizeCircularCurve(
   if (centerDist < distTol) {
     // Center is on axis — check for sphere (semicircle / arc that spans π)
     if (curve.type === 'arc3d') {
-      const arcAngle = Math.abs(curve.endAngle - curve.startAngle);
-      if (Math.abs(arcAngle - Math.PI) < distTol) {
-        // Semicircle centered on axis → Sphere
-        const sphereResult = makeSphericalSurface(curve.plane.origin, curve.radius);
-        if (sphereResult.success) {
-          return sphereResult.result!;
-        }
+      // Any arc centered on the rotation axis in a meridional plane
+      // produces a spherical surface when revolved, regardless of arc span.
+      const sphereResult = makeSphericalSurface(curve.plane.origin, curve.radius);
+      if (sphereResult.success) {
+        return sphereResult.result!;
       }
     }
     // Full circle centered on axis → also a sphere cross-section, but

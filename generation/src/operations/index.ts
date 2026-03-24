@@ -29,3 +29,5 @@ export {
 } from './boolean';
 
 export { pointInSolid } from './point-in-solid';
+
+export { trimCurvedFaceByPlanes } from './trim-curved-face';

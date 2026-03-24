@@ -156,16 +156,12 @@ describe('booleanIntersect', () => {
     const boxB = makeBoxSolid(1, 1, 0, 4, 4, 4);
 
     const result = booleanIntersect(boxA.solid, boxB.solid);
-    if (!result.success) {
-      console.log('INTERSECT ERROR:', result.error);
-      // Debug: try without requiring closure
-      // This helps us see if the face selection is at least working
-    }
     expect(result.success).toBe(true);
 
     // Intersection: (-1,-1,0) to (2,2,4) → 3×3×4 = 36
     const vol = solidVolume(result.result!.solid);
-    expect(vol).toBeCloseTo(36, 0);
+    expect(vol).toBeCloseTo(36, 1);
+    expect(result.result!.solid.outerShell.isClosed).toBe(true);
   });
 
   it('no overlap → failure', () => {
@@ -188,11 +184,9 @@ describe('booleanSubtract', () => {
     expect(result.success).toBe(true);
 
     // Expected: 64 - 36 = 28
-    // Note: coplanar face handling is approximate — volume may have ~30% error
-    // due to coplanar bottom/top faces not being split precisely
     const vol = solidVolume(result.result!.solid);
-    // Expected: 64 - 36 = 28
     expect(vol).toBeCloseTo(28.0, 1);
+    expect(result.result!.solid.outerShell.isClosed).toBe(true);
   });
 });
 
@@ -207,9 +201,8 @@ describe('booleanUnion', () => {
     expect(result.success).toBe(true);
 
     // Expected: 64 + 64 - 36 = 92
-    // Note: coplanar face handling is approximate
     const vol = solidVolume(result.result!.solid);
-    expect(vol).toBeGreaterThan(75);
-    expect(vol).toBeLessThan(100);
+    expect(vol).toBeCloseTo(92, 1);
+    expect(result.result!.solid.outerShell.isClosed).toBe(true);
   });
 });

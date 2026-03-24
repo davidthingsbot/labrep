@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import {
   point3d,
@@ -19,6 +19,29 @@ import type { Mesh } from '@labrep/generation';
 import { meshToBufferGeometry } from '@/lib/mesh-to-three';
 import { BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
+
+/** Build a Three.js BufferGeometry of line segments showing vertex normals. */
+function buildNormalsGeometry(mesh: Mesh, normalLength: number = 0.3): THREE.BufferGeometry {
+  const verts = mesh.vertices;
+  const norms = mesh.normals;
+  const numVerts = verts.length / 3;
+  const positions = new Float32Array(numVerts * 6); // 2 points per normal (start + end)
+
+  for (let i = 0; i < numVerts; i++) {
+    const vx = verts[i * 3], vy = verts[i * 3 + 1], vz = verts[i * 3 + 2];
+    const nx = norms[i * 3], ny = norms[i * 3 + 1], nz = norms[i * 3 + 2];
+    positions[i * 6]     = vx;
+    positions[i * 6 + 1] = vy;
+    positions[i * 6 + 2] = vz;
+    positions[i * 6 + 3] = vx + nx * normalLength;
+    positions[i * 6 + 4] = vy + ny * normalLength;
+    positions[i * 6 + 5] = vz + nz * normalLength;
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  return geo;
+}
 
 /** Make a box solid and tessellate it */
 function makeBoxMesh(w: number, h: number, d: number) {
@@ -121,6 +144,16 @@ function makeSphereMesh(r: number) {
  */
 export function MeshPrimitivesExample({ animationAngle }: ExampleProps) {
   const t = animationAngle;
+  const [showNormals, setShowNormals] = useState(false);
+
+  // Toggle normals with 'n' key
+  const handleKey = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'n' || e.key === 'N') setShowNormals(prev => !prev);
+  }, []);
+  useEffect(() => {
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [handleKey]);
 
   // Animate dimensions with integer harmonics
   const boxW = 3 + Math.sin(t);
@@ -150,17 +183,29 @@ export function MeshPrimitivesExample({ animationAngle }: ExampleProps) {
   const cylGeo = useMemo(() => cyl ? meshToBufferGeometry(cyl.mesh) : null, [cyl?.mesh.vertices]);
   const coneGeo = useMemo(() => cone ? meshToBufferGeometry(cone.mesh) : null, [cone?.mesh.vertices]);
   const sphGeo = useMemo(() => sph ? meshToBufferGeometry(sph.mesh) : null, [sph?.mesh.vertices]);
+
+  const boxNormsGeo = useMemo(() => box ? buildNormalsGeometry(box.mesh) : null, [box?.mesh.vertices]);
+  const hexNormsGeo = useMemo(() => hex ? buildNormalsGeometry(hex.mesh) : null, [hex?.mesh.vertices]);
+  const cylNormsGeo = useMemo(() => cyl ? buildNormalsGeometry(cyl.mesh) : null, [cyl?.mesh.vertices]);
+  const coneNormsGeo = useMemo(() => cone ? buildNormalsGeometry(cone.mesh) : null, [cone?.mesh.vertices]);
+  const sphNormsGeo = useMemo(() => sph ? buildNormalsGeometry(sph.mesh) : null, [sph?.mesh.vertices]);
   /* eslint-enable react-hooks/exhaustive-deps */
+
+  const normalsMat = useMemo(() => new THREE.LineBasicMaterial({ color: '#ff4444' }), []);
 
   const mat = (color: string) => (
     <meshStandardMaterial color={color} side={THREE.DoubleSide} />
   );
+
+  const normalsViz = (geo: THREE.BufferGeometry | null) =>
+    showNormals && geo ? <lineSegments geometry={geo} material={normalsMat} /> : null;
 
   return (
     <group>
       {/* Top row: extruded (planar) */}
       <group position={[-5, 0, -boxD / 2]}>
         {boxGeo && <mesh geometry={boxGeo}>{mat('#4ade80')}</mesh>}
+        {normalsViz(boxNormsGeo)}
         <BillboardText position={[0, 0, boxD + 2]} fontSize={0.35} color="#4ade80">
           Box {boxW.toFixed(1)}x{boxH.toFixed(1)}x{boxD.toFixed(1)}
         </BillboardText>
@@ -171,6 +216,7 @@ export function MeshPrimitivesExample({ animationAngle }: ExampleProps) {
 
       <group position={[5, 0, -hexD / 2]}>
         {hexGeo && <mesh geometry={hexGeo}>{mat('#f97316')}</mesh>}
+        {normalsViz(hexNormsGeo)}
         <BillboardText position={[0, 0, hexD + 2]} fontSize={0.35} color="#f97316">
           Hexagon r={hexR.toFixed(1)}
         </BillboardText>
@@ -182,6 +228,7 @@ export function MeshPrimitivesExample({ animationAngle }: ExampleProps) {
       {/* Bottom row: revolved (curved) — smooth shading for curved surfaces */}
       <group position={[-8, -7, -cylH / 2]}>
         {cylGeo && <mesh geometry={cylGeo}>{mat('#60a5fa')}</mesh>}
+        {normalsViz(cylNormsGeo)}
         <BillboardText position={[0, 0, cylH + 2]} fontSize={0.35} color="#60a5fa">
           Cylinder r={cylR.toFixed(1)} h={cylH.toFixed(1)}
         </BillboardText>
@@ -192,6 +239,7 @@ export function MeshPrimitivesExample({ animationAngle }: ExampleProps) {
 
       <group position={[0, -7, -coneH / 2]}>
         {coneGeo && <mesh geometry={coneGeo}>{mat('#facc15')}</mesh>}
+        {normalsViz(coneNormsGeo)}
         <BillboardText position={[0, 0, coneH + 2]} fontSize={0.35} color="#facc15">
           Cone r={coneR.toFixed(1)} h={coneH.toFixed(1)}
         </BillboardText>
@@ -202,6 +250,7 @@ export function MeshPrimitivesExample({ animationAngle }: ExampleProps) {
 
       <group position={[8, -7, 0]}>
         {sphGeo && <mesh geometry={sphGeo}>{mat('#a78bfa')}</mesh>}
+        {normalsViz(sphNormsGeo)}
         <BillboardText position={[0, 0, sphR + 2]} fontSize={0.35} color="#a78bfa">
           Sphere r={sphR.toFixed(1)}
         </BillboardText>
@@ -209,6 +258,11 @@ export function MeshPrimitivesExample({ animationAngle }: ExampleProps) {
           {sph ? `${meshTriangleCount(sph.mesh)} tris — V=${sph.volume.toFixed(1)}` : '—'}
         </BillboardText>
       </group>
+
+      {/* Toggle hint */}
+      <BillboardText position={[0, 5, 0]} fontSize={0.3} color="#888888">
+        {showNormals ? 'Normals ON (press N to hide)' : 'Press N to show vertex normals'}
+      </BillboardText>
     </group>
   );
 }

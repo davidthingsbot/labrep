@@ -1,5 +1,7 @@
 'use client';
 
+import { useMemo } from 'react';
+import * as THREE from 'three';
 import { Line, Sphere } from '@react-three/drei';
 import {
   point3d,
@@ -9,12 +11,16 @@ import {
   makeWireFromEdges,
   extrude,
   solidVolume,
+  solidToMesh,
+  meshTriangleCount,
   booleanIntersect,
   solidToStep,
   createStepModelBuilder,
   writeStep,
   parseStep,
 } from '@labrep/generation';
+import type { Mesh } from '@labrep/generation';
+import { meshToBufferGeometry } from '@/lib/mesh-to-three';
 import { BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
 
@@ -54,6 +60,8 @@ export function BooleanStepExample({ animationAngle }: ExampleProps) {
   const offset = 1 + 1 * Math.sin(t);
 
   let resultVol = 0;
+  let resultMesh: Mesh | null = null;
+  let triCount = 0;
   let stepEntities = 0;
   let stepLen = 0;
   let parsedEntities = 0;
@@ -67,6 +75,12 @@ export function BooleanStepExample({ animationAngle }: ExampleProps) {
       const result = booleanIntersect(boxA.result!.solid, boxB.result!.solid);
       if (result.success) {
         resultVol = solidVolume(result.result!.solid);
+
+        const meshResult = solidToMesh(result.result!.solid);
+        if (meshResult.success) {
+          resultMesh = meshResult.result!;
+          triCount = meshTriangleCount(resultMesh);
+        }
 
         const builder = createStepModelBuilder();
         solidToStep(result.result!.solid, builder);
@@ -82,6 +96,13 @@ export function BooleanStepExample({ animationAngle }: ExampleProps) {
     }
   } catch { /* animation edge cases */ }
 
+  /* eslint-disable react-hooks/exhaustive-deps */
+  const resultGeo = useMemo(
+    () => resultMesh ? meshToBufferGeometry(resultMesh) : null,
+    [resultMesh?.vertices],
+  );
+  /* eslint-enable react-hooks/exhaustive-deps */
+
   const wireA = boxWireframe(0, 0, 0, 4, 4, 4);
   const wireB = boxWireframe(offset, offset, 0, 4, 4, 4);
 
@@ -94,17 +115,23 @@ export function BooleanStepExample({ animationAngle }: ExampleProps) {
         <Line key={`b-${i}`} points={pts} color="#888" lineWidth={1} />
       ))}
 
-      <Sphere args={[0.2]} position={[0, 0, 6]}>
+      {resultGeo && (
+        <mesh geometry={resultGeo}>
+          <meshStandardMaterial color="#60a5fa" side={THREE.DoubleSide} />
+        </mesh>
+      )}
+
+      <Sphere args={[0.15]} position={[0, 0, 6.3]}>
         <meshBasicMaterial color={roundTripOk ? '#4ade80' : '#ef4444'} />
       </Sphere>
 
-      <BillboardText position={[0, 0, 7.5]} fontSize={0.45} color="#60a5fa">
-        Intersect: V={resultVol.toFixed(1)}
+      <BillboardText position={[0, 0, 7.8]} fontSize={0.45} color="#60a5fa">
+        Intersect: V={resultVol.toFixed(1)} ({triCount} tris)
       </BillboardText>
-      <BillboardText position={[0, 0, 6.7]} fontSize={0.35} color="#c084fc">
+      <BillboardText position={[0, 0, 7]} fontSize={0.35} color="#c084fc">
         STEP: {stepEntities} entities, {stepLen.toLocaleString()} chars
       </BillboardText>
-      <BillboardText position={[0, 0, 6]} fontSize={0.3} color={roundTripOk ? '#4ade80' : '#ef4444'}>
+      <BillboardText position={[0, 0, 6.3]} fontSize={0.3} color={roundTripOk ? '#4ade80' : '#ef4444'}>
         Round-trip: {roundTripOk ? `parsed ${parsedEntities} entities` : 'failed'}
       </BillboardText>
     </group>
