@@ -1,5 +1,6 @@
 import { Point3D, ORIGIN, point3d } from './point3d';
-import { Vector3D, X_AXIS, Y_AXIS, Z_AXIS, normalize, dot, scale } from './vector3d';
+import { Point2D, point2d } from './point2d';
+import { Vector3D, X_AXIS, Y_AXIS, Z_AXIS, normalize, dot, cross, scale } from './vector3d';
 import { isZero } from './tolerance';
 
 /**
@@ -70,4 +71,42 @@ export function projectPoint(pl: Plane, pt: Point3D): Point3D {
  */
 export function containsPoint(pl: Plane, pt: Point3D): boolean {
   return isZero(distanceToPoint(pl, pt));
+}
+
+/**
+ * Convert a 3D world point to 2D local coordinates on a plane.
+ *
+ * Projects the point orthogonally onto the plane's coordinate frame.
+ * The normal component is discarded (equivalent to projecting onto the plane first).
+ *
+ * @param pl - The plane defining the 2D coordinate frame
+ * @param pt - The 3D point to convert
+ * @returns 2D coordinates (u, v) where u is along xAxis and v is along yAxis
+ */
+export function worldToSketch(pl: Plane, pt: Point3D): Point2D {
+  const dx = pt.x - pl.origin.x;
+  const dy = pt.y - pl.origin.y;
+  const dz = pt.z - pl.origin.z;
+  const d = { x: dx, y: dy, z: dz };
+
+  const yAxis = cross(pl.normal, pl.xAxis);
+
+  return point2d(dot(d, pl.xAxis), dot(d, yAxis));
+}
+
+/**
+ * Convert 2D local coordinates on a plane to a 3D world point.
+ *
+ * @param pl - The plane defining the 2D coordinate frame
+ * @param pt - The 2D coordinates (u along xAxis, v along yAxis)
+ * @returns 3D point on the plane
+ */
+export function sketchToWorld(pl: Plane, pt: Point2D): Point3D {
+  const yAxis = cross(pl.normal, pl.xAxis);
+
+  return point3d(
+    pl.origin.x + pt.x * pl.xAxis.x + pt.y * yAxis.x,
+    pl.origin.y + pt.x * pl.xAxis.y + pt.y * yAxis.y,
+    pl.origin.z + pt.x * pl.xAxis.z + pt.y * yAxis.z,
+  );
 }

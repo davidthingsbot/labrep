@@ -7,8 +7,11 @@ import {
   distanceToPoint,
   projectPoint,
   containsPoint,
+  worldToSketch,
+  sketchToWorld,
 } from '../../src/core/plane';
-import { point3d, ORIGIN } from '../../src/core/point3d';
+import { point3d, ORIGIN, distance } from '../../src/core/point3d';
+import { point2d } from '../../src/core/point2d';
 import { vec3d, length } from '../../src/core/vector3d';
 
 describe('Plane', () => {
@@ -118,5 +121,108 @@ describe('Plane', () => {
     const nearlyOn = point3d(0, 0, 1e-7);
     // Result depends on tolerance comparison
     expect(typeof containsPoint(XY_PLANE, nearlyOn)).toBe('boolean');
+  });
+
+  // ═══════════════════════════════════════════════════════
+  // worldToSketch / sketchToWorld
+  // ═══════════════════════════════════════════════════════
+
+  describe('worldToSketch', () => {
+    it('XY_PLANE: point on plane maps to its x,y', () => {
+      const result = worldToSketch(XY_PLANE, point3d(3, 4, 0));
+      expect(result.x).toBeCloseTo(3, 10);
+      expect(result.y).toBeCloseTo(4, 10);
+    });
+
+    it('XY_PLANE: off-plane point discards z component', () => {
+      const result = worldToSketch(XY_PLANE, point3d(3, 4, 7));
+      expect(result.x).toBeCloseTo(3, 10);
+      expect(result.y).toBeCloseTo(4, 10);
+    });
+
+    it('offset plane at z=5', () => {
+      const pl = plane(point3d(0, 0, 5), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const result = worldToSketch(pl, point3d(1, 2, 5));
+      expect(result.x).toBeCloseTo(1, 10);
+      expect(result.y).toBeCloseTo(2, 10);
+    });
+
+    it('XZ_PLANE: y-normal plane maps x,z to u,v', () => {
+      const result = worldToSketch(XZ_PLANE, point3d(3, 0, 4));
+      expect(result.x).toBeCloseTo(3, 10);
+      // yAxis for XZ_PLANE = cross((0,1,0), (1,0,0)) = (0,0,-1)
+      // So v = dot((3,0,4), (0,0,-1)) = -4
+      expect(result.y).toBeCloseTo(-4, 10);
+    });
+
+    it('origin maps to (0,0)', () => {
+      const pl = plane(point3d(5, 5, 5), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const result = worldToSketch(pl, point3d(5, 5, 5));
+      expect(result.x).toBeCloseTo(0, 10);
+      expect(result.y).toBeCloseTo(0, 10);
+    });
+
+    it('rotated plane: 45° tilt around X axis', () => {
+      const s = Math.SQRT1_2; // sin(45°) = cos(45°)
+      const pl = plane(ORIGIN, vec3d(0, -s, s), vec3d(1, 0, 0));
+      // xAxis = (1,0,0), normal = (0, -0.707, 0.707)
+      // yAxis = cross(normal, xAxis) = (0, 0.707, 0.707) approximately
+      const pt = point3d(3, 0, 0);
+      const result = worldToSketch(pl, pt);
+      expect(result.x).toBeCloseTo(3, 10);
+      expect(result.y).toBeCloseTo(0, 10);
+    });
+  });
+
+  describe('sketchToWorld', () => {
+    it('XY_PLANE: (3,4) → (3,4,0)', () => {
+      const result = sketchToWorld(XY_PLANE, point2d(3, 4));
+      expect(result.x).toBeCloseTo(3, 10);
+      expect(result.y).toBeCloseTo(4, 10);
+      expect(result.z).toBeCloseTo(0, 10);
+    });
+
+    it('offset plane: lifts to correct z', () => {
+      const pl = plane(point3d(0, 0, 10), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const result = sketchToWorld(pl, point2d(1, 2));
+      expect(result.x).toBeCloseTo(1, 10);
+      expect(result.y).toBeCloseTo(2, 10);
+      expect(result.z).toBeCloseTo(10, 10);
+    });
+
+    it('origin (0,0) maps to plane origin', () => {
+      const pl = plane(point3d(5, 6, 7), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const result = sketchToWorld(pl, point2d(0, 0));
+      expect(result.x).toBeCloseTo(5, 10);
+      expect(result.y).toBeCloseTo(6, 10);
+      expect(result.z).toBeCloseTo(7, 10);
+    });
+  });
+
+  describe('worldToSketch / sketchToWorld round-trip', () => {
+    it('round-trip equals projectPoint for on-plane point', () => {
+      const pl = plane(point3d(1, 2, 3), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const pt = point3d(5, 7, 3);
+      const roundTrip = sketchToWorld(pl, worldToSketch(pl, pt));
+      const projected = projectPoint(pl, pt);
+      expect(distance(roundTrip, projected)).toBeLessThan(1e-10);
+    });
+
+    it('round-trip equals projectPoint for off-plane point', () => {
+      const pl = plane(point3d(0, 0, 0), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const pt = point3d(3, 4, 99);
+      const roundTrip = sketchToWorld(pl, worldToSketch(pl, pt));
+      const projected = projectPoint(pl, pt);
+      expect(distance(roundTrip, projected)).toBeLessThan(1e-10);
+    });
+
+    it('round-trip on arbitrary rotated plane', () => {
+      const s = Math.SQRT1_2;
+      const pl = plane(point3d(10, 20, 30), vec3d(s, 0, s), vec3d(-s, 0, s));
+      const pt = point3d(12, 22, 32);
+      const roundTrip = sketchToWorld(pl, worldToSketch(pl, pt));
+      const projected = projectPoint(pl, pt);
+      expect(distance(roundTrip, projected)).toBeLessThan(1e-10);
+    });
   });
 });

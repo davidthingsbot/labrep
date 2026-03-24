@@ -51,4 +51,8 @@ export {
   planeSurfaceToStep, stepToPlaneSurface,
   cylindricalSurfaceToStep, stepToCylindricalSurface,
   extrusionSurfaceToStep, stepToExtrusionSurface,
+  sphericalSurfaceToStep, stepToSphericalSurface,
+  conicalSurfaceToStep, stepToConicalSurface,
+  toroidalSurfaceToStep, stepToToroidalSurface,
+  revolutionSurfaceToStep, stepToRevolutionSurface,
 } from './step-converters-surfaces';

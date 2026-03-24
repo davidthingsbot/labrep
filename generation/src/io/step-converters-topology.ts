@@ -15,6 +15,10 @@ import {
   planeSurfaceToStep,
   cylindricalSurfaceToStep,
   extrusionSurfaceToStep,
+  sphericalSurfaceToStep,
+  conicalSurfaceToStep,
+  toroidalSurfaceToStep,
+  revolutionSurfaceToStep,
 } from './step-converters-surfaces';
 
 // ═══════════════════════════════════════════════════════
@@ -228,6 +232,18 @@ export function faceToStep(face: Face, builder: StepModelBuilder): StepEntity[] 
       break;
     case 'extrusion':
       surfaceEntities = extrusionSurfaceToStep(face.surface, builder);
+      break;
+    case 'sphere':
+      surfaceEntities = sphericalSurfaceToStep(face.surface, builder);
+      break;
+    case 'cone':
+      surfaceEntities = conicalSurfaceToStep(face.surface, builder);
+      break;
+    case 'torus':
+      surfaceEntities = toroidalSurfaceToStep(face.surface, builder);
+      break;
+    case 'revolution':
+      surfaceEntities = revolutionSurfaceToStep(face.surface, builder);
       break;
     default:
       return failure(`Unsupported surface type for STEP export`) as any;

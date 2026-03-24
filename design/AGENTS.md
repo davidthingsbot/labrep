@@ -46,8 +46,15 @@ Each phase must have a dedicated design document in `design/<phase-name>.md`:
 3. Data types with TypeScript interfaces
 4. Functions with signatures
 5. Testing approach (table of test cases)
-6. **Viewer examples** — What examples will demonstrate this phase's functionality
-7. Exit criteria
+6. **STEP I/O** — If the phase adds new geometry/topology, specify STEP entity mappings, converter functions, and round-trip tests (surface-level AND full solid write→parse→verify)
+7. **Viewer examples** — What examples will demonstrate this phase's functionality
+8. Exit criteria
+
+**STEP round-trips are not optional.** Every phase that adds new surfaces, topology, or operations that produce solids must include:
+- STEP converter functions (toStep / stepTo) for new entity types
+- Surface-level round-trip tests (write → read → compare properties)
+- Full solid round-trip tests (create solid → solidToStep → writeStep → parseStep → verify)
+- At least one app example showing STEP export of the phase's new features
 
 **Viewer examples are not an afterthought.** Plan them during the design phase:
 - What visual demonstration best shows the feature?
@@ -360,6 +367,46 @@ Prefixes: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`
 
 ---
 
+## Phase Implementation Workflow
+
+Every phase follows these steps in order. Do not skip steps.
+
+```
+1. DESIGN
+   └─► Write design doc in design/<phase-name>.md
+       ├── Data types, functions, algorithms
+       ├── STEP entity mappings + round-trip test plan
+       └── App example plan (what to show, animations)
+
+2. PLAN
+   └─► Review design, confirm approach, get approval
+
+3. WRITE TESTS (TDD — red phase)
+   └─► Tests for new types, functions, edge cases, error cases
+       ├── Unit tests for each new module
+       ├── STEP converter round-trip tests (surface + solid level)
+       └── Integration tests (end-to-end workflows)
+
+4. IMPLEMENT CODE (TDD — green phase)
+   └─► Write minimum code to pass tests
+       ├── New types and functions
+       ├── STEP converters (toStep + stepTo for each new entity)
+       ├── Update Surface union type, exports, faceToStep switch
+       └── Refactor if needed
+
+5. TEST AND DEBUG
+   └─► All tests pass (new + existing), no regressions
+
+6. APP EXAMPLES
+   └─► Interactive viewer examples in app/src/examples/
+       ├── Feature demonstration examples (cyclic animations)
+       ├── STEP round-trip example (write → parse → visualize)
+       └── Register in registry.ts, export from index.ts
+
+7. VERIFY
+   └─► npm test (all pass), tsc --noEmit (no type errors)
+```
+
 ## Phase Checklist Template
 
 Before declaring a phase complete:
@@ -367,12 +414,17 @@ Before declaring a phase complete:
 ```
 Phase N: [Name]
 ─────────────────────────────
+[ ] Design doc written (design/<name>.md)
 [ ] All data types implemented
 [ ] All functions implemented
-[ ] All tests written and passing
+[ ] All unit tests written and passing
+[ ] STEP converters for new entity types
+[ ] STEP round-trip tests (surface + solid level)
+[ ] Integration tests passing
 [ ] No `any` types (or justified)
-[ ] Code reviewed for clarity
 [ ] Index exports updated
+[ ] App examples implemented with cyclic animations
+[ ] App STEP round-trip example included
+[ ] App type-checks clean (tsc --noEmit)
 [ ] README.md phase status updated
-[ ] Committed with appropriate message
 ```

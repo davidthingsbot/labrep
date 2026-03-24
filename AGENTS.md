@@ -82,6 +82,8 @@ Key points:
 - `src/` for source, `tests/` for tests
 - Version attempts in subfolders if needed (v1/, v2/)
 - Start simple, add complexity incrementally
+- **Every phase that adds new geometry/topology must include STEP converters and round-trip tests**
+- See `design/AGENTS.md` for the full phase implementation workflow (design → plan → tests → implement → debug → app examples)
 
 ### examples/
 
@@ -102,6 +104,17 @@ Components:
 - Editor — code editing panel
 - Viewer — Three.js 3D viewport
 - LibraryBrowser — browse examples and library
+
+#### Example Animation Guidelines
+
+Examples receive `animationAngle` (0 → 2π, looping every 10 seconds). Animations must be **cyclical** — the visual state at the end of a cycle must match the start, so there's no jarring jump when the loop restarts.
+
+Rules:
+- Use only **integer multiples** of the base frequency: `sin(t)`, `sin(2*t)`, `cos(3*t)`, etc.
+- Never use non-integer multipliers like `sin(t * 0.7)` or `sin(t * 1.3)` — these don't complete a full cycle, causing visible jumps.
+- Animations should show something **interesting about the process** (profile morphing, sweep angle growing, parameters changing) — not just a finished shape spinning.
+- Show the generative input (profile wires, parameters) alongside the result.
+- Show success/failure states when parameters push toward invalid geometry.
 
 ---
 

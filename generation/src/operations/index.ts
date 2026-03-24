@@ -11,3 +11,10 @@ export {
   extrudeSymmetric,
   extrudeSymmetricWithHoles,
 } from './extrude';
+
+export {
+  type RevolveResult,
+  validateRevolveProfile,
+  revolve,
+  revolvePartial,
+} from './revolve';

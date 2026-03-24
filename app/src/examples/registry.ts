@@ -27,6 +27,16 @@ import { ConstraintSolverVizExample } from './ConstraintSolverVizExample';
 import { ExtrudeBasicExample } from './ExtrudeBasicExample';
 import { ExtrudeProfileExample } from './ExtrudeProfileExample';
 import { ExtrudeWithHoleExample } from './ExtrudeWithHoleExample';
+import { RevolveBasicExample } from './RevolveBasicExample';
+import { RevolveSphereExample } from './RevolveSphereExample';
+import { RevolvePartialExample } from './RevolvePartialExample';
+import { RevolveIrregularExample } from './RevolveIrregularExample';
+import { SketchOnFaceExample } from './SketchOnFaceExample';
+import { SketchOnFaceWorkflowExample } from './SketchOnFaceWorkflowExample';
+import { SketchOnFaceProjectionExample } from './SketchOnFaceProjectionExample';
+import { ExtrudeStepExample } from './ExtrudeStepExample';
+import { RevolveStepExample } from './RevolveStepExample';
+import { SketchOnFaceStepExample } from './SketchOnFaceStepExample';
 
 /** All registered examples. */
 export const examples: Example[] = [
@@ -107,92 +117,6 @@ const v2 = point3d(1, 1.5, 0);
 // Edge 3: v2 -> v0
 
 // Lines form the edges of faces in BRep.
-`,
-  },
-  {
-    id: 'primitives-box',
-    name: 'Box',
-    description: 'Box primitive with Y-axis rotation',
-    component: BoxExample,
-    code: `// Box - axis-aligned rectangular solid
-import { makeBox } from '@labrep/generation';
-
-// Create a unit cube centered at origin
-const result = makeBox(1, 1, 1);
-
-if (result.success) {
-  const mesh = result.result;
-  // mesh.vertices - Float32Array of XYZ positions
-  // mesh.normals  - Float32Array of XYZ normals
-  // mesh.indices  - Uint32Array of triangle indices
-}
-
-// makeBox(width, height, depth)
-// Extends from -w/2 to +w/2 along each axis.
-`,
-  },
-  {
-    id: 'primitives-sphere',
-    name: 'Sphere',
-    description: 'Sphere primitive with gentle wobble',
-    component: SphereExample,
-    code: `// Sphere - UV sphere mesh
-import { makeSphere } from '@labrep/generation';
-
-// Create sphere with radius 0.5
-const result = makeSphere(0.5);
-
-// Optional: control tessellation
-const detailed = makeSphere(0.5, {
-  segments: 64,  // longitudinal divisions
-  rings: 32      // latitudinal divisions
-});
-
-// Sphere is centered at origin.
-// Higher segments/rings = smoother surface.
-`,
-  },
-  {
-    id: 'primitives-cylinder',
-    name: 'Cylinder',
-    description: 'Cylinder primitive spinning on axis',
-    component: CylinderExample,
-    code: `// Cylinder - circular cross-section
-import { makeCylinder } from '@labrep/generation';
-
-// Create cylinder: radius 0.4, height 1
-const result = makeCylinder(0.4, 1);
-
-// Optional: control tessellation
-const detailed = makeCylinder(0.4, 1, {
-  segments: 64  // circumference divisions
-});
-
-// Cylinder axis is along Y.
-// Centered at origin, extends from -h/2 to +h/2.
-`,
-  },
-  {
-    id: 'primitives-all',
-    name: 'All Primitives',
-    description: 'All primitives with mesh stats (vertex/triangle counts)',
-    component: PrimitivesAllExample,
-    code: `// All Primitives — with mesh inspection
-import {
-  makeBox, makeSphere, makeCylinder,
-  meshVertexCount, meshTriangleCount, validateMesh,
-} from '@labrep/generation';
-
-const box = makeBox(1, 1, 1);
-const sphere = makeSphere(0.5);
-const cylinder = makeCylinder(0.4, 1);
-
-if (box.success) {
-  const m = box.result;
-  meshVertexCount(m);       // 24 (4 per face)
-  meshTriangleCount(m);     // 12 (2 per face)
-  validateMesh(m).success;  // true
-}
 `,
   },
   {
@@ -330,107 +254,6 @@ intersects(box, b);                 // true/false
 `,
   },
   {
-    id: 'sketch-profiles',
-    name: 'Sketch Profiles',
-    description: 'Region detection: rectangle, divider, hole, arc+line',
-    component: SketchProfilesExample,
-    code: `// Sketch Profiles — region detection
-import {
-  point2d, XY_PLANE,
-  createSketch, addElement, findProfiles,
-  profileArea, profileContainsPoint,
-  makeLine2D, makeCircle2D, makeArc2D,
-} from '@labrep/generation';
-
-// Create a sketch and add geometry
-let sketch = createSketch(XY_PLANE);
-sketch = addElement(sketch, makeLine2D(point2d(0, 0), point2d(2, 0)).result);
-sketch = addElement(sketch, makeLine2D(point2d(2, 0), point2d(2, 1)).result);
-sketch = addElement(sketch, makeLine2D(point2d(2, 1), point2d(0, 1)).result);
-sketch = addElement(sketch, makeLine2D(point2d(0, 1), point2d(0, 0)).result);
-
-// Add a hole (circle inside the rectangle)
-sketch = addElement(sketch, makeCircle2D(point2d(1, 0.5), 0.3).result);
-
-// Detect closed profiles automatically
-const profiles = findProfiles(sketch);
-// profiles[0].outer — CCW boundary wire
-// profiles[0].holes — array of CW hole wires
-
-profileArea(profiles[0]);                    // signed area
-profileContainsPoint(profiles[0], point2d(0.5, 0.5));  // true
-profileContainsPoint(profiles[0], point2d(1, 0.5));    // false (in hole)
-`,
-  },
-  {
-    id: 'stl-roundtrip',
-    name: 'STL Round-Trip',
-    description: 'Export to STL, import back, compare original vs imported',
-    component: StlRoundtripExample,
-    code: `// STL Round-Trip — export and re-import
-import {
-  makeBox, makeSphere, makeCylinder,
-  meshToStlAscii, meshToStlBinary, stlToMesh,
-  meshVertexCount, meshTriangleCount, validateMesh,
-} from '@labrep/generation';
-
-// Create a mesh
-const box = makeBox(1, 1, 1).result;
-
-// Export to ASCII STL
-const asciiStl = meshToStlAscii(box, 'mybox');
-// asciiStl is a string: "solid mybox\\n  facet normal..."
-
-// Export to binary STL (smaller, faster)
-const binaryStl = meshToStlBinary(box);
-// binaryStl is an ArrayBuffer
-
-// Import back (auto-detects format)
-const imported = stlToMesh(asciiStl);
-// or: stlToMesh(binaryStl)
-
-if (imported.success) {
-  const m = imported.result;
-  meshTriangleCount(m);  // same as original
-  meshVertexCount(m);    // de-duplicated vertices
-  validateMesh(m);       // check mesh validity
-}
-`,
-  },
-  {
-    id: 'step-roundtrip',
-    name: 'STEP Round-Trip',
-    description: 'Export foundation types to STEP, parse back, compare',
-    component: StepRoundtripExample,
-    code: `// STEP Round-Trip — foundation types
-import {
-  point3d, XY_PLANE, X_AXIS,
-  createStepModelBuilder, point3DToStep,
-  vector3DToStep, planeToStep,
-  writeStep, parseStep, extractFoundationTypes,
-} from '@labrep/generation';
-
-// Build a STEP model
-const builder = createStepModelBuilder();
-builder.addEntity(point3DToStep(point3d(1, 2, 3), builder.nextId()));
-vector3DToStep(X_AXIS, builder.nextId());
-planeToStep(XY_PLANE, builder);
-
-// Export to STEP text
-const stepText = writeStep(builder.build());
-// stepText is ISO-10303-21 formatted text
-
-// Parse it back
-const parsed = parseStep(stepText);
-
-// Extract typed objects from the parsed model
-const types = extractFoundationTypes(parsed.result);
-// types.points — Map<number, Point3D>
-// types.directions — Map<number, Vector3D>
-// types.planes — Map<number, Plane>
-`,
-  },
-  {
     id: 'curves-line2d',
     name: 'Line2D',
     description: 'All Line2D functions: evaluate, tangent, reverse, fromPointDir',
@@ -556,6 +379,193 @@ if (wire.success) {
   // w.isClosed — true if ends connect
   // w.curves   — the curve sequence
   // lengthWire2D(w) — total path length
+}
+`,
+  },
+  {
+    id: 'stl-roundtrip',
+    name: 'STL Round-Trip',
+    description: 'Export to STL, import back, compare original vs imported',
+    component: StlRoundtripExample,
+    code: `// STL Round-Trip — export and re-import
+import {
+  makeBox, makeSphere, makeCylinder,
+  meshToStlAscii, meshToStlBinary, stlToMesh,
+  meshVertexCount, meshTriangleCount, validateMesh,
+} from '@labrep/generation';
+
+// Create a mesh
+const box = makeBox(1, 1, 1).result;
+
+// Export to ASCII STL
+const asciiStl = meshToStlAscii(box, 'mybox');
+// asciiStl is a string: "solid mybox\\n  facet normal..."
+
+// Export to binary STL (smaller, faster)
+const binaryStl = meshToStlBinary(box);
+// binaryStl is an ArrayBuffer
+
+// Import back (auto-detects format)
+const imported = stlToMesh(asciiStl);
+// or: stlToMesh(binaryStl)
+
+if (imported.success) {
+  const m = imported.result;
+  meshTriangleCount(m);  // same as original
+  meshVertexCount(m);    // de-duplicated vertices
+  validateMesh(m);       // check mesh validity
+}
+`,
+  },
+  {
+    id: 'step-roundtrip',
+    name: 'STEP Round-Trip',
+    description: 'Export foundation types to STEP, parse back, compare',
+    component: StepRoundtripExample,
+    code: `// STEP Round-Trip — foundation types
+import {
+  point3d, XY_PLANE, X_AXIS,
+  createStepModelBuilder, point3DToStep,
+  vector3DToStep, planeToStep,
+  writeStep, parseStep, extractFoundationTypes,
+} from '@labrep/generation';
+
+// Build a STEP model
+const builder = createStepModelBuilder();
+builder.addEntity(point3DToStep(point3d(1, 2, 3), builder.nextId()));
+vector3DToStep(X_AXIS, builder.nextId());
+planeToStep(XY_PLANE, builder);
+
+// Export to STEP text
+const stepText = writeStep(builder.build());
+// stepText is ISO-10303-21 formatted text
+
+// Parse it back
+const parsed = parseStep(stepText);
+
+// Extract typed objects from the parsed model
+const types = extractFoundationTypes(parsed.result);
+// types.points — Map<number, Point3D>
+// types.directions — Map<number, Vector3D>
+// types.planes — Map<number, Plane>
+`,
+  },
+  {
+    id: 'sketch-profiles',
+    name: 'Sketch Profiles',
+    description: 'Region detection: rectangle, divider, hole, arc+line',
+    component: SketchProfilesExample,
+    code: `// Sketch Profiles — region detection
+import {
+  point2d, XY_PLANE,
+  createSketch, addElement, findProfiles,
+  profileArea, profileContainsPoint,
+  makeLine2D, makeCircle2D, makeArc2D,
+} from '@labrep/generation';
+
+// Create a sketch and add geometry
+let sketch = createSketch(XY_PLANE);
+sketch = addElement(sketch, makeLine2D(point2d(0, 0), point2d(2, 0)).result);
+sketch = addElement(sketch, makeLine2D(point2d(2, 0), point2d(2, 1)).result);
+sketch = addElement(sketch, makeLine2D(point2d(2, 1), point2d(0, 1)).result);
+sketch = addElement(sketch, makeLine2D(point2d(0, 1), point2d(0, 0)).result);
+
+// Add a hole (circle inside the rectangle)
+sketch = addElement(sketch, makeCircle2D(point2d(1, 0.5), 0.3).result);
+
+// Detect closed profiles automatically
+const profiles = findProfiles(sketch);
+// profiles[0].outer — CCW boundary wire
+// profiles[0].holes — array of CW hole wires
+
+profileArea(profiles[0]);                    // signed area
+profileContainsPoint(profiles[0], point2d(0.5, 0.5));  // true
+profileContainsPoint(profiles[0], point2d(1, 0.5));    // false (in hole)
+`,
+  },
+  {
+    id: 'primitives-box',
+    name: 'Box',
+    description: 'Box primitive with Y-axis rotation',
+    component: BoxExample,
+    code: `// Box - axis-aligned rectangular solid
+import { makeBox } from '@labrep/generation';
+
+// Create a unit cube centered at origin
+const result = makeBox(1, 1, 1);
+
+if (result.success) {
+  const mesh = result.result;
+  // mesh.vertices - Float32Array of XYZ positions
+  // mesh.normals  - Float32Array of XYZ normals
+  // mesh.indices  - Uint32Array of triangle indices
+}
+
+// makeBox(width, height, depth)
+// Extends from -w/2 to +w/2 along each axis.
+`,
+  },
+  {
+    id: 'primitives-sphere',
+    name: 'Sphere',
+    description: 'Sphere primitive with gentle wobble',
+    component: SphereExample,
+    code: `// Sphere - UV sphere mesh
+import { makeSphere } from '@labrep/generation';
+
+// Create sphere with radius 0.5
+const result = makeSphere(0.5);
+
+// Optional: control tessellation
+const detailed = makeSphere(0.5, {
+  segments: 64,  // longitudinal divisions
+  rings: 32      // latitudinal divisions
+});
+
+// Sphere is centered at origin.
+// Higher segments/rings = smoother surface.
+`,
+  },
+  {
+    id: 'primitives-cylinder',
+    name: 'Cylinder',
+    description: 'Cylinder primitive spinning on axis',
+    component: CylinderExample,
+    code: `// Cylinder - circular cross-section
+import { makeCylinder } from '@labrep/generation';
+
+// Create cylinder: radius 0.4, height 1
+const result = makeCylinder(0.4, 1);
+
+// Optional: control tessellation
+const detailed = makeCylinder(0.4, 1, {
+  segments: 64  // circumference divisions
+});
+
+// Cylinder axis is along Y.
+// Centered at origin, extends from -h/2 to +h/2.
+`,
+  },
+  {
+    id: 'primitives-all',
+    name: 'All Primitives',
+    description: 'All primitives with mesh stats (vertex/triangle counts)',
+    component: PrimitivesAllExample,
+    code: `// All Primitives — with mesh inspection
+import {
+  makeBox, makeSphere, makeCylinder,
+  meshVertexCount, meshTriangleCount, validateMesh,
+} from '@labrep/generation';
+
+const box = makeBox(1, 1, 1);
+const sphere = makeSphere(0.5);
+const cylinder = makeCylinder(0.4, 1);
+
+if (box.success) {
+  const m = box.result;
+  meshVertexCount(m);       // 24 (4 per face)
+  meshTriangleCount(m);     // 12 (2 per face)
+  validateMesh(m).success;  // true
 }
 `,
   },
@@ -843,6 +853,200 @@ const housing = extrudeWithHoles(
 
 // Volume = (30² - π×8²) × 15 ≈ 10479
 solidVolume(housing.result.solid);
+`,
+  },
+  {
+    id: 'extrude-step',
+    name: 'Extrude STEP Round-Trip',
+    description: 'Animated box and cylinder exported to STEP and parsed back with live stats',
+    component: ExtrudeStepExample,
+    code: `// Extrude STEP Round-Trip
+import { extrude, solidToStep, createStepModelBuilder,
+  writeStep, parseStep } from '@labrep/generation';
+
+const solid = extrude(wire, vec3d(0,0,1), 10).result!.solid;
+const builder = createStepModelBuilder();
+solidToStep(solid, builder);
+const stepText = writeStep(builder.build());
+const parsed = parseStep(stepText); // Round-trip!
+console.log('Entities:', parsed.result!.entities.size);
+`,
+  },
+  {
+    id: 'revolve-basic',
+    name: 'Revolve Basic',
+    description: 'Animated profile morphing — cylinder and cone dimensions change live',
+    component: RevolveBasicExample,
+    code: `// Revolve Basic — Rectangle to Cylinder, Triangle to Cone
+import { point3d, vec3d, Z_AXIS_3D, makeLine3D, makeEdgeFromCurve,
+  makeWireFromEdges, revolve, solidVolume } from '@labrep/generation';
+
+// Rectangle in XZ plane (one edge on Z axis)
+const p1 = point3d(0, 0, 0), p2 = point3d(3, 0, 0);
+const p3 = point3d(3, 0, 5), p4 = point3d(0, 0, 5);
+const edges = [p1, p2, p3, p4].map((a, i, arr) =>
+  makeEdgeFromCurve(makeLine3D(a, arr[(i + 1) % 4]).result!).result!
+);
+const wire = makeWireFromEdges(edges).result!;
+
+// Full 360° revolve around Z axis → solid cylinder
+const result = revolve(wire, Z_AXIS_3D, 2 * Math.PI);
+console.log('Volume:', solidVolume(result.result!.solid));
+// → ~141.37 (π × 3² × 5)
+`,
+  },
+  {
+    id: 'revolve-sphere',
+    name: 'Revolve Sphere & Torus',
+    description: 'Animated torus sweep — circle profile swept around axis with growing angle',
+    component: RevolveSphereExample,
+    code: `// Revolve — Circle offset from axis → Torus
+import { point3d, vec3d, plane, Z_AXIS_3D, makeCircle3D,
+  makeEdgeFromCurve, makeWireFromEdges, revolve, solidVolume } from '@labrep/generation';
+
+// Circle of radius 1 centered at (4, 0, 0) in the XZ plane
+const circlePlane = plane(point3d(4, 0, 0), vec3d(0, -1, 0), vec3d(1, 0, 0));
+const circle = makeCircle3D(circlePlane, 1).result!;
+const edge = makeEdgeFromCurve(circle).result!;
+const wire = makeWireFromEdges([edge]).result!;
+
+// Revolve around Z axis → torus (major R=4, minor r=1)
+const result = revolve(wire, Z_AXIS_3D, 2 * Math.PI);
+console.log('Volume:', solidVolume(result.result!.solid));
+// → ~78.96 (2π²Rr² = 2π² × 4 × 1)
+`,
+  },
+  {
+    id: 'revolve-partial',
+    name: 'Revolve Partial',
+    description: 'Animated partial revolve with varying sweep angle',
+    component: RevolvePartialExample,
+    code: `// Partial Revolve — sweep angle varies
+import { point3d, Z_AXIS_3D, makeLine3D, makeEdgeFromCurve,
+  makeWireFromEdges, revolvePartial, solidVolume } from '@labrep/generation';
+
+// Rectangle profile
+const wire = makeWireFromEdges([...]).result!;
+
+// 90° partial revolve → quarter cylinder
+const result = revolvePartial(wire, Z_AXIS_3D, 0, Math.PI / 2);
+console.log('Volume:', solidVolume(result.result!.solid));
+// → ~35.34 (π × 3² × 5 / 4)
+`,
+  },
+  {
+    id: 'revolve-irregular',
+    name: 'Revolve Irregular',
+    description: 'Animated deforming vase profile — shows success/failure states',
+    component: RevolveIrregularExample,
+    code: `// Revolve Irregular — deforming vase profile
+import { point3d, Z_AXIS_3D, makeLine3D, makeEdgeFromCurve,
+  makeWireFromEdges, revolve, solidVolume } from '@labrep/generation';
+
+// Irregular "vase" profile in XZ plane
+const profile = [
+  point3d(0, 0, 0),    // on axis
+  point3d(3, 0, 0),    // base
+  point3d(1.5, 0, 2),  // waist (narrow)
+  point3d(2.5, 0, 5),  // top rim
+  point3d(0, 0, 5),    // back to axis
+];
+// Build wire from consecutive line edges...
+const wire = makeWireFromEdges([...edges...]).result!;
+
+// Revolve — creates a vase-shaped solid of revolution
+const result = revolve(wire, Z_AXIS_3D, 2 * Math.PI);
+if (result.success) {
+  console.log('Volume:', solidVolume(result.result!.solid));
+}
+`,
+  },
+  {
+    id: 'revolve-step',
+    name: 'Revolve STEP Round-Trip',
+    description: 'Revolve solid to STEP and back — live entity counts and verification',
+    component: RevolveStepExample,
+    code: `// Revolve STEP Round-Trip
+import { revolve, solidToStep, createStepModelBuilder,
+  writeStep, parseStep } from '@labrep/generation';
+
+const solid = revolve(wire, Z_AXIS_3D, 2 * Math.PI).result!.solid;
+const builder = createStepModelBuilder();
+solidToStep(solid, builder);
+const stepText = writeStep(builder.build());
+const parsed = parseStep(stepText); // Round-trip!
+console.log('Entities:', parsed.result!.entities.size);
+`,
+  },
+  {
+    id: 'sketch-on-face',
+    name: 'Sketch on Face',
+    description: 'Cycle through box faces — extract plane, show normal and planar status',
+    component: SketchOnFaceExample,
+    code: `// Sketch on Face — extract plane from face
+import { extrude, getPlaneFromFace } from '@labrep/generation';
+
+// Extrude a box, then extract planes from each face
+const box = extrude(wire, vec3d(0,0,1), 8).result!;
+const topPlane = getPlaneFromFace(box.topFace);
+// topPlane.result → { origin: (0,0,8), normal: (0,0,1), xAxis: (1,0,0) }
+`,
+  },
+  {
+    id: 'sketch-on-face-workflow',
+    name: 'Sketch on Face: Workflow',
+    description: 'Multi-feature: box + animated cylinder sketched and extruded from top face',
+    component: SketchOnFaceWorkflowExample,
+    code: `// Multi-feature workflow: box + cylinder from top face
+import { extrude, createSketchOnFace, addElement, findProfiles,
+  liftProfile2DToProfile3D, makeCircle2D, point2d } from '@labrep/generation';
+
+const box = extrude(boxWire, vec3d(0,0,1), 5).result!;
+const sketch = createSketchOnFace(box.topFace).result!;
+const withCircle = addElement(sketch, makeCircle2D(point2d(0,0), 1.5).result!);
+const profiles = findProfiles(withCircle);
+const lifted = liftProfile2DToProfile3D(profiles[0], withCircle.plane).result!;
+const cylinder = extrude(lifted.outerWire, vec3d(0,0,1), 4);
+`,
+  },
+  {
+    id: 'sketch-on-face-projection',
+    name: 'Sketch on Face: Projection',
+    description: 'Project edges onto a tilting plane — lines foreshorten as angle changes',
+    component: SketchOnFaceProjectionExample,
+    code: `// Edge projection onto a plane
+import { projectEdgeToSketch, sketchToWorld } from '@labrep/generation';
+
+// Project 3D edge onto a sketch plane
+const result = projectEdgeToSketch(edge, sketchPlane);
+if (result.success) {
+  const line2d = result.result; // Line2D on the sketch plane
+  // Lift back to 3D for visualization:
+  const start3d = sketchToWorld(sketchPlane, line2d.startPoint);
+}
+`,
+  },
+  {
+    id: 'sketch-on-face-step',
+    name: 'Sketch-on-Face STEP Round-Trip',
+    description: 'Multi-feature (box + cylinder) with independent STEP export and round-trip',
+    component: SketchOnFaceStepExample,
+    code: `// Multi-feature STEP Round-Trip
+import { extrude, createSketchOnFace, solidToStep,
+  createStepModelBuilder, writeStep, parseStep } from '@labrep/generation';
+
+// Box + cylinder from sketch-on-face workflow
+const boxSolid = extrude(boxWire, dir, height).result!.solid;
+const cylSolid = extrude(liftedWire, dir, cylH).result!.solid;
+
+// Export each independently to STEP
+for (const solid of [boxSolid, cylSolid]) {
+  const builder = createStepModelBuilder();
+  solidToStep(solid, builder);
+  const text = writeStep(builder.build());
+  const parsed = parseStep(text);
+  console.log('OK:', parsed.success, 'Entities:', parsed.result!.entities.size);
+}
 `,
   },
 ];

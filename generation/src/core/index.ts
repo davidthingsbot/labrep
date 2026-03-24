@@ -5,5 +5,5 @@ export { type Point2D, point2d, distance2d, midpoint2d, addVector2d, subtractPoi
 export { type Vector2D, vec2d, length2d, normalize2d, add2d, subtract2d, scale2d, dot2d, perpendicular, X_AXIS_2D, Y_AXIS_2D } from './vector2d';
 export { type Transform3D, identity, translation, rotationX, rotationY, rotationZ, rotationAxis, scaling, compose, inverse, transformPoint, transformVector } from './transform3d';
 export { type Axis, axis, X_AXIS_3D, Y_AXIS_3D, Z_AXIS_3D } from './axis';
-export { type Plane, plane, distanceToPoint, projectPoint, containsPoint, XY_PLANE, XZ_PLANE, YZ_PLANE } from './plane';
+export { type Plane, plane, distanceToPoint, projectPoint, containsPoint, worldToSketch, sketchToWorld, XY_PLANE, XZ_PLANE, YZ_PLANE } from './plane';
 export { type BoundingBox3D, boundingBox, emptyBoundingBox, addPoint, contains, center, size, intersects, isEmpty, unionBoundingBox } from './bounding-box';
