@@ -45,29 +45,37 @@ labrep/
 
 ## Status
 
-✅ **Phase 1: Math Foundation** — Complete (Point2D/3D, Vector2D/3D, Transform3D, Axis, Plane, BoundingBox)
+### Completed
 
-✅ **Phase 2: 2D Curves** — Complete (Line2D, Circle2D, Arc2D, Intersections, Wire2D)
+| Phase | Name | Highlights |
+|-------|------|------------|
+| 1 | Math Foundation | Point2D/3D, Vector2D/3D, Transform3D, Axis, Plane, BoundingBox |
+| 2 | 2D Curves | Line2D, Circle2D, Arc2D, Intersections, Wire2D |
+| 3 | STL Import/Export | ASCII/binary writer + reader, round-trip tested |
+| 4 | STEP Import/Export | Lexer, parser, writer, model builder, foundation converters |
+| 5 | Sketch System | Sketch management, profile detection, region finding |
+| 6 | 3D Geometry + Topology | Line3D, Circle3D, Arc3D, surfaces, full BRep topology, STEP converters |
+| 7 | Constraint Solver | Geometric + dimensional constraints, Newton-Raphson solver, parametric design |
+| 8 | Extrude + STEP | extrude, extrudeSymmetric, extrudeWithHoles, solid volume |
+| 9 | Revolve + STEP | revolve, revolvePartial, revolution/spherical/conical/toroidal surfaces |
+| 10 | Sketch on Face | getPlaneFromFace, sketch on any planar face |
+| 11 | Boolean Operations + STEP | Union, subtract, intersect with exact volumes (planar solids) |
+| 12 | Solid Tessellation | solidToMesh for all surface types, ear clipping, analytic normals |
 
-✅ **Phase 3: STL Import/Export** — Complete (ASCII/binary writer + reader, round-trip tested)
+### In Progress
 
-✅ **Phase 4: STEP Import/Export** — Complete (parser, writer, foundation converters, round-trip tested)
+| Phase | Name | Description |
+|-------|------|-------------|
+| 13 | PCurve + Curved Booleans | Boolean ops on curved solids (box-sphere, box-cylinder). PCurve infrastructure, face trimming, curved SSI. |
 
-✅ **Phase 5: Sketch System** — Complete (sketch management, profile detection, region finding)
+### Upcoming
 
-✅ **Phase 6: Basic 3D Geometry + STEP Topology** — Complete (Line3D, Circle3D, Arc3D, surfaces, topology, STEP converters)
-
-✅ **Phase 7: Constraint Solver** — Complete (geometric + dimensional constraints, Newton-Raphson solver, parametric design)
-
-✅ **Phase 8: Extrude + STEP** — Complete (extrude, extrudeSymmetric, extrudeWithHoles, solid volume)
-
-✅ **Phase 9: Revolve + STEP** — Complete (revolve, revolvePartial, revolution/spherical/conical/toroidal surfaces)
-
-✅ **Phase 10: Sketch on Face** — Complete (getPlaneFromFace, sketch on any planar face)
-
-✅ **Phase 11: Boolean Operations + STEP** — Complete (union, subtract, intersect with exact volumes, STEP round-trip)
-
-✅ **Phase 12: Solid Tessellation** — Complete (solidToMesh for all surface types, ear clipping for concave polygons, 37 tests)
+| Phase | Name |
+|-------|------|
+| 14 | Command Interface |
+| 15 | Assemblies + STEP |
+| 16 | External STEP Import |
+| 17+ | Fillet/Chamfer, Mass Properties, Patterns, Mirror, Shell, Loft, Sweep, BSpline |
 
 See [`design/README.md`](design/README.md) for full phase breakdown and design docs.
 

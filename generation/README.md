@@ -31,38 +31,7 @@ generation/
 
 ## Status
 
-✅ **Phase 1: Math Foundation** — Complete
-- `src/core/`: Point2D/3D, Vector2D/3D, Transform3D, Axis, Plane, BoundingBox, Tolerance
-
-✅ **Phase 2: 2D Curves** — Complete
-- `src/geometry/`: Line2D, Circle2D, Arc2D, Intersections, Wire2D
-
-✅ **Primitives** — Complete
-- `src/primitives/`: makeBox, makeSphere, makeCylinder
-
-✅ **Phase 3: STL I/O** — Complete
-- `src/io/`: ASCII/binary STL writer, ASCII/binary STL reader, auto-detect, round-trip tested
-
-✅ **Phase 4: STEP I/O Foundation** — Complete
-- `src/io/`: STEP lexer, parser, writer, model builder, foundation converters (Point3D ↔ CARTESIAN_POINT, Vector3D ↔ DIRECTION, Axis ↔ AXIS1_PLACEMENT, Plane ↔ AXIS2_PLACEMENT_3D)
-
-✅ **Phase 5: Sketch System** — Complete
-- `src/sketch/`: Sketch management, Profile2D (area, containsPoint), region detection (planar graph cycle finding with T-junction splitting)
-
-✅ **Phase 6: Basic 3D Geometry + STEP Topology** — Complete
-- `src/geometry/`: Line3D, Circle3D, Arc3D
-- `src/surfaces/`: PlaneSurface, CylindricalSurface, ExtrusionSurface
-- `src/topology/`: Vertex, Edge, Wire, Face, Shell, Solid
-- `src/io/`: STEP converters for 3D curves, surfaces, and topology
-
-✅ **Phase 7: Constraint Solver** — Complete
-- `src/constraints/`: Types, equations, Jacobian, Newton-Raphson solver, parameter expressions, analysis
-- `src/sketch/`: Constrained sketch management
-
-✅ **Phase 8: Extrude + STEP** — Complete
-- `src/operations/`: extrude, extrudeSymmetric, extrudeWithHoles, solidVolume
-
-**872 tests (869 passed, 3 skipped)**
+See [`design/README.md`](../design/README.md) for full phase breakdown. Phases 1–12 complete, Phase 13 in progress.
 
 ## Getting Started
 
