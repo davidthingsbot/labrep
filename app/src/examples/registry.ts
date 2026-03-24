@@ -37,6 +37,8 @@ import { SketchOnFaceProjectionExample } from './SketchOnFaceProjectionExample';
 import { ExtrudeStepExample } from './ExtrudeStepExample';
 import { RevolveStepExample } from './RevolveStepExample';
 import { SketchOnFaceStepExample } from './SketchOnFaceStepExample';
+import { BooleanBasicExample } from './BooleanBasicExample';
+import { BooleanStepExample } from './BooleanStepExample';
 
 /** All registered examples. */
 export const examples: Example[] = [
@@ -1047,6 +1049,39 @@ for (const solid of [boxSolid, cylSolid]) {
   const parsed = parseStep(text);
   console.log('OK:', parsed.success, 'Entities:', parsed.result!.entities.size);
 }
+`,
+  },
+  {
+    id: 'boolean-basic',
+    name: 'Boolean Basic',
+    description: 'Box-box union/subtract/intersect with animated overlap',
+    component: BooleanBasicExample,
+    code: `// Boolean Operations — union, subtract, intersect
+import { extrude, booleanUnion, booleanSubtract,
+  booleanIntersect, solidVolume } from '@labrep/generation';
+
+const boxA = extrude(wireA, dir, 4).result!.solid;
+const boxB = extrude(wireB, dir, 4).result!.solid;
+
+const union = booleanUnion(boxA, boxB);     // A ∪ B
+const subtract = booleanSubtract(boxA, boxB); // A - B
+const intersect = booleanIntersect(boxA, boxB); // A ∩ B
+`,
+  },
+  {
+    id: 'boolean-step',
+    name: 'Boolean STEP Round-Trip',
+    description: 'Boolean intersection result exported to STEP and parsed back',
+    component: BooleanStepExample,
+    code: `// Boolean STEP Round-Trip
+import { booleanIntersect, solidToStep, createStepModelBuilder,
+  writeStep, parseStep } from '@labrep/generation';
+
+const result = booleanIntersect(boxA, boxB).result!;
+const builder = createStepModelBuilder();
+solidToStep(result.solid, builder);
+const stepText = writeStep(builder.build());
+const parsed = parseStep(stepText); // Round-trip!
 `,
   },
 ];

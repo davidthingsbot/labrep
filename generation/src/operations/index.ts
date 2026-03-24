@@ -18,3 +18,14 @@ export {
   revolve,
   revolvePartial,
 } from './revolve';
+
+export {
+  type BooleanOp,
+  type BooleanResult,
+  booleanOperation,
+  booleanUnion,
+  booleanSubtract,
+  booleanIntersect,
+} from './boolean';
+
+export { pointInSolid } from './point-in-solid';

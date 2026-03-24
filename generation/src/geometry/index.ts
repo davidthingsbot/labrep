@@ -69,3 +69,7 @@ export {
   lengthArc3D,
   reverseArc3D,
 } from './arc3d';
+
+export {
+  intersectPlanePlane,
+} from './intersections3d';

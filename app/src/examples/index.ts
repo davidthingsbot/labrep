@@ -35,3 +35,5 @@ export { SketchOnFaceProjectionExample } from './SketchOnFaceProjectionExample';
 export { ExtrudeStepExample } from './ExtrudeStepExample';
 export { RevolveStepExample } from './RevolveStepExample';
 export { SketchOnFaceStepExample } from './SketchOnFaceStepExample';
+export { BooleanBasicExample } from './BooleanBasicExample';
+export { BooleanStepExample } from './BooleanStepExample';
