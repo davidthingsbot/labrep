@@ -351,13 +351,13 @@ The 2D polygon clipping approach from OCCT:
 
 ## Implementation Status
 
-### What Works (2026-03-23, updated end of day)
+### What Works (2026-03-24, all three boolean ops exact)
 
 - **Plane-plane intersection** — 7 tests passing
 - **Point-in-solid (ray casting)** — 6 tests passing
 - **Boolean intersect** — Exact volume (36.0 for 3×3×4 overlap) ✓
 - **Boolean union** — Exact volume (92.0 for two 4×4×4 boxes offset by (1,1,0)) ✓
-- **Boolean subtract** — Correct face topology but wrong volume (16 instead of 28)
+- **Boolean subtract** — Exact volume (28.0 for 64−36 overlap) ✓
 - **No-overlap detection** — Intersect of disjoint boxes returns failure ✓
 - **STEP round-trip** — All three operations write/parse successfully ✓
 - **App examples** — 3 examples (basic with orbiting box, L-bracket shapes, STEP round-trip)
@@ -370,21 +370,13 @@ The 2D polygon clipping approach from OCCT:
 
 3. **Union volume now exact** — 92.0 (was 82.7).
 
-### Remaining Issue: Subtract Face Winding
+### Fix Applied (session 3, 2026-03-24)
 
-**Subtract volume is 16 instead of expected 28.** The coplanar face fragments have correct vertices and areas, but their winding direction is wrong for the divergence theorem.
+4. **Subtract coplanar face handling** — For B-side coplanar faces with same normal, the overlap intersection was incorrectly added as a flipped "cavity ceiling/floor". Since both A and B share the same face plane, subtracting removes the overlap entirely — no internal boundary exists at that plane. A's diff fragments (A \ overlap) already define the correct boundary. Fix: don't include B's coplanar intersection for subtract when sameNormal. Volume now exact: 28.0 (was 16.0).
 
-**Root cause:** `makePlanarFace` infers the normal from wire point cross products. For the bottom face of a box, the original wire is CW (viewed from +Z), giving outward-facing n=(0,0,-1). After polygon difference, fragments come out CCW (normalized for Sutherland-Hodgman), so `makePlanarFace` assigns them n=(0,0,+1). The divergence theorem then treats bottom fragments as ceiling faces, **canceling** volume instead of adding it.
+   Additionally, all coplanar fragment creation now passes the original face's `PlaneSurface` to `polygonToFace` (via `sourceSurface` parameter), preserving the original surface normal rather than inferring it from wire winding. This doesn't affect the divergence-theorem volume computation (which uses wire winding directly), but is more correct for surface queries.
 
-**Fix approach (for next session):**
-1. After creating each coplanar fragment face via `polygonToFace`, check if the inferred normal matches the original face's intended outward direction
-2. If `dot(inferredNormal, originalNormal) < 0`, reverse the wire to fix winding
-3. Use `makeFace(originalSurface, correctedWire)` instead of `makePlanarFace`
-4. Alternative: add an explicit `orientation` flag to Face (like OCCT's `IsForward`), avoiding dependence on wire winding for normal direction
-
-**Key OCCT insight:** OCCT tracks face orientation via a separate boolean flag, decoupled from wire winding. This avoids exactly this class of bug.
-
-### Other Known Issues
+### Remaining Known Issues
 
 1. **Shell closure** — Boolean results create independent edge objects. Shell closure check fails. Bypassed by creating the solid without closure validation. Volume still works.
 

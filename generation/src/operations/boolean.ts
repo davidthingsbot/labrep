@@ -461,7 +461,7 @@ export function booleanOperation(
           for (const frag of diffFragments) {
             // Restore original winding direction
             const oriented = originalCW ? [...frag].reverse() : frag;
-            const fragFace = polygonToFace(oriented, planeA);
+            const fragFace = polygonToFace(oriented, planeA, faceA.surface as PlaneSurface);
             if (fragFace.success) {
               allFacesA.push({ face: fragFace.result!, classification: 'outside' });
             }
@@ -477,7 +477,7 @@ export function booleanOperation(
           // Keep the intersection region, preserving original winding
           const originalCW = faceIsCW(faceA, planeA);
           const oriented = originalCW ? [...intersection].reverse() : intersection;
-          const intFaceResult = polygonToFace(oriented, planeA);
+          const intFaceResult = polygonToFace(oriented, planeA, faceA.surface as PlaneSurface);
           if (intFaceResult.success) {
             allFacesA.push({ face: intFaceResult.result!, classification: 'inside' });
           }
@@ -529,7 +529,7 @@ export function booleanOperation(
           const originalCWb = faceIsCW(faceB, planeB);
           for (const frag of diffFragments) {
             const oriented = originalCWb ? [...frag].reverse() : frag;
-            const fragFace = polygonToFace(oriented, planeB);
+            const fragFace = polygonToFace(oriented, planeB, faceB.surface as PlaneSurface);
             if (fragFace.success) {
               allFacesB.push({ face: fragFace.result!, classification: 'outside' });
             }
@@ -539,13 +539,10 @@ export function booleanOperation(
         }
       } else if (op === 'subtract') {
         if (sameNormal) {
-          // For subtract: the overlap region of B becomes the cavity floor/ceiling.
-          const originalCWbs = faceIsCW(faceB, planeB);
-          const orientedInt = originalCWbs ? [...intersection].reverse() : intersection;
-          const intFace = polygonToFace(orientedInt, planeB);
-          if (intFace.success) {
-            allFacesB.push({ face: intFace.result!, classification: 'inside' });
-          }
+          // Same-normal coplanar overlap: both A and B share this face plane.
+          // A's diff fragments (A \ overlap) already define the correct boundary.
+          // The overlap region is removed — no cavity ceiling/floor at this plane.
+          // Do NOT add B's intersection here.
         } else {
           // "B on A, opposite normal" → discard
         }
