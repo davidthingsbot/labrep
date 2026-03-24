@@ -61,7 +61,13 @@ labrep/
 
 ✅ **Phase 8: Extrude + STEP** — Complete (extrude, extrudeSymmetric, extrudeWithHoles, solid volume)
 
-🔲 **Phase 9: Boolean Operations + STEP** — Next up
+✅ **Phase 9: Revolve + STEP** — Complete (revolve, revolvePartial, revolution/spherical/conical/toroidal surfaces)
+
+✅ **Phase 10: Sketch on Face** — Complete (getPlaneFromFace, sketch on any planar face)
+
+✅ **Phase 11: Boolean Operations + STEP** — Complete (union, subtract, intersect with exact volumes, STEP round-trip)
+
+🔧 **Phase 12: Solid Tessellation** — In progress (planar face tessellation complete, curved surfaces next)
 
 See [`design/README.md`](design/README.md) for full phase breakdown and design docs.
 

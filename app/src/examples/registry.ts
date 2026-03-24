@@ -37,6 +37,9 @@ import { SketchOnFaceProjectionExample } from './SketchOnFaceProjectionExample';
 import { ExtrudeStepExample } from './ExtrudeStepExample';
 import { RevolveStepExample } from './RevolveStepExample';
 import { SketchOnFaceStepExample } from './SketchOnFaceStepExample';
+import { MeshPrimitivesExample } from './MeshPrimitivesExample';
+import { MeshExtrudeRevolveExample } from './MeshExtrudeRevolveExample';
+import { MeshComplexExample } from './MeshComplexExample';
 import { BooleanBasicExample } from './BooleanBasicExample';
 import { BooleanShapesExample } from './BooleanShapesExample';
 import { BooleanStepExample } from './BooleanStepExample';
@@ -979,6 +982,66 @@ solidToStep(solid, builder);
 const stepText = writeStep(builder.build());
 const parsed = parseStep(stepText); // Round-trip!
 console.log('Entities:', parsed.result!.entities.size);
+`,
+  },
+  {
+    id: 'mesh-primitives',
+    name: 'Mesh: Primitives',
+    description: 'Shaded box, triangular prism, and hexagonal prism — solidToMesh with animated dimensions',
+    component: MeshPrimitivesExample,
+    code: `// Solid → Mesh tessellation
+import { extrude, solidToMesh, meshTriangleCount } from '@labrep/generation';
+
+// Extrude a profile wire into a solid
+const solid = extrude(wire, direction, depth).result!.solid;
+
+// Tessellate: planar faces → flat-shaded triangles
+const mesh = solidToMesh(solid);
+console.log('Triangles:', meshTriangleCount(mesh.result!));
+// Box: 12 tris, Prism: 8 tris, Hexagon: 20 tris
+`,
+  },
+  {
+    id: 'mesh-extrude-revolve',
+    name: 'Mesh: Extrude & Revolve',
+    description: 'L-bracket extrusion (fully shaded) and revolved annulus (planar caps shaded, curves wireframe)',
+    component: MeshExtrudeRevolveExample,
+    code: `// solidToMesh applied to extrude and revolve results
+import { extrude, revolve, solidToMesh } from '@labrep/generation';
+
+// L-bracket: all planar faces → fully shaded
+const lSolid = extrude(lWire, dir, depth).result!.solid;
+const lMesh = solidToMesh(lSolid).result!;
+
+// Revolved shape: planar caps tessellated,
+// curved surfaces awaiting Phase 12 curved tessellation
+const revSolid = revolve(wire, axis, 2*Math.PI).result!.solid;
+const revMesh = solidToMesh(revSolid); // partial — caps only
+`,
+  },
+  {
+    id: 'mesh-complex',
+    name: 'Mesh: Complex Solids',
+    description: 'Star extrusion, stepped tower (union stack), and notched L-bracket (subtract) — all shaded',
+    component: MeshComplexExample,
+    code: `// Complex solids → shaded meshes
+import { extrude, booleanUnion, booleanSubtract,
+  solidToMesh } from '@labrep/generation';
+
+// Star: 10-pointed polygon extruded
+const star = extrude(starWire, dir, depth).result!.solid;
+
+// Tower: 4 boxes stacked with booleanUnion
+let tower = baseBox;
+for (const level of levels) {
+  tower = booleanUnion(tower, level).result!.solid;
+}
+
+// Notched bracket: L-shape minus a notch
+const bracket = booleanSubtract(lSolid, notch).result!.solid;
+
+// All tessellated as shaded meshes
+const meshes = [star, tower, bracket].map(s => solidToMesh(s));
 `,
   },
   {

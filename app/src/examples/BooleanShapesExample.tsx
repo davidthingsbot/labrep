@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
+import * as THREE from 'three';
 import { Line, Sphere } from '@react-three/drei';
 import {
   point3d,
@@ -10,10 +11,12 @@ import {
   makeWireFromEdges,
   extrude,
   solidVolume,
+  solidToMesh,
   booleanSubtract,
   booleanIntersect,
 } from '@labrep/generation';
-import type { Solid } from '@labrep/generation';
+import type { Solid, Mesh } from '@labrep/generation';
+import { meshToBufferGeometry } from '@/lib/mesh-to-three';
 import { BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
 
@@ -108,6 +111,7 @@ export function BooleanShapesExample({ animationAngle }: ExampleProps) {
 
   let resultOk = false;
   let resultVol = 0;
+  let resultMesh: Mesh | null = null;
   let resultEdges: P3[][] = [];
   let lEdges: P3[][] = [];
 
@@ -125,9 +129,16 @@ export function BooleanShapesExample({ animationAngle }: ExampleProps) {
         resultOk = true;
         resultVol = solidVolume(result.result!.solid);
         resultEdges = solidEdges(result.result!.solid);
+        const meshResult = solidToMesh(result.result!.solid);
+        if (meshResult.success) {
+          resultMesh = meshResult.result!;
+        }
       }
     } catch { /* edge cases */ }
   }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const geometry = useMemo(() => resultMesh ? meshToBufferGeometry(resultMesh) : null, [resultMesh?.vertices]);
 
   return (
     <group>
@@ -143,9 +154,16 @@ export function BooleanShapesExample({ animationAngle }: ExampleProps) {
       ))}
       <BillboardText position={[cx + 2, cy + 2, cz + 2]} fontSize={0.3} color="#666">Box</BillboardText>
 
-      {/* Result edges (highlighted) */}
+      {/* Result: shaded mesh */}
+      {geometry && (
+        <mesh geometry={geometry}>
+          <meshStandardMaterial color={color} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+
+      {/* Result: edge outlines */}
       {resultEdges.map((pts, i) => (
-        <Line key={`r-${i}`} points={pts} color={color} lineWidth={3} />
+        <Line key={`r-${i}`} points={pts} color="#222" lineWidth={1.5} />
       ))}
 
       {/* Status */}

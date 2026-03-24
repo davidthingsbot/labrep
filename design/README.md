@@ -1026,7 +1026,50 @@ Tests:
 
 ---
 
-### Phase 12: Command Interface ← **NEW**
+### Phase 12: Solid Tessellation (Solid → Mesh)
+
+> **Note (2026-03-24):** This phase should logically have been Phase 9.5 — right after we could create solids via extrude and revolve. Every visual rendering of solids depends on tessellation. Inserted here as the next phase to implement since Phases 1–11 are complete.
+
+**Goal:** Convert any Solid (BRep) into a renderable triangle mesh with correct normals.
+
+```
+Functions:
+├── solidToMesh(solid, options?) → Mesh
+├── faceToTriangles(face) → { vertices, normals, indices }
+│
+├── Planar faces: fan triangulation from wire vertices
+├── Cylindrical faces: parametric sampling (u along axis, v around circumference)
+├── Spherical faces: lat/lon parametric grid
+├── Conical faces: parametric sampling (u along axis, v around circumference)
+├── Toroidal faces: parametric (u, v) grid
+├── Revolution surfaces: parametric (u=angle, v=profile parameter)
+│
+├── Options:
+│   ├── linearDeflection: max chord error (mm)
+│   ├── angularDeflection: max angle between adjacent normals (radians)
+│   └── minSegments: minimum subdivisions per face
+│
+└── Normals: analytic from surface definition (not inferred from triangles)
+
+Tests:
+├── Box → 12 triangles, exact normals
+├── Cylinder → smooth shading, closed caps
+├── Sphere → correct normals, pole handling
+├── Revolved solid → correct parametric sampling
+├── Boolean result → colored faces render correctly
+└── Volume from mesh ≈ volume from divergence theorem (cross-check)
+
+App Examples:
+├── Shaded boolean results with colored faces
+├── Smooth-shaded cylinder/sphere
+└── Wireframe + shaded overlay mode
+```
+
+**Exit Criteria:** Any solid from extrude, revolve, or booleans can be rendered as a shaded mesh with correct normals. Analytic surfaces get smooth shading.
+
+---
+
+### Phase 13: Command Interface
 
 **Goal:** Text/voice command layer for parametric operations.
 
@@ -1055,7 +1098,7 @@ Tests:
 
 ---
 
-### Phase 13: Assemblies + STEP
+### Phase 14: Assemblies + STEP
 
 **Goal:** Multiple parts with joints.
 
@@ -1081,7 +1124,7 @@ Tests:
 
 ---
 
-### Phase 14: External STEP Import ← **LOW PRIORITY**
+### Phase 15: External STEP Import ← **LOW PRIORITY**
 
 **Goal:** Import complex STEP files from external CAD systems.
 
@@ -1104,15 +1147,15 @@ Tests:
 ### Future Phases
 
 ```
-Phase 15: Fillet and Chamfer
-Phase 16: Mass Properties (volume, center of mass, moments)
-Phase 17: Patterns (linear/circular array)
-Phase 18: Mirror operations  
-Phase 19: Shell (hollow out solid)
-Phase 20: Loft (multi-profile sweep)
-Phase 21: Sweep along path
-Phase 22: BSpline curves (for STEP import)
-Phase 23: BSpline surfaces (the dragon)
+Phase 16: Fillet and Chamfer
+Phase 17: Mass Properties (volume, center of mass, moments)
+Phase 18: Patterns (linear/circular array)
+Phase 19: Mirror operations
+Phase 20: Shell (hollow out solid)
+Phase 21: Loft (multi-profile sweep)
+Phase 22: Sweep along path
+Phase 23: BSpline curves (for STEP import)
+Phase 24: BSpline surfaces (the dragon)
 ```
 
 ---
@@ -1265,6 +1308,8 @@ describe('extrude', () => {
 | [constraint-solver.md](./constraint-solver.md) | Phase 7: Constraint solver for parametric sketches | ✅ Complete |
 | [extrude.md](./extrude.md) | Phase 8: Extrude operations + STEP solid export | ✅ Complete |
 | [occt-gap-analysis.md](./occt-gap-analysis.md) | OCCT structural alignment analysis | ✅ Complete |
+| [boolean-operations-impl.md](./boolean-operations-impl.md) | Phase 11: Boolean operations implementation | ✅ Complete |
+| [tessellation.md](./tessellation.md) | Phase 12: Solid → Mesh tessellation | 🔧 In Progress |
 
 ## Adding a Design Document
 

@@ -134,33 +134,39 @@ export function evaluateConicalSurface(
  * The normal points outward from the cone surface (away from the axis,
  * with a component opposing the axis direction due to the cone angle).
  *
+ * When the effective radius r(v) = radius + v·sin(α) is negative, the
+ * surface has passed through the axis and the outward direction reverses.
+ *
  * @param surface - The conical surface
  * @param theta - Angular parameter (radians)
- * @param v - Parameter along generatrix (unused — normal is constant along v for a given θ)
+ * @param v - Parameter along generatrix
  * @returns Unit normal vector
  */
 export function normalConicalSurface(
   surface: ConicalSurface,
   theta: number,
-  _v: number,
+  v: number,
 ): Vector3D {
-  const { axis, semiAngle, refDirection } = surface;
+  const { axis, radius, semiAngle, refDirection } = surface;
   const perpDirection = cross(axis.direction, refDirection);
 
   const cosT = Math.cos(theta);
   const sinT = Math.sin(theta);
 
-  // The outward normal of a cone:
-  // N = sin(semiAngle) * (- axis.direction) + cos(semiAngle) * radialDir
-  // where radialDir = cos(θ) * refDirection + sin(θ) * perpDirection
-  //
-  // This points outward from the cone surface, perpendicular to the generatrix.
   const cosA = Math.cos(semiAngle);
   const sinA = Math.sin(semiAngle);
 
-  return vec3d(
-    -sinA * axis.direction.x + cosA * (cosT * refDirection.x + sinT * perpDirection.x),
-    -sinA * axis.direction.y + cosA * (cosT * refDirection.y + sinT * perpDirection.y),
-    -sinA * axis.direction.z + cosA * (cosT * refDirection.z + sinT * perpDirection.z),
-  );
+  // Base outward normal: perpendicular to generatrix, pointing away from axis
+  let nx = -sinA * axis.direction.x + cosA * (cosT * refDirection.x + sinT * perpDirection.x);
+  let ny = -sinA * axis.direction.y + cosA * (cosT * refDirection.y + sinT * perpDirection.y);
+  let nz = -sinA * axis.direction.z + cosA * (cosT * refDirection.z + sinT * perpDirection.z);
+
+  // When effective radius is negative, the surface has folded through the
+  // axis — the outward direction reverses.
+  const r = radius + v * sinA;
+  if (r < 0) {
+    nx = -nx; ny = -ny; nz = -nz;
+  }
+
+  return vec3d(nx, ny, nz);
 }

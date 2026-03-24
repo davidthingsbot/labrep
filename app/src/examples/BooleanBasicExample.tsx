@@ -1,6 +1,7 @@
 'use client';
 
-import { useRef } from 'react';
+import { useMemo, useRef } from 'react';
+import * as THREE from 'three';
 import { Line, Sphere } from '@react-three/drei';
 import {
   point3d,
@@ -10,11 +11,13 @@ import {
   makeWireFromEdges,
   extrude,
   solidVolume,
+  solidToMesh,
   booleanUnion,
   booleanSubtract,
   booleanIntersect,
 } from '@labrep/generation';
-import type { Solid } from '@labrep/generation';
+import type { Solid, Mesh } from '@labrep/generation';
+import { meshToBufferGeometry } from '@/lib/mesh-to-three';
 import { BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
 
@@ -108,6 +111,7 @@ export function BooleanBasicExample({ animationAngle }: ExampleProps) {
 
   let resultVol = 0;
   let resultOk = false;
+  let resultMesh: Mesh | null = null;
   let resultEdges: P3[][] = [];
   let resultFaces = 0;
   let errorMsg = '';
@@ -123,6 +127,10 @@ export function BooleanBasicExample({ animationAngle }: ExampleProps) {
         resultVol = solidVolume(result.result!.solid);
         resultFaces = result.result!.facesFromA.length + result.result!.facesFromB.length;
         resultEdges = solidEdges(result.result!.solid);
+        const meshResult = solidToMesh(result.result!.solid);
+        if (meshResult.success) {
+          resultMesh = meshResult.result!;
+        }
       } else {
         errorMsg = result.error ?? '';
       }
@@ -132,6 +140,9 @@ export function BooleanBasicExample({ animationAngle }: ExampleProps) {
   const color = OP_COLORS[op];
   const wireA = boxWireframe(0, 0, 0, 4, 4, 4);
   const wireB = boxWireframe(bx, by, bz, 3, 3, 3);
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const geometry = useMemo(() => resultMesh ? meshToBufferGeometry(resultMesh) : null, [resultMesh?.vertices]);
 
   return (
     <group>
@@ -147,9 +158,16 @@ export function BooleanBasicExample({ animationAngle }: ExampleProps) {
       ))}
       <BillboardText position={[bx + 2, by + 2, bz + 2]} fontSize={0.3} color="#777">B</BillboardText>
 
-      {/* RESULT: highlighted edges */}
+      {/* RESULT: shaded mesh */}
+      {geometry && (
+        <mesh geometry={geometry}>
+          <meshStandardMaterial color={color} side={THREE.DoubleSide} />
+        </mesh>
+      )}
+
+      {/* RESULT: edge outlines */}
       {resultEdges.map((pts, i) => (
-        <Line key={`r-${i}`} points={pts} color={color} lineWidth={3} />
+        <Line key={`r-${i}`} points={pts} color="#222" lineWidth={1.5} />
       ))}
 
       {/* Status */}
