@@ -16,7 +16,6 @@ import {
   solidToMesh,
   meshTriangleCount,
 } from '@labrep/generation';
-import type { Mesh, Solid } from '@labrep/generation';
 import { meshToBufferGeometry } from '@/lib/mesh-to-three';
 import { BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';

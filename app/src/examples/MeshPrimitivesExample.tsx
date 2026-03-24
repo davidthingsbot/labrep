@@ -63,7 +63,7 @@ function makeBoxMesh(w: number, h: number, d: number) {
 
 /** Make a hexagonal prism and tessellate it */
 function makeHexMesh(radius: number, depth: number) {
-  const pts = [];
+  const pts: ReturnType<typeof point3d>[] = [];
   for (let i = 0; i < 6; i++) {
     const angle = (i / 6) * 2 * Math.PI;
     pts.push(point3d(radius * Math.cos(angle), radius * Math.sin(angle), 0));

@@ -2,7 +2,6 @@
 
 import { useMemo } from 'react';
 import * as THREE from 'three';
-import { Line } from '@react-three/drei';
 import {
   point3d,
   vec3d,
@@ -13,16 +12,12 @@ import {
   solidVolume,
   solidToMesh,
   meshTriangleCount,
-  meshVertexCount,
   booleanSubtract,
   booleanUnion,
 } from '@labrep/generation';
-import type { Mesh } from '@labrep/generation';
 import { meshToBufferGeometry } from '@/lib/mesh-to-three';
 import { BillboardText } from '@/components/Viewer/SceneObjects';
 import type { ExampleProps } from './types';
-
-type P3 = [number, number, number];
 
 function makeBoxSolid(x: number, y: number, z: number, w: number, h: number, d: number) {
   const hw = w / 2, hh = h / 2;
@@ -39,7 +34,7 @@ function makeBoxSolid(x: number, y: number, z: number, w: number, h: number, d: 
 /** Build a star-shaped profile and extrude it */
 function buildStarSolid(outerR: number, innerR: number, points: number, depth: number) {
   try {
-    const pts = [];
+    const pts: ReturnType<typeof point3d>[] = [];
     for (let i = 0; i < points * 2; i++) {
       const angle = (i / (points * 2)) * 2 * Math.PI - Math.PI / 2;
       const r = i % 2 === 0 ? outerR : innerR;
