@@ -1261,12 +1261,18 @@ Phase 24: BSpline surfaces (the dragon)
 
 ## Design Validation Against OCCT
 
-> ⚠️ **MANDATORY:** Before implementing any phase, assess the design for completeness against OpenCASCADE (OCCT). Ask:
+> ⚠️ **MANDATORY:** Before implementing any phase, assess the design for completeness against OpenCASCADE (OCCT).
 >
-> 1. **What functions does OCCT provide for this data type?** (e.g., `Geom_Circle` has 20+ methods)
-> 2. **Which functions are essential for downstream operations?** (e.g., extrude needs `evaluate`, `tangent`, `length`)
-> 3. **What edge cases does OCCT handle?** (degenerate inputs, tolerances, special configurations)
-> 4. **What does the STEP representation require?** (which attributes must survive round-trip)
+> **OCCT is the primary reference for all design and implementation decisions.** It has correct, battle-tested solutions to every problem in this project. Do not diverge from OCCT's approach without an explicit, documented reason. "I felt like doing it differently" is not a reason.
+>
+> Before implementing anything:
+>
+> 1. **Read the OCCT source** in `library/opencascade/`. Find the corresponding class or algorithm. Understand its data structures, edge cases, and design decisions.
+> 2. **Map OCCT's design to our types.** If OCCT's lower-level objects have methods or fields that our corresponding types lack, **add them first**. Do not build on incomplete foundations.
+> 3. **What functions does OCCT provide for this data type?** (e.g., `Geom_Circle` has 20+ methods)
+> 4. **Which functions are essential for downstream operations?** (e.g., extrude needs `evaluate`, `tangent`, `length`)
+> 5. **What edge cases does OCCT handle?** (degenerate inputs, tolerances, special configurations)
+> 6. **What does the STEP representation require?** (which attributes must survive round-trip)
 >
 > **Document gaps explicitly.** If we choose to defer functionality, note it as "NOT IMPLEMENTED — reason" in the design doc.
 >
@@ -1275,6 +1281,8 @@ Phase 24: BSpline surfaces (the dragon)
 > - [Geom2d Package](https://dev.opencascade.org/doc/refman/html/package_geom2d.html) — 2D curves
 > - [TopoDS Package](https://dev.opencascade.org/doc/refman/html/package_topods.html) — Topology
 > - [BRep Package](https://dev.opencascade.org/doc/refman/html/package_brep.html) — BRep geometry bindings
+>
+> Also search online for blog posts, papers, and open-source implementations. But OCCT is the primary source of truth.
 >
 > This step prevents discovering missing functionality late in implementation when it's expensive to add.
 

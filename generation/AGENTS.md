@@ -18,37 +18,68 @@ Instructions for AI agents writing the labrep library.
 
 No exceptions. No "I'll add tests later." The test comes first.
 
-## No Deferred Work. No Ignored Failures.
+## No Deferred Work. No Ignored Failures. No "Later".
 
-**NEVER leave broken things for later.** These patterns are strictly forbidden:
+**NEVER leave broken things for later. There is no "later".**
+
+When the work is hard — and it will be hard — you will feel the urge to skip something, stub it out, or leave a TODO. **This is exactly the moment you must not do that.** The hard parts are the whole point. Deferring them means the problem compounds and the next attempt inherits a broken foundation.
+
+These patterns are **strictly forbidden**:
 
 - "Implement later" / "TODO: fix this" / "Decided to defer"
 - Skipping or `.skip()`-ing a failing test instead of fixing the code
+- Stubbing a function to return `null` and moving on
 - Loose test tolerances that paper over wrong answers (e.g., ±13% "close enough")
 - Silently swallowing errors (e.g., producing an invalid result instead of failing)
 - Comments like "approximate — may have ~30% error"
+- Scaffolding without implementation ("the structure is in place for future work")
 
 If a test fails, **fix the code until it passes**. If code produces wrong results, **fix the algorithm**. If you can't fix it right now, **say so and stop** — do not hide the problem behind a loose assertion or a TODO comment. Every workaround becomes permanent. Every ignored failure trains the next agent to accept broken output.
 
-## Research Before Implementing
+## OCCT Is Your Primary Reference. Use It.
 
-**Do not "first principles" everything.** Before writing complex geometric algorithms:
+**OpenCASCADE (OCCT) has correct, battle-tested solutions to every problem you will face.** Do not invent your own approach when OCCT already solves it. This is not optional guidance — it is a hard requirement.
 
-1. **Read the OCCT source** in `library/opencascade/`. It solves these problems to a very high level. Understand the approach before writing your own version.
-2. **Search the web** for blog posts, papers, and open-source implementations. Surface-surface intersection, boolean operations, and tessellation are well-studied — leverage existing knowledge.
-3. **Read `background/`** for curated notes on algorithms, formats, and architecture.
+Before implementing **anything**:
+
+1. **Read the OCCT source** in `library/opencascade/`. Find the class or algorithm that corresponds to what you're building. Read it. Understand the data structures, the edge cases it handles, and the design decisions it makes.
+2. **Map OCCT's design to our code.** If OCCT's lower-level objects have methods or fields that our corresponding types lack, **add them first**. Do not build higher-level features on top of incomplete foundations. If `BRep_TEdge` stores a list of PCurves and our `Edge` doesn't, fix that before proceeding.
+3. **Search the web** for blog posts, papers, and open-source implementations. Surface-surface intersection, boolean operations, and tessellation are well-studied — leverage existing knowledge.
+4. **Read `background/`** for curated notes on algorithms, formats, and architecture.
+
+**Do not diverge from OCCT's approach without an explicit, documented reason.** "I felt like doing it differently" is not a reason. OCCT's design reflects decades of production use and edge-case discovery. When you deviate, you lose that accumulated knowledge and will rediscover the same problems the hard way.
 
 You are not inventing computational geometry from scratch. You are implementing known algorithms in TypeScript, guided by production-quality reference implementations.
 
-## Test Quality: No False Positives
+## Test Quality: Rigorous, Detailed, Adversarial
 
-Tests must be **aggressive**, not ceremonial:
+Tests must be **aggressive**, not ceremonial. **Invest serious effort in testing.** A thorough test suite is the single most valuable thing you can produce — it catches bugs early, prevents regressions, and gives confidence that the implementation actually works. Skimping on tests to "move faster" always costs more time in the end.
+
+### What to test
 
 - **Test edge cases and known trouble spots**, not just the happy path. For geometry: tangent configurations, degenerate inputs, near-tolerance values, axis-aligned and non-axis-aligned cases.
-- **Use tight tolerances.** If the expected answer is 92, assert `toBeCloseTo(92, 1)` — not `toBeGreaterThan(75)`.
-- **Test topology, not just volume.** Check shell closure, face counts, normal consistency — not just that a number looks roughly right.
+- **Use tight tolerances.** If the expected answer is 92, assert `toBeCloseTo(92, 1)` — not `toBeGreaterThan(75)`. Compute the expected answer analytically wherever possible.
+- **Test topology, not just volume.** Check shell closure, face counts, edge counts, normal consistency — not just that a number looks roughly right.
 - **Vary inputs.** If all tests use the same two axis-aligned boxes, they prove nothing about the general case. Test different offsets, orientations, containment, touching, and non-overlapping configurations.
 - **Test the invariants.** For booleans: V(A) + V(B) = V(union) + V(intersect). For tessellation: triangle area sums to face area. These catch bugs that individual tests miss.
+
+### What "detailed" means
+
+Don't just test that a function returns *something*. Test that it returns the *right thing*:
+
+- If a boolean produces a solid, verify its **exact volume**, **face count**, **shell closure**, and that **every face normal points outward**.
+- If an intersection returns a curve, verify its **center**, **radius**, **start/end points**, and **orientation**.
+- If a trimmed face is produced, verify its **boundary edges form a closed loop**, the **surface type is preserved**, and **points inside the trim are on the surface**.
+
+### What "adversarial" means
+
+Write the tests that you hope will pass but suspect might not:
+
+- Tangent sphere just kissing a face
+- Cylinder axis parallel to a box edge (degenerate intersection)
+- Subtraction that leaves a paper-thin wall
+- Two solids sharing an exact face (coplanar)
+- Near-zero-volume intersection slivers
 
 A test suite that passes on broken code is worse than no tests — it gives false confidence.
 
@@ -202,11 +233,11 @@ Keep dependencies minimal:
 
 ## When Stuck
 
-1. Check `background/` for relevant documentation
-2. Look at OCCT implementation in `library/opencascade/`
-3. Search for academic papers on the algorithm
-4. Document what you learn (even if incomplete)
-5. Ask for help if truly blocked
+1. **Read the OCCT source first** — `library/opencascade/` has the answer. Find the equivalent class, read the `.cxx` implementation, understand the algorithm.
+2. Check `background/` for curated notes on the topic.
+3. Search the web for papers, blog posts, and other implementations.
+4. Document what you learn (even if incomplete).
+5. Ask for help if truly blocked — but only after you have read the OCCT source.
 
 ## Commit Messages
 
