@@ -67,7 +67,7 @@ labrep/
 
 ✅ **Phase 11: Boolean Operations + STEP** — Complete (union, subtract, intersect with exact volumes, STEP round-trip)
 
-🔧 **Phase 12: Solid Tessellation** — In progress (planar face tessellation complete, curved surfaces next)
+✅ **Phase 12: Solid Tessellation** — Complete (solidToMesh for all surface types, ear clipping for concave polygons, 37 tests)
 
 See [`design/README.md`](design/README.md) for full phase breakdown and design docs.
 

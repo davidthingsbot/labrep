@@ -545,4 +545,81 @@ describe('solidToMesh', () => {
       expect(meshTriangleCount(coneMesh.result!)).toBeGreaterThanOrEqual(coneFaces.length);
     });
   });
+
+  // ═══════════════════════════════════════════════════════
+  // CONCAVE POLYGON TESTS (ear clipping)
+  // ═══════════════════════════════════════════════════════
+
+  describe('concave polygons (ear clipping)', () => {
+    it('star extrusion: mesh volume matches solid volume', () => {
+      // 5-pointed star: alternating outer/inner radii → concave 10-gon
+      const outerR = 3, innerR = 1.2;
+      const pts = [];
+      for (let i = 0; i < 10; i++) {
+        const angle = (i / 10) * 2 * Math.PI - Math.PI / 2;
+        const r = i % 2 === 0 ? outerR : innerR;
+        pts.push(point3d(r * Math.cos(angle), r * Math.sin(angle), 0));
+      }
+      const edges = pts.map((p, i) =>
+        makeEdgeFromCurve(makeLine3D(p, pts[(i + 1) % pts.length]).result!).result!,
+      );
+      const wire = makeWireFromEdges(edges).result!;
+      const ext = extrude(wire, vec3d(0, 0, 1), 2);
+      expect(ext.success).toBe(true);
+
+      const solid = ext.result!.solid;
+      const result = solidToMesh(solid);
+      expect(result.success).toBe(true);
+
+      const solidVol = solidVolume(solid);
+      const meshVol = meshVolume(result.result!);
+      expect(meshVol).toBeCloseTo(solidVol, 1);
+    });
+
+    it('L-shaped extrusion: mesh volume matches solid volume', () => {
+      // L-shape: concave hexagon
+      const pts = [
+        point3d(0, 0, 0), point3d(5, 0, 0), point3d(5, 2, 0),
+        point3d(2, 2, 0), point3d(2, 5, 0), point3d(0, 5, 0),
+      ];
+      const edges = pts.map((p, i) =>
+        makeEdgeFromCurve(makeLine3D(p, pts[(i + 1) % pts.length]).result!).result!,
+      );
+      const wire = makeWireFromEdges(edges).result!;
+      const ext = extrude(wire, vec3d(0, 0, 1), 3);
+      expect(ext.success).toBe(true);
+
+      const solid = ext.result!.solid;
+      const result = solidToMesh(solid);
+      expect(result.success).toBe(true);
+
+      // L-shape area = 5*2 + 2*3 = 16, volume = 16 * 3 = 48
+      const solidVol = solidVolume(solid);
+      expect(solidVol).toBeCloseTo(48, 1);
+      const meshVol = meshVolume(result.result!);
+      expect(meshVol).toBeCloseTo(48, 1);
+    });
+
+    it('star top face produces correct triangle count (n-2)', () => {
+      const outerR = 3, innerR = 1.2;
+      const pts = [];
+      for (let i = 0; i < 10; i++) {
+        const angle = (i / 10) * 2 * Math.PI - Math.PI / 2;
+        const r = i % 2 === 0 ? outerR : innerR;
+        pts.push(point3d(r * Math.cos(angle), r * Math.sin(angle), 0));
+      }
+      const edges = pts.map((p, i) =>
+        makeEdgeFromCurve(makeLine3D(p, pts[(i + 1) % pts.length]).result!).result!,
+      );
+      const wire = makeWireFromEdges(edges).result!;
+      const ext = extrude(wire, vec3d(0, 0, 1), 2);
+      const result = solidToMesh(ext.result!.solid);
+      const mesh = result.result!;
+
+      // Star has 10 vertices per cap → 8 triangles per cap,
+      // 10 side quads → 20 side triangles, 2 caps → 16
+      // Total: 36 triangles
+      expect(meshTriangleCount(mesh)).toBe(36);
+    });
+  });
 });

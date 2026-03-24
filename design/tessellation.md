@@ -97,16 +97,17 @@ This gives vertices in the wire's traversal order, suitable for fan triangulatio
 
 ---
 
-## Implementation Order
+## Implementation Order (completed 2026-03-24)
 
-1. **`solidToMesh` with planar faces only** — covers box, extrude results, boolean results
-2. **Tests** — box gives 12 triangles, correct normals, mesh volume ≈ solid volume
-3. **App example** — shaded boolean results with colored faces
-4. **Cylindrical faces** — covers extrude side faces with arc profiles
-5. **Spherical, conical, toroidal** — covers revolve results
-6. **Revolution surfaces** — general case
-
-Step 1 is the immediate priority — it unblocks shaded rendering for all current examples.
+1. ✅ `solidToMesh` with planar faces (fan triangulation)
+2. ✅ Tests — box, boolean results, volume cross-checks
+3. ✅ App examples — shaded boolean results, 3 mesh demo pages
+4. ✅ Cylindrical faces — parametric (θ, v) grid
+5. ✅ Conical faces — parametric grid with pole/apex fan handling
+6. ✅ Spherical faces — via polygon-approximated revolve profiles
+7. ✅ Revolution surfaces — general parametric tessellation
+8. ✅ Ear clipping — concave polygon support (star, L-shapes)
+9. ✅ Cone normal fix — `normalConicalSurface` handles negative radius
 
 ---
 
@@ -116,20 +117,22 @@ OCCT's tessellation lives in `BRepMesh_IncrementalMesh`. Key insights:
 - Uses Delaunay triangulation for curved faces
 - Respects `LinearDeflection` and `AngularDeflection` parameters
 - Stores mesh on the shape (cached)
-- We don't need that complexity for planar faces — fan triangulation suffices
+- Our approach: ear clipping for planar faces, parametric grids for curved faces
 
 ---
 
 ## Validation
 
-1. **Triangle count** — box should produce exactly 12 triangles (2 per face)
-2. **Normal consistency** — all normals should point outward (dot with known outward direction > 0)
-3. **Volume cross-check** — sum of signed tetrahedra volumes from mesh ≈ `solidVolume()` result
-4. **Visual** — shaded render should look correct (no inside-out faces, no gaps)
+1. **Triangle count** — box produces exactly 12 triangles (2 per face)
+2. **Normal consistency** — all normals point outward (verified at sphere poles)
+3. **Volume cross-check** — mesh volume ≈ `solidVolume()` for all primitives
+4. **Spatial coverage** — bounding box reaches all extremes for every primitive
+5. **No degenerate triangles** — pole/apex fan tessellation eliminates zero-area triangles
+6. **Concave polygons** — ear clipping produces correct triangulation for star and L-shapes
 
 ---
 
-## Implemented API (2026-03-24)
+## Implemented API (2026-03-24, updated end of session)
 
 ### `solidToMesh(solid, options?) → OperationResult<Mesh>`
 
@@ -151,65 +154,92 @@ if (result.success) {
 }
 ```
 
-**Current scope:** Planar faces only (fan triangulation). Non-planar faces (cylindrical, spherical, etc.) are silently skipped. This covers:
-- All faces from `extrude()` results
-- All faces from `booleanUnion/Subtract/Intersect()` results
-- Box primitives (via extrude)
-- Any solid with only planar faces
+**Supported surface types:**
 
-**Normals:** Uses the face's `PlaneSurface` plane normal directly (analytic, exact). All vertices of a planar face share the same normal, giving flat shading. Each face gets its own set of vertices (not shared across faces) so normals are discontinuous at edges.
+| Surface Type | Tessellation Method | Normals |
+|-------------|-------------------|---------|
+| Planar | Ear clipping (handles convex and concave) | Face plane normal (flat shading) |
+| Cylindrical | Parametric (θ, v) grid, 1 row along axis | Analytic radial normal (smooth) |
+| Conical | Parametric grid + apex fan | Analytic, negated when r(v) < 0 |
+| Spherical | Parametric (θ, φ) grid | Analytic radial normal |
+| Toroidal | Parametric (θ, φ) grid | Analytic normal |
+| Revolution | Parametric (θ, v) grid, v from basis curve | Analytic cross-product normal |
 
-**Triangle generation:** Fan triangulation from vertex 0 of each face's outer wire. For a polygon with N vertices, produces N-2 triangles. A box (6 quad faces) produces 12 triangles with 24 vertices.
+**Planar face tessellation:** Uses ear clipping algorithm that works for all simple polygons (convex and concave). Projects 3D vertices to 2D via `worldToSketch`, triangulates in 2D, maps indices back to 3D vertices. For a polygon with N vertices, produces N-2 triangles.
 
-**Options (reserved for curved surfaces):**
+**Curved face tessellation:** Determines parameter bounds from wire edge geometry (detecting full circles, arcs). Generates a regular (u, v) parametric grid. Uses analytic surface `evaluate()` and `normal()` functions for exact positions and smooth-shading normals.
+
+**Pole/apex handling:** When one end of the v parameter range converges to a single point (cone apex, sphere pole), uses fan triangulation from a single apex vertex to the adjacent ring. Apex normal is computed as the average of the ring's normals, avoiding the surface normal singularity at the pole.
+
+**Curved edge sampling:** For planar faces bounded by circle or arc edges (e.g., disk caps of a cylinder), the wire is sampled with configurable segment count to approximate the curve.
+
+**Options:**
 
 ```typescript
 interface TessellationOptions {
   linearDeflection?: number;   // Max chord-to-surface distance (default: 0.1)
   angularDeflection?: number;  // Max angle between adjacent normals (default: π/12)
-  minSegments?: number;        // Min subdivisions per curved edge (default: 8)
+  minSegments?: number;        // Min subdivisions per curved edge (default: 24)
 }
 ```
 
-Options are accepted but not yet used — they will control curved surface tessellation density.
+`minSegments` controls the number of divisions around curved surfaces (default 24). `linearDeflection` and `angularDeflection` are reserved for future adaptive refinement.
+
+### Key Bug Fixes
+
+1. **Cone normal for negative radius** (`generation/src/surfaces/conical-surface.ts`): When the effective radius `r(v) = radius + v·sin(α)` goes negative, the surface folds through the axis and the outward normal reverses. The `normalConicalSurface` function now detects this and negates the normal. This was causing sphere pole caps to shade as if facing the wrong way.
+
+2. **Ear clipping for concave polygons** (`generation/src/mesh/tessellation.ts`): Fan triangulation only works for convex polygons. Star-shaped faces, L-shaped boolean results, and other concave planar faces produced overlapping triangles. Replaced with ear clipping algorithm that works for all simple polygons.
+
+3. **Degenerate triangles at poles**: The original parametric grid generated triangles where all vertices converged to the apex point (zero area). Now uses fan triangulation from a single apex vertex, eliminating degenerate triangles entirely.
 
 ### Test Coverage
 
-**File:** `generation/tests/mesh/tessellation.test.ts` (14 tests)
+**File:** `generation/tests/mesh/tessellation.test.ts` (37 tests)
 
-| Test | What it verifies |
-|------|-----------------|
-| Box → succeeds | `solidToMesh` returns success for a simple box |
-| Box → valid mesh | Passes `validateMesh()` (normals length matches vertices, indices in range) |
-| Box → 12 triangles | 6 faces × 2 triangles per quad = 12 |
-| Box → 24 vertices | 4 vertices per face × 6 faces (flat shading, unshared) |
-| Box → unit normals | All normals have length 1.0 |
-| Box → volume matches | Mesh volume (signed tetrahedra) ≈ `solidVolume()` |
-| Subtract → succeeds | Boolean subtract result tessellates successfully |
-| Subtract → valid mesh | Passes validation |
-| Subtract → volume 28.0 | Mesh volume matches expected subtract result |
-| Union → succeeds | Boolean union result tessellates |
-| Union → volume 92.0 | Mesh volume matches expected |
-| Intersect → succeeds | Boolean intersect result tessellates |
-| Intersect → volume 36.0 | Mesh volume matches expected |
-| Tall box → volume 30.0 | Non-cubic box (2×3×5) for shape generality |
+**Basic planar:**
+- Box: succeeds, valid mesh, 12 triangles, 24 vertices, unit normals, volume matches
+- Boolean subtract/union/intersect: mesh volume matches solid volume
+- Tall box: non-cubic dimensions
+
+**Curved surfaces:**
+- Cylinder (revolved rectangle): succeeds, valid mesh, >20 triangles, unit normals, volume ≈ πr²h (within 3%)
+- Cone (revolved triangle): succeeds, volume ≈ ⅓πr²h
+- Sphere (revolved polygon semicircle): succeeds, volume ≈ ⁴⁄₃πr³ (within 10%)
+
+**Spatial coverage:**
+- Box, cylinder, cone, sphere bounding boxes cover full expected extent
+- Sphere reaches both poles (z_max ≈ r, z_min ≈ -r)
+- Cone apex reached (z_max = h)
+
+**Normal direction:**
+- Sphere top pole normals point upward (avg nz > 0)
+- Sphere bottom pole normals point downward (avg nz < 0)
+- No NaN or Infinity in any primitive's vertices or normals
+- Zero degenerate triangles at cone apex
+
+**Concave polygons (ear clipping):**
+- Star extrusion (10-vertex concave polygon): mesh volume matches solid volume
+- L-shaped extrusion (concave hexagon): volume = 48.0
+- Star face produces correct triangle count (n-2 per face)
+
+**Every face contributes:** Box, cylinder, cone all have at least as many triangles as faces.
 
 ### App Examples
 
-Three viewer examples demonstrate the tessellation (registered after Revolve examples):
+Six viewer examples use `solidToMesh` (3 mesh demos + 3 boolean examples with shaded rendering):
 
 | ID | Name | What it shows |
 |----|------|---------------|
-| `mesh-primitives` | Mesh: Primitives | Box, triangular prism, hexagonal prism with animated dimensions |
-| `mesh-extrude-revolve` | Mesh: Extrude & Revolve | L-bracket (fully shaded) + revolved annulus (caps shaded, curves wireframe) |
-| `mesh-complex` | Mesh: Complex Solids | Star extrude, union tower stack, notched L-bracket (subtract) |
+| `mesh-primitives` | Mesh: Primitives | Box, hexagon (extruded) + cylinder, cone, sphere (revolved) — animated dimensions |
+| `mesh-extrude-revolve` | Mesh: Extrude & Revolve | L-bracket (fully shaded) + revolved annulus (wireframe + planar caps) |
+| `mesh-complex` | Mesh: Complex Solids | Star extrusion, stepped tower (union stack), notched L-bracket (subtract) |
+| `boolean-basic` | Boolean Basic | Shaded union/subtract/intersect results with orbiting boxes |
+| `boolean-shapes` | Boolean Shapes | Shaded L-bracket with orbiting box (subtract/intersect) |
 
 ### Remaining Work
 
-- [ ] Cylindrical face tessellation (parametric u,v sampling)
-- [ ] Spherical face tessellation (lat/lon grid with pole handling)
-- [ ] Conical face tessellation
-- [ ] Toroidal face tessellation
-- [ ] Revolution surface tessellation (general)
 - [ ] Inner wire (hole) support via constrained triangulation
-- [ ] Concave polygon support via ear clipping (fan triangulation only handles convex)
+- [ ] Adaptive refinement using `linearDeflection` / `angularDeflection` options
+- [ ] Extrusion surface tessellation (currently only planar extrusions handled)
+- [ ] Mesh caching (avoid re-tessellating unchanged solids)

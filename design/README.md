@@ -1037,7 +1037,7 @@ Functions:
 ├── solidToMesh(solid, options?) → Mesh
 ├── faceToTriangles(face) → { vertices, normals, indices }
 │
-├── Planar faces: fan triangulation from wire vertices
+├── Planar faces: ear clipping triangulation (convex + concave)
 ├── Cylindrical faces: parametric sampling (u along axis, v around circumference)
 ├── Spherical faces: lat/lon parametric grid
 ├── Conical faces: parametric sampling (u along axis, v around circumference)
@@ -1066,6 +1066,8 @@ App Examples:
 ```
 
 **Exit Criteria:** Any solid from extrude, revolve, or booleans can be rendered as a shaded mesh with correct normals. Analytic surfaces get smooth shading.
+
+**Status (2026-03-24):** Complete. All surface types tessellated. Ear clipping handles concave polygons. Cone normal fix for negative radius. 37 tests, 6 app examples.
 
 ---
 
@@ -1309,7 +1311,7 @@ describe('extrude', () => {
 | [extrude.md](./extrude.md) | Phase 8: Extrude operations + STEP solid export | ✅ Complete |
 | [occt-gap-analysis.md](./occt-gap-analysis.md) | OCCT structural alignment analysis | ✅ Complete |
 | [boolean-operations-impl.md](./boolean-operations-impl.md) | Phase 11: Boolean operations implementation | ✅ Complete |
-| [tessellation.md](./tessellation.md) | Phase 12: Solid → Mesh tessellation | 🔧 In Progress |
+| [tessellation.md](./tessellation.md) | Phase 12: Solid → Mesh tessellation | ✅ Complete |
 
 ## Adding a Design Document
 

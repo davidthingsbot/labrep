@@ -170,7 +170,7 @@ export function MeshExtrudeRevolveExample({ animationAngle }: ExampleProps) {
         {/* Shaded planar caps (what solidToMesh can tessellate now) */}
         {revGeo && (
           <mesh geometry={revGeo}>
-            <meshStandardMaterial color="#60a5fa" side={THREE.DoubleSide} transparent opacity={0.7} />
+            <meshStandardMaterial color="#60a5fa" side={THREE.DoubleSide} transparent opacity={0.9} />
           </mesh>
         )}
 

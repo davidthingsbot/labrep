@@ -1,4 +1,4 @@
-import { Point3D, Vector3D, normalize, dot, cross, vec3d, subtractPoints } from '../core';
+import { Point3D, Point2D, Vector3D, normalize, dot, cross, vec3d, subtractPoints, worldToSketch } from '../core';
 import { Mesh, createMesh, OperationResult, success, failure } from './mesh';
 import { Solid } from '../topology/solid';
 import { Face, Surface } from '../topology/face';
@@ -119,6 +119,105 @@ function sampleWireForTessellation(face: Face, segments: number = 24): Point3D[]
   return pts;
 }
 
+// ═══════════════════════════════════════════════════════
+// EAR CLIPPING TRIANGULATION
+// ═══════════════════════════════════════════════════════
+
+/** 2D cross product (z-component of 3D cross product). */
+function cross2d(ux: number, uy: number, vx: number, vy: number): number {
+  return ux * vy - uy * vx;
+}
+
+/**
+ * Check if point p is strictly inside triangle (a, b, c).
+ * Uses cross product sign method — works for both CW and CCW triangles.
+ */
+function pointInTriangle(
+  px: number, py: number,
+  ax: number, ay: number, bx: number, by: number, cx: number, cy: number,
+): boolean {
+  const d1 = cross2d(bx - ax, by - ay, px - ax, py - ay);
+  const d2 = cross2d(cx - bx, cy - by, px - bx, py - by);
+  const d3 = cross2d(ax - cx, ay - cy, px - cx, py - cy);
+
+  const hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+  const hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+  // Inside if all same sign (all positive or all negative)
+  return !(hasNeg && hasPos);
+}
+
+/**
+ * Ear clipping triangulation for a simple polygon (convex or concave).
+ *
+ * @param pts - Ordered 2D vertices of a simple polygon (CW or CCW)
+ * @returns Array of index triples into the original pts array
+ */
+function earClipTriangulate(pts: Point2D[]): number[] {
+  const n = pts.length;
+  if (n < 3) return [];
+  if (n === 3) return [0, 1, 2];
+
+  // Determine winding: positive signed area = CCW
+  let area = 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+  }
+  const ccw = area > 0;
+
+  // Mutable index list
+  const remaining = Array.from({ length: n }, (_, i) => i);
+  const indices: number[] = [];
+  let safety = n * n; // prevent infinite loop on degenerate input
+
+  while (remaining.length > 3 && safety-- > 0) {
+    let earFound = false;
+
+    for (let k = 0; k < remaining.length; k++) {
+      const len = remaining.length;
+      const iPrev = remaining[(k + len - 1) % len];
+      const iCurr = remaining[k];
+      const iNext = remaining[(k + 1) % len];
+
+      const ax = pts[iPrev].x, ay = pts[iPrev].y;
+      const bx = pts[iCurr].x, by = pts[iCurr].y;
+      const cx = pts[iNext].x, cy = pts[iNext].y;
+
+      // Check convexity: for CCW polygon, ear vertex should be a left turn
+      const cp = cross2d(bx - ax, by - ay, cx - bx, cy - by);
+      if (ccw ? cp <= 0 : cp >= 0) continue; // Reflex vertex, skip
+
+      // Check no other vertex is inside the triangle
+      let containsOther = false;
+      for (let m = 0; m < remaining.length; m++) {
+        const iTest = remaining[m];
+        if (iTest === iPrev || iTest === iCurr || iTest === iNext) continue;
+        if (pointInTriangle(pts[iTest].x, pts[iTest].y, ax, ay, bx, by, cx, cy)) {
+          containsOther = true;
+          break;
+        }
+      }
+      if (containsOther) continue;
+
+      // This is an ear — emit triangle and remove the vertex
+      indices.push(iPrev, iCurr, iNext);
+      remaining.splice(k, 1);
+      earFound = true;
+      break;
+    }
+
+    if (!earFound) break; // Degenerate polygon — stop
+  }
+
+  // Emit final triangle
+  if (remaining.length === 3) {
+    indices.push(remaining[0], remaining[1], remaining[2]);
+  }
+
+  return indices;
+}
+
 function tessellatePlanarFace(face: Face): FaceTessellation | null {
   if (face.surface.type !== 'plane') return null;
 
@@ -130,20 +229,19 @@ function tessellatePlanarFace(face: Face): FaceTessellation | null {
   const verts = hasCurvedEdge ? sampleWireForTessellation(face) : wireVertices(face);
   if (verts.length < 3) return null;
 
-  const n = face.surface.plane.normal;
+  const pl = face.surface.plane;
+  const n = pl.normal;
+
+  // Project to 2D for ear clipping triangulation
+  const pts2d = verts.map(v => worldToSketch(pl, v));
+  const indices = earClipTriangulate(pts2d);
 
   const vertices: number[] = [];
   const normals: number[] = [];
-  const indices: number[] = [];
 
   for (const v of verts) {
     vertices.push(v.x, v.y, v.z);
     normals.push(n.x, n.y, n.z);
-  }
-
-  // Fan triangulation from vertex 0
-  for (let i = 1; i < verts.length - 1; i++) {
-    indices.push(0, i, i + 1);
   }
 
   return { vertices, normals, indices };
