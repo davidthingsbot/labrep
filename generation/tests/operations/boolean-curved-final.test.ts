@@ -301,6 +301,32 @@ describe('F3: box − cylinder (through-hole)', () => {
     expect(types['cylinder'] ?? 0).toBeGreaterThan(0);
   });
 
+  it('through-hole: 4-edge wire (2 circles + 2 seams) is valid', () => {
+    // Simulate what buildTrimmedCurvedFace does with 2 circle edges
+    const e0 = makeEdgeFromCurve(makeCircle3D(plane(point3d(0, 0, 2), vec3d(0, 0, 1), vec3d(1, 0, 0)), 0.5).result!).result!;
+    const e1 = makeEdgeFromCurve(makeCircle3D(plane(point3d(0, 0, -2), vec3d(0, 0, 1), vec3d(1, 0, 0)), 0.5).result!).result!;
+
+    const p0 = point3d(e0.startVertex.point.x, e0.startVertex.point.y, e0.startVertex.point.z);
+    const p1 = point3d(e1.startVertex.point.x, e1.startVertex.point.y, e1.startVertex.point.z);
+
+    const seamDown = makeEdgeFromCurve(makeLine3D(p0, p1).result!).result!;
+    const seamUp = makeEdgeFromCurve(makeLine3D(p1, p0).result!).result!;
+
+    // e0(false): circle at z=2, reversed — starts at (0.5,0,2) ends at (0.5,0,2)
+    // seamDown: (0.5,0,2) → (0.5,0,-2)
+    // e1(true): circle at z=-2 — starts at (0.5,0,-2) ends at (0.5,0,-2)
+    // seamUp: (0.5,0,-2) → (0.5,0,2)
+    const w = makeWire([
+      orientEdge(e0, false),
+      orientEdge(seamDown, true),
+      orientEdge(e1, true),
+      orientEdge(seamUp, true),
+    ]);
+    expect(w.success).toBe(true);
+    expect(w.result!.isClosed).toBe(true);
+    expect(w.result!.edges).toHaveLength(4);
+  });
+
   it('through-hole: shared edges are created for both top and bottom', () => {
     const box = makeBox(0, 0, -2, 4, 4, 4);
     const cyl = makeCylinder(0.5, 6);
