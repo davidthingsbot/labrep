@@ -491,6 +491,15 @@ function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on
     const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
     const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
     centroid = point3d((start.x + end.x) / 2, (start.y + end.y) / 2, (start.z + end.z) / 2);
+  } else if (wire.edges.length === 1 && wire.edges[0].edge.curve.isClosed &&
+             wire.edges[0].edge.curve.type === 'circle3d') {
+    // Planar face bounded by a single circle (disk from splitPlanarFaceByCircle).
+    // The single wire vertex lies on the circle (exactly on both plane and curved
+    // surface), making it a terrible centroid candidate — nudging from it lands
+    // right on the boundary. Use the circle center instead, which is properly
+    // interior to the disk.
+    const circlePlane = (wire.edges[0].edge.curve as any).plane;
+    centroid = circlePlane.origin as Point3D;
   } else {
     let cx = 0, cy = 0, cz = 0, n = 0;
     for (const oe of wire.edges) {
@@ -777,18 +786,31 @@ export function booleanOperation(
       // center is "near" this face (the circle midpoint should be classifiable
       // relative to this face's boundary).
       const sharedEdgesForFace: Edge[] = [];
+
+      // Check if this face has a degenerate wire (natural restriction).
+      // Natural restriction faces (e.g., 1-face sphere from single semicircle revolve)
+      // have a wire consisting of a single seam edge traversed forward+reverse.
+      // The wire vertices only cover the poles/seam, NOT the full surface extent,
+      // making bbox-based containment checks meaningless. For these faces, accept
+      // all shared circle edges unconditionally.
+      //
+      // Based on OCCT: BRepGProp_Gauss detects natural restriction via NbChildren==0.
+      const isNaturalRestriction = isNaturalRestrictionWire(faceB.outerWire);
+
       for (let aIdx = 0; aIdx < facesOfA.length; aIdx++) {
         const edge = sharedCircleEdges.get(`${aIdx}:${bIdx}`);
         if (!edge) continue;
-        // Check: does this circle edge lie on this curved face?
-        // Test the circle's start point — if it's a vertex of this face's wire
-        // or close to a point on this face, the circle cuts this face.
+
+        if (isNaturalRestriction) {
+          // Natural restriction face — wire is degenerate, accept all shared edges
+          sharedEdgesForFace.push(edge);
+          continue;
+        }
+
+        // Multiple faces share this surface (e.g., 2-hemisphere sphere).
+        // Use the circle center to determine which face the circle belongs to.
+        // Check against the face's wire-vertex bounding box.
         const circlePt = edgeStartPoint(edge);
-        // Check: does this circle actually lie on this specific curved face?
-        // For sphere faces that share a surface, the circle from a plane intersection
-        // only cuts through ONE of the faces. Use the circle center (not start point)
-        // and verify it falls within the face's bounding box (tight, no margin).
-        // The circle center = the plane-surface intersection center.
         const circleCenter = edge.curve.type === 'circle3d'
           ? (edge.curve as any).plane.origin as Point3D
           : circlePt;
@@ -995,6 +1017,24 @@ export function booleanOperation(
     facesFromA,
     facesFromB,
   });
+}
+
+/**
+ * Detect a natural restriction wire: a wire consisting of the same edge
+ * traversed forward and reversed (a seam). Such faces use the full surface
+ * parametric domain and have no meaningful spatial extent from their wire
+ * vertices alone.
+ *
+ * Based on OCCT: NbChildren() == 0 means the face has no edge topology.
+ */
+function isNaturalRestrictionWire(wire: Wire): boolean {
+  const edges = wire.edges;
+  if (edges.length === 2) {
+    if (edges[0].edge === edges[1].edge && edges[0].forward !== edges[1].forward) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ═══════════════════════════════════════════════════════
