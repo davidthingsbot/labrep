@@ -211,47 +211,16 @@ function computeCurvedFaceVolume(face: Face): number {
  */
 function computeParametricFaceVolume(face: Face, N: number): number {
   const surface = face.surface;
-  const wire = faceOuterWire(face);
 
-  // Collect boundary points and project to UV to find parameter bounds
-  const uvPts: { u: number; v: number }[] = [];
-  for (const oe of wire.edges) {
-    const e = oe.edge;
-    const nSamples = e.curve.type === 'line3d' ? 2 : N;
-    for (let i = 0; i < nSamples; i++) {
-      const tStart = oe.forward ? e.startParam : e.endParam;
-      const tEnd = oe.forward ? e.endParam : e.startParam;
-      const t = tStart + (i / nSamples) * (tEnd - tStart);
-      const pt = evaluateCurve(e.curve, t);
-      const uv = projectPointToSurface(surface, pt);
-      if (uv) uvPts.push(uv);
-    }
-  }
-
-  if (uvPts.length < 3) return 0;
-
-  // Find UV bounds
-  let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
-  for (const uv of uvPts) {
-    if (uv.u < uMin) uMin = uv.u;
-    if (uv.u > uMax) uMax = uv.u;
-    if (uv.v < vMin) vMin = uv.v;
-    if (uv.v > vMax) vMax = uv.v;
-  }
-
-  // Handle wrap-around for angular parameters
-  const hasNegU = uvPts.some(p => p.u < -Math.PI / 2);
-  const hasPosU = uvPts.some(p => p.u > Math.PI / 2);
-  if (hasNegU && hasPosU && (uMax - uMin) > Math.PI) {
-    for (const uv of uvPts) {
-      if (uv.u < 0) uv.u += 2 * Math.PI;
-    }
-    uMin = Infinity; uMax = -Infinity;
-    for (const uv of uvPts) {
-      if (uv.u < uMin) uMin = uv.u;
-      if (uv.u > uMax) uMax = uv.u;
-    }
-  }
+  // Determine UV bounds. Following OCCT's BRepGProp_Gauss approach:
+  // - "Natural restriction" faces (full surface, no real trim boundary) use
+  //   the surface's natural parametric range directly.
+  // - Trimmed faces derive bounds from the wire boundary.
+  //
+  // A face is natural-restriction if the wire is just a seam (same edge
+  // forward and reversed) or if it's a 2-hemisphere face where the wire
+  // traces a single meridian.
+  const { uMin, uMax, vMin, vMax } = getParametricBounds(face, N);
 
   // Face orientation: forward=true → surface normal points outward → positive volume.
   // forward=false → reversed face (cavity) → negative volume contribution.
@@ -281,6 +250,115 @@ function computeParametricFaceVolume(face: Face, N: number): number {
   }
 
   return (vol / 3) * orientSign;
+}
+
+/**
+ * Get the parametric UV bounds for a face's volume integration.
+ *
+ * For "natural restriction" faces (OCCT term: faces covering the full surface
+ * with no real trim boundary), uses the surface's natural parametric range.
+ * For trimmed faces, derives bounds from the wire boundary points.
+ *
+ * Based on OCCT BRepGProp_Gauss: isNaturalRestriction = (NbChildren == 0).
+ */
+function getParametricBounds(
+  face: Face,
+  N: number,
+): { uMin: number; uMax: number; vMin: number; vMax: number } {
+  const surface = face.surface;
+
+  // Check for natural restriction: the face covers the full surface.
+  // Detect this by checking if the wire is a seam (same edge fwd+rev)
+  // or if the wire boundary projects to a degenerate UV region.
+  if (isNaturalRestriction(face)) {
+    // Use the surface's natural parametric range
+    return getNaturalBounds(surface);
+  }
+
+  // Trimmed face: derive bounds from wire boundary
+  const wire = faceOuterWire(face);
+  const uvPts: { u: number; v: number }[] = [];
+  for (const oe of wire.edges) {
+    const e = oe.edge;
+    const nSamples = e.curve.type === 'line3d' ? 2 : N;
+    for (let i = 0; i < nSamples; i++) {
+      const tStart = oe.forward ? e.startParam : e.endParam;
+      const tEnd = oe.forward ? e.endParam : e.startParam;
+      const t = tStart + (i / nSamples) * (tEnd - tStart);
+      const pt = evaluateCurve(e.curve, t);
+      const uv = projectPointToSurface(surface, pt);
+      if (uv) uvPts.push(uv);
+    }
+  }
+
+  if (uvPts.length < 3) return getNaturalBounds(surface);
+
+  let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+  for (const uv of uvPts) {
+    if (uv.u < uMin) uMin = uv.u;
+    if (uv.u > uMax) uMax = uv.u;
+    if (uv.v < vMin) vMin = uv.v;
+    if (uv.v > vMax) vMax = uv.v;
+  }
+
+  // Handle wrap-around for angular parameters
+  const hasNegU = uvPts.some(p => p.u < -Math.PI / 2);
+  const hasPosU = uvPts.some(p => p.u > Math.PI / 2);
+  if (hasNegU && hasPosU && (uMax - uMin) > Math.PI) {
+    for (const uv of uvPts) {
+      if (uv.u < 0) uv.u += 2 * Math.PI;
+    }
+    uMin = Infinity; uMax = -Infinity;
+    for (const uv of uvPts) {
+      if (uv.u < uMin) uMin = uv.u;
+      if (uv.u > uMax) uMax = uv.u;
+    }
+  }
+
+  return { uMin, uMax, vMin, vMax };
+}
+
+/**
+ * Check if a face is a "natural restriction" — covering the full surface
+ * with no real trim boundary.
+ *
+ * Detection: a face whose wire consists of the same edge traversed forward
+ * and reversed (a seam), or whose wire projects to a degenerate UV area.
+ *
+ * Based on OCCT: NbChildren() == 0 (no edge topology).
+ */
+function isNaturalRestriction(face: Face): boolean {
+  const wire = faceOuterWire(face);
+  const edges = wire.edges;
+
+  // Case 1: wire has exactly 2 oriented edges using the SAME underlying edge
+  // (seam: forward + reversed). This is how our 1-face sphere is constructed.
+  if (edges.length === 2) {
+    if (edges[0].edge === edges[1].edge && edges[0].forward !== edges[1].forward) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Get the natural parametric bounds for a surface type.
+ */
+function getNaturalBounds(surface: Surface): { uMin: number; uMax: number; vMin: number; vMax: number } {
+  switch (surface.type) {
+    case 'sphere':
+      // θ ∈ [-π, π], φ ∈ [-π/2, π/2]
+      // Our atan2-based projection returns θ ∈ (-π, π], so use that range
+      return { uMin: -Math.PI, uMax: Math.PI, vMin: -Math.PI / 2, vMax: Math.PI / 2 };
+    case 'cylinder':
+      // θ ∈ [-π, π], v unbounded — use a reasonable default
+      return { uMin: -Math.PI, uMax: Math.PI, vMin: -10, vMax: 10 };
+    case 'cone':
+      return { uMin: -Math.PI, uMax: Math.PI, vMin: -10, vMax: 10 };
+    default:
+      return { uMin: 0, uMax: 2 * Math.PI, vMin: -Math.PI / 2, vMax: Math.PI / 2 };
+  }
 }
 
 /**

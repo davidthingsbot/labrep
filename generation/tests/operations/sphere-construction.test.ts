@@ -86,10 +86,7 @@ describe('sphere construction: 2-arc version (current)', () => {
 });
 
 describe('sphere construction: 1-arc version (single semicircle)', () => {
-  // The 1-arc sphere fails because revolve can't handle profiles where all
-  // vertices are on the axis. OCCT builds spheres with BRepPrimAPI_MakeSphere
-  // (not revolve). Fixing this requires revolve to handle pole-to-pole arcs.
-  it.skip('creates a valid revolve result', () => {
+  it('creates a valid revolve result', () => {
     const arcPlane = plane(point3d(0, 0, 0), vec3d(0, -1, 0), vec3d(1, 0, 0));
     const arc = makeArc3D(arcPlane, 1, -Math.PI / 2, Math.PI / 2);
     expect(arc.success).toBe(true);

@@ -58,6 +58,15 @@ function makeSphere(r: number) {
   ]).result!, Z_AXIS_3D, 2 * Math.PI).result!;
 }
 
+function makeSphere1Face(r: number) {
+  const arcPlane = plane(point3d(0, 0, 0), vec3d(0, -1, 0), vec3d(1, 0, 0));
+  const arc = makeArc3D(arcPlane, r, -Math.PI / 2, Math.PI / 2).result!;
+  const line = makeLine3D(point3d(0, 0, r), point3d(0, 0, -r)).result!;
+  return revolve(makeWireFromEdges([
+    makeEdgeFromCurve(arc).result!, makeEdgeFromCurve(line).result!,
+  ]).result!, Z_AXIS_3D, 2 * Math.PI).result!;
+}
+
 // ═══════════════════════════════════════════════════════
 // INTERSECTION DETECTION
 // ═══════════════════════════════════════════════════════
@@ -262,10 +271,88 @@ describe('manual box-with-hole + sphere-cap assembly', () => {
 // FULL BOOLEAN: SPHERE PARTIALLY OUTSIDE BOX
 // ═══════════════════════════════════════════════════════
 
-describe('booleanSubtract with sphere partially outside', () => {
-  it('box(z=-0.5..3.5) minus sphere(r=1) → closed shell', () => {
+describe('1-face sphere: shared edge lookup', () => {
+  it('circle center at z=-0.5 falls within 1-face sphere face z range', () => {
+    const sphere = makeSphere1Face(1);
+    const faces = shellFaces(sphere.solid.outerShell);
+    expect(faces.length).toBe(1);
+    const f = faces[0];
+    const verts = f.outerWire.edges.map(oe =>
+      oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge)
+    );
+    const zMin = Math.min(...verts.map(v => v.z));
+    const zMax = Math.max(...verts.map(v => v.z));
+    // 1-face sphere: z range should be -1..1 (full sphere)
+    expect(zMin).toBeCloseTo(-1, 2);
+    expect(zMax).toBeCloseTo(1, 2);
+    // Circle center at z=-0.5 should be in range
+    expect(-0.5).toBeGreaterThanOrEqual(zMin - 0.01);
+    expect(-0.5).toBeLessThanOrEqual(zMax + 0.01);
+  });
+
+  it('intersectPlaneSphere works for 1-face sphere', () => {
+    const sphere = makeSphere1Face(1);
+    const sphereSurf = shellFaces(sphere.solid.outerShell)[0].surface;
+    const bottomPlane = plane(point3d(0, 0, -0.5), vec3d(0, 0, 1), vec3d(1, 0, 0));
+    const result = intersectPlaneSphere(bottomPlane, sphereSurf as any);
+    expect(result.success).toBe(true);
+    expect(result.result).not.toBeNull();
+    expect(result.result!.radius).toBeCloseTo(Math.sqrt(0.75), 5);
+  });
+});
+
+describe('manual assembly: box with hole + trimmed 1-face sphere', () => {
+  it('5 box faces + 1 box face with hole + 1 flipped trimmed sphere → closed shell', () => {
     const box = makeBox(0, 0, -0.5, 4, 4, 4);
-    const sphere = makeSphere(1);
+    const sphere = makeSphere1Face(1);
+    const boxFaces = shellFaces(box.solid.outerShell);
+    const sphereFaces = shellFaces(sphere.solid.outerShell);
+    expect(sphereFaces.length).toBe(1);
+
+    // Find the bottom face (z=-0.5)
+    const bottomIdx = boxFaces.findIndex(f => {
+      if (f.surface.type !== 'plane') return false;
+      const verts = f.outerWire.edges.map(oe => oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge));
+      return verts.every(v => Math.abs(v.z - (-0.5)) < 0.01);
+    });
+    expect(bottomIdx).not.toBe(-1);
+
+    // Split bottom face by circle
+    const circle = { type: 'circle' as const, center: point3d(0, 0, -0.5), radius: Math.sqrt(0.75), normal: vec3d(0, 0, 1) };
+    const split = splitPlanarFaceByCircle(boxFaces[bottomIdx], circle);
+    expect(split).not.toBeNull();
+
+    // Build trimmed sphere face with shared edge
+    const trimWire = makeWire([orientEdge(split!.circleEdge, false)]);
+    expect(trimWire.success).toBe(true);
+    const trimmedSphere = makeFace(sphereFaces[0].surface, trimWire.result!);
+    expect(trimmedSphere.success).toBe(true);
+
+    // Flip for subtract
+    const flippedWire = makeWire([orientEdge(split!.circleEdge, true)]);
+    expect(flippedWire.success).toBe(true);
+    const flippedSphere = makeFace(sphereFaces[0].surface, flippedWire.result!, [], false);
+    expect(flippedSphere.success).toBe(true);
+
+    // Assemble
+    const selectedFaces: Face[] = [];
+    for (let i = 0; i < boxFaces.length; i++) {
+      if (i === bottomIdx) continue;
+      selectedFaces.push(boxFaces[i]);
+    }
+    selectedFaces.push(split!.outside); // box with hole
+    selectedFaces.push(flippedSphere.result!); // flipped sphere cap
+
+    const shell = makeShell(selectedFaces);
+    expect(shell.success).toBe(true);
+    expect(shell.result!.isClosed).toBe(true);
+  });
+});
+
+describe('booleanSubtract with sphere partially outside', () => {
+  it('box(z=-0.5..3.5) minus 1-face sphere(r=1) → closed shell', () => {
+    const box = makeBox(0, 0, -0.5, 4, 4, 4);
+    const sphere = makeSphere1Face(1);
     const result = booleanSubtract(box.solid, sphere.solid);
     // If it fails, inspect the error
     if (!result.success) {
@@ -296,7 +383,7 @@ describe('booleanSubtract with sphere partially outside', () => {
 
   it('result has correct face types: planar + sphere', () => {
     const box = makeBox(0, 0, -0.5, 4, 4, 4);
-    const sphere = makeSphere(1);
+    const sphere = makeSphere1Face(1);
     const result = booleanSubtract(box.solid, sphere.solid);
     // Show error message on failure
     expect(result.error ?? 'success').toBe('success');
