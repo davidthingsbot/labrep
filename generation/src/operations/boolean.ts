@@ -29,6 +29,8 @@ import { PlaneSurface, makePlaneSurface } from '../surfaces';
 import { pointInSolid } from './point-in-solid';
 import { trimCurvedFaceByPlanes } from './trim-curved-face';
 import { splitPlanarFaceByCircle } from './split-face-by-circle';
+import { intersectFaceFace } from './face-face-intersection';
+import { splitFaceByCurves } from './split-face';
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -584,6 +586,136 @@ function faceOutwardPointsInto(face: Face, ownSolid: Solid, otherSolid: Solid): 
 // CORE BOOLEAN PIPELINE
 // ═══════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════
+// GENERAL BOOLEAN PIPELINE (FFI-based)
+// ═══════════════════════════════════════════════
+
+/**
+ * General boolean pipeline using face-face intersection + generalized split.
+ *
+ * Handles ALL surface pair combinations by:
+ * 1. Pairwise face-face intersection → intersection edges per face
+ * 2. Split all faces by their intersection edges
+ * 3. Classify fragments
+ * 4. Select per operation rules
+ * 5. Assemble result
+ *
+ * Based on OCCT BOPAlgo_PaveFiller + BOPAlgo_Builder.
+ */
+function generalBooleanPipeline(
+  a: Solid,
+  b: Solid,
+  op: BooleanOp,
+  facesOfA: readonly Face[],
+  facesOfB: readonly Face[],
+): OperationResult<BooleanResult> {
+  // Stage 2: Pairwise face-face intersection
+  // For each face, collect all intersection edges that lie on it
+  const cutsForA = new Map<number, Edge[]>(); // faceIdx → edges
+  const cutsForB = new Map<number, Edge[]>();
+
+  for (let ai = 0; ai < facesOfA.length; ai++) {
+    for (let bi = 0; bi < facesOfB.length; bi++) {
+      // Quick AABB check on face pair
+      const bboxA = boundingBoxFromFace(facesOfA[ai]);
+      const bboxB = boundingBoxFromFace(facesOfB[bi]);
+      if (!bboxIntersects(bboxA, bboxB)) continue;
+
+      const ffi = intersectFaceFace(facesOfA[ai], facesOfB[bi]);
+      if (!ffi) continue;
+
+      for (const ffiEdge of ffi.edges) {
+        // Store the edge for both faces
+        const aEdges = cutsForA.get(ai) || [];
+        aEdges.push(ffiEdge.edge);
+        cutsForA.set(ai, aEdges);
+
+        const bEdges = cutsForB.get(bi) || [];
+        bEdges.push(ffiEdge.edge);
+        cutsForB.set(bi, bEdges);
+      }
+    }
+  }
+
+  // Stage 3: Split all faces
+  const allFacesA: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
+  const allFacesB: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
+
+  for (let ai = 0; ai < facesOfA.length; ai++) {
+    const cuts = cutsForA.get(ai) || [];
+    const splitResult = splitFaceByCurves(facesOfA[ai], cuts);
+    for (const frag of splitResult.fragments) {
+      allFacesA.push({ face: frag, classification: classifyFace(frag, b) });
+    }
+  }
+
+  for (let bi = 0; bi < facesOfB.length; bi++) {
+    const cuts = cutsForB.get(bi) || [];
+    const splitResult = splitFaceByCurves(facesOfB[bi], cuts);
+    for (const frag of splitResult.fragments) {
+      allFacesB.push({ face: frag, classification: classifyFace(frag, a) });
+    }
+  }
+
+  // Stage 4: Select faces per operation rules (same as legacy pipeline)
+  const selectedFaces: Face[] = [];
+  const facesFromA: Face[] = [];
+  const facesFromB: Face[] = [];
+
+  for (const { face, classification } of allFacesA) {
+    let keep = false;
+    if (op === 'union' && (classification === 'outside' || classification === 'on')) keep = true;
+    if (op === 'subtract' && (classification === 'outside' || classification === 'on')) keep = true;
+    if (op === 'intersect' && classification === 'inside') keep = true;
+
+    if (keep) {
+      selectedFaces.push(face);
+      facesFromA.push(face);
+    }
+  }
+
+  for (const { face, classification } of allFacesB) {
+    let keep = false;
+    if (op === 'union' && classification === 'outside') keep = true;
+    if (op === 'subtract' && classification === 'inside') keep = true;
+    if (op === 'intersect' && classification === 'inside') keep = true;
+
+    if (keep) {
+      if (op === 'subtract') {
+        const flipped = flipFace(face);
+        if (flipped.success) {
+          selectedFaces.push(flipped.result!);
+          facesFromB.push(flipped.result!);
+        }
+      } else {
+        selectedFaces.push(face);
+        facesFromB.push(face);
+      }
+    }
+  }
+
+  if (selectedFaces.length < 2) {
+    return failure(`Boolean ${op} produced only ${selectedFaces.length} faces — result is degenerate`);
+  }
+
+  // Stage 5: Stitch edges so adjacent faces share vertices, then assemble
+  const stitched = stitchEdges(selectedFaces);
+
+  const shellResult = makeShell(stitched);
+  if (!shellResult.success) return failure(`Shell creation failed: ${shellResult.error}`);
+
+  const solidResult = makeSolid(shellResult.result!);
+  if (!solidResult.success) {
+    return failure(`Solid creation failed (shell not closed): ${solidResult.error}`);
+  }
+
+  return success({
+    solid: solidResult.result!,
+    facesFromA,
+    facesFromB,
+  });
+}
+
 /**
  * Perform a boolean operation on two solids.
  *
@@ -609,13 +741,24 @@ export function booleanOperation(
     return success({ solid: a, facesFromA: [...shellFaces(a.outerShell)], facesFromB: [] });
   }
 
-  // Stage 2+3: Split faces and classify
-  // For each face, either keep it whole, split it, or handle coplanar overlap
-  const allFacesA: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
-  const allFacesB: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
-
   const facesOfA = shellFaces(a.outerShell);
   const facesOfB = shellFaces(b.outerShell);
+
+  // Detect if we need the general FFI pipeline.
+  // The legacy pipeline handles: planar-planar and planar-curved(subtract only).
+  // The general pipeline handles: everything via face-face intersection + split.
+  const hasCurvedA = facesOfA.some(f => f.surface.type !== 'plane');
+  const hasCurvedB = facesOfB.some(f => f.surface.type !== 'plane');
+  const needsGeneralPipeline = (hasCurvedA && hasCurvedB) ||
+    ((hasCurvedA || hasCurvedB) && op !== 'subtract');
+
+  if (needsGeneralPipeline) {
+    return generalBooleanPipeline(a, b, op, facesOfA, facesOfB);
+  }
+
+  // Stage 2+3: Split faces and classify (legacy pipeline for planar + planar-curved subtract)
+  const allFacesA: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
+  const allFacesB: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
 
   // Pre-compute shared circle edges for plane-curve intersections.
   // These edges are used by BOTH the planar face (as inner wire hole)
