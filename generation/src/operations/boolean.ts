@@ -807,26 +807,19 @@ export function booleanOperation(
           continue;
         }
 
-        // Multiple faces share this surface (e.g., 2-hemisphere sphere).
-        // Use the circle center to determine which face the circle belongs to.
-        // Check against the face's wire-vertex bounding box.
+        // Check if this circle edge lies on this curved face.
+        // The wire-vertex bbox is unreliable for curved faces (seam vertices
+        // don't cover the full surface extent). Instead, sample points along
+        // the wire edges to build a proper bounding box.
         const circlePt = edgeStartPoint(edge);
         const circleCenter = edge.curve.type === 'circle3d'
           ? (edge.curve as any).plane.origin as Point3D
           : circlePt;
-        const faceVerts = faceB.outerWire.edges.map(oe =>
-          oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge)
-        );
-        const faceZMin = Math.min(...faceVerts.map(v => v.z));
-        const faceZMax = Math.max(...faceVerts.map(v => v.z));
-        const faceXMin = Math.min(...faceVerts.map(v => v.x));
-        const faceXMax = Math.max(...faceVerts.map(v => v.x));
-        const faceYMin = Math.min(...faceVerts.map(v => v.y));
-        const faceYMax = Math.max(...faceVerts.map(v => v.y));
+        const faceBBox = computeCurvedFaceBBox(faceB);
         const tol = 0.01;
-        if (circleCenter.z >= faceZMin - tol && circleCenter.z <= faceZMax + tol &&
-            circleCenter.x >= faceXMin - tol && circleCenter.x <= faceXMax + tol &&
-            circleCenter.y >= faceYMin - tol && circleCenter.y <= faceYMax + tol) {
+        if (circleCenter.z >= faceBBox.zMin - tol && circleCenter.z <= faceBBox.zMax + tol &&
+            circleCenter.x >= faceBBox.xMin - tol && circleCenter.x <= faceBBox.xMax + tol &&
+            circleCenter.y >= faceBBox.yMin - tol && circleCenter.y <= faceBBox.yMax + tol) {
           sharedEdgesForFace.push(edge);
         }
       }
@@ -835,10 +828,6 @@ export function booleanOperation(
         // Build trimmed curved face using the shared circle edges as boundary.
         const trimmedFace = buildTrimmedCurvedFace(faceB, sharedEdgesForFace);
         if (trimmedFace) {
-          // Verify the trimmed face makes sense: its classification should be meaningful.
-          // If the circle doesn't actually cut through this specific face (e.g., it only
-          // cuts the other hemisphere), the trimmed face may be wrong — fall back to
-          // classifying the original face.
           const trimClass = classifyFace(trimmedFace, a);
           allFacesB.push({ face: trimmedFace, classification: trimClass });
         } else {
@@ -1017,6 +1006,56 @@ export function booleanOperation(
     facesFromA,
     facesFromB,
   });
+}
+
+/**
+ * Compute a bounding box for a curved face by sampling points along its wire edges.
+ * Unlike the simple wire-vertex bbox, this evaluates intermediate points on
+ * curved edges (circles, arcs) to capture the full face extent.
+ *
+ * For a cylinder face whose wire is [circle-bot, seam-up, circle-top, seam-down],
+ * the vertex-only bbox misses the circle's extent (only sees the seam at x=r, y=0).
+ * Sampling 16 points per circle captures the full circumference.
+ */
+function computeCurvedFaceBBox(face: Face): { xMin: number; xMax: number; yMin: number; yMax: number; zMin: number; zMax: number } {
+  let xMin = Infinity, xMax = -Infinity;
+  let yMin = Infinity, yMax = -Infinity;
+  let zMin = Infinity, zMax = -Infinity;
+
+  const update = (p: Point3D) => {
+    if (p.x < xMin) xMin = p.x;
+    if (p.x > xMax) xMax = p.x;
+    if (p.y < yMin) yMin = p.y;
+    if (p.y > yMax) yMax = p.y;
+    if (p.z < zMin) zMin = p.z;
+    if (p.z > zMax) zMax = p.z;
+  };
+
+  for (const oe of face.outerWire.edges) {
+    const curve = oe.edge.curve;
+    // Always include start and end points
+    update(edgeStartPoint(oe.edge));
+    update(edgeEndPoint(oe.edge));
+
+    // For circle/arc edges, sample intermediate points to capture full extent
+    if (curve.type === 'circle3d' || curve.type === 'arc3d') {
+      const curvePlane = (curve as any).plane;
+      const r = (curve as any).radius;
+      const yAxis = normalize(cross(curvePlane.normal, curvePlane.xAxis));
+      const n = curve.isClosed ? 16 : 8;
+      for (let i = 0; i <= n; i++) {
+        const t = curve.startParam + (curve.endParam - curve.startParam) * (i / n);
+        const c = Math.cos(t), s = Math.sin(t);
+        update(point3d(
+          curvePlane.origin.x + r * (c * curvePlane.xAxis.x + s * yAxis.x),
+          curvePlane.origin.y + r * (c * curvePlane.xAxis.y + s * yAxis.y),
+          curvePlane.origin.z + r * (c * curvePlane.xAxis.z + s * yAxis.z),
+        ));
+      }
+    }
+  }
+
+  return { xMin, xMax, yMin, yMax, zMin, zMax };
 }
 
 /**
@@ -1254,29 +1293,35 @@ function buildTrimmedCurvedFace(originalFace: Face, sharedEdges: Edge[]): Face |
     const p0 = edgeStartPoint(e0); // point on circle 0
     const p1 = edgeStartPoint(e1); // point on circle 1
 
-    // Create seam lines connecting the two circles
-    const seamDown = makeLine3D(p0, p1);
-    const seamUp = makeLine3D(p1, p0); // reverse direction for the return path
+    // Create a SINGLE seam edge connecting the two circles.
+    // Like OCCT's seam representation, the same edge is traversed forward and
+    // reverse in the wire. This ensures shell closure: each seam edge appears
+    // twice in the same face, canceling out in the edge usage count.
+    const seamLine = makeLine3D(p0, p1);
+    if (!seamLine.success) return null;
+    const seamEdge = makeEdgeFromCurve(seamLine.result!);
+    if (!seamEdge.success) return null;
 
-    if (!seamDown.success || !seamUp.success) return null;
-    const seamDownEdge = makeEdgeFromCurve(seamDown.result!);
-    const seamUpEdge = makeEdgeFromCurve(seamUp.result!);
-    if (!seamDownEdge.success || !seamUpEdge.success) return null;
-
-    // Assemble: circle0(fwd) → seamDown → circle1(rev) → seamUp
+    // Both circles use forward=false so that after flipFace (subtract), they
+    // become forward=true — complementing the hole wires' forward=false.
+    // This ensures each circle edge has one fwd + one rev usage for shell closure.
+    //
+    // Wire: circle0(rev) → seam(fwd) → circle1(rev) → seam(rev)
+    // A circle traversed reversed goes CW. Two CW circles connected by seam
+    // forward+reverse creates a valid closed wire on the cylinder surface.
     const wireResult = makeWire([
-      orientEdge(e0, false),              // circle at top (reversed for subtract compatibility)
-      orientEdge(seamDownEdge.result!, true),  // seam going down
-      orientEdge(e1, true),              // circle at bottom
-      orientEdge(seamUpEdge.result!, true),    // seam going up
+      orientEdge(e0, false),            // circle 0, reversed
+      orientEdge(seamEdge.result!, true),   // seam p0→p1 (forward)
+      orientEdge(e1, false),            // circle 1, reversed
+      orientEdge(seamEdge.result!, false),  // seam p1→p0 (same edge, reversed)
     ]);
     if (!wireResult.success) {
-      // Try alternate winding
+      // Try alternate: both forward
       const wireResult2 = makeWire([
         orientEdge(e0, true),
-        orientEdge(seamDownEdge.result!, true),
-        orientEdge(e1, false),
-        orientEdge(seamUpEdge.result!, true),
+        orientEdge(seamEdge.result!, true),
+        orientEdge(e1, true),
+        orientEdge(seamEdge.result!, false),
       ]);
       if (!wireResult2.success) return null;
       const faceResult = makeFace(originalFace.surface, wireResult2.result!);

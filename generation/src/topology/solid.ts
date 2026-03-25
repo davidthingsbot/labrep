@@ -155,10 +155,14 @@ function computeCurvedFaceVolume(face: Face): number {
   // For surfaces with parametric evaluation, use a UV grid for accurate volume.
   // This handles sphere/cylinder/cone faces correctly by sampling the actual surface.
   const surfType = face.surface.type;
-  // Sphere faces need parametric integration because the old pole-fan approach
-  // only sampled one arc edge and missed the surface curvature.
-  // Cylinder and cone faces work correctly with the existing quad/tri rail approach.
+  // Sphere faces always use parametric integration (pole-fan misses curvature).
   if (surfType === 'sphere') {
+    return computeParametricFaceVolume(face, N);
+  }
+  // Cylinder/cone faces from boolean operations may be flipped (forward=false).
+  // The quad/tri rail approach doesn't account for face.forward orientation,
+  // giving wrong volume for cavity walls. Use parametric integration for these.
+  if ((surfType === 'cylinder' || surfType === 'cone') && face.forward === false) {
     return computeParametricFaceVolume(face, N);
   }
 

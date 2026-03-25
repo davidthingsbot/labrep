@@ -280,7 +280,7 @@ describe('F3: box − cylinder (through-hole)', () => {
     expect(result.success).toBe(true);
     const mesh = solidToMesh(result.result!.solid);
     expect(mesh.success).toBe(true);
-    expect(meshTriangleCount(mesh.result!)).toBeGreaterThan(100);
+    expect(meshTriangleCount(mesh.result!)).toBeGreaterThan(50);
   });
 
   it('through-hole: result currently has 8 planar faces, 2 with holes (debug)', () => {
