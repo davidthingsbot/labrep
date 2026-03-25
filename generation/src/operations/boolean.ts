@@ -745,12 +745,17 @@ export function booleanOperation(
   const facesOfB = shellFaces(b.outerShell);
 
   // Detect if we need the general FFI pipeline.
-  // The legacy pipeline handles: planar-planar and planar-curved(subtract only).
-  // The general pipeline handles: everything via face-face intersection + split.
+  // The legacy pipeline handles: subtract where at most one operand has all-curved faces.
+  // The general pipeline handles: union/intersect with curved, or both operands are curved-only.
   const hasCurvedA = facesOfA.some(f => f.surface.type !== 'plane');
   const hasCurvedB = facesOfB.some(f => f.surface.type !== 'plane');
-  const needsGeneralPipeline = (hasCurvedA && hasCurvedB) ||
-    ((hasCurvedA || hasCurvedB) && op !== 'subtract');
+  const allCurvedA = facesOfA.every(f => f.surface.type !== 'plane');
+  const allCurvedB = facesOfB.every(f => f.surface.type !== 'plane');
+  // Use general pipeline only when both solids are entirely curved (sphere-sphere, cyl-cyl)
+  // or for union/intersect with curved surfaces where the legacy pipeline fails.
+  const needsGeneralPipeline = (allCurvedA && allCurvedB) ||
+    ((hasCurvedA || hasCurvedB) && op === 'union') ||
+    ((hasCurvedA || hasCurvedB) && op === 'intersect' && allCurvedA !== allCurvedB);
 
   if (needsGeneralPipeline) {
     return generalBooleanPipeline(a, b, op, facesOfA, facesOfB);
