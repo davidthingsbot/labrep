@@ -44,6 +44,7 @@ import { BooleanBasicExample } from './BooleanBasicExample';
 import { BooleanShapesExample } from './BooleanShapesExample';
 import { BooleanStepExample } from './BooleanStepExample';
 import { BooleanCurvedExample } from './BooleanCurvedExample';
+import { BooleanCurvedShowcaseExample } from './BooleanCurvedShowcaseExample';
 
 /** All registered examples. */
 export const examples: Example[] = [
@@ -1186,6 +1187,35 @@ const sphere = revolve(arcWire, Z_AXIS, 2 * Math.PI).result!.solid;
 // Subtract sphere from L-bracket
 const result = booleanSubtract(lSolid, sphere);
 const mesh = solidToMesh(result.solid); // Tessellate with curved faces
+`,
+  },
+  {
+    id: 'boolean-curved-showcase',
+    name: 'Boolean: Curved Showcase',
+    description: 'Six curved boolean results: box-sphere (subtract/union/intersect), through-hole, blind hole, L-bracket',
+    component: BooleanCurvedShowcaseExample,
+    code: `// Curved Boolean Showcase — all working operations
+import { extrude, revolve, booleanSubtract, booleanUnion,
+  booleanIntersect, solidToMesh, solidVolume } from '@labrep/generation';
+
+// Box 4×4×4
+const box = extrude(boxWire, dir, 4).result!.solid;
+
+// Sphere via revolving semicircle (animated radius)
+const sphere = revolve(arcWire, Z_AXIS, 2 * Math.PI).result!.solid;
+
+// Cylinder via extruding circle (through-hole)
+const cyl = extrude(circleWire, dir, 6).result!.solid;
+
+// All three operations on box + sphere
+const sub = booleanSubtract(box, sphere);  // cavity
+const uni = booleanUnion(box, sphere);     // merged
+const int = booleanIntersect(box, sphere); // lens
+
+// Through-hole: cylinder extends beyond box
+const hole = booleanSubtract(box, cyl);
+
+// Each result: solidToMesh for rendering, solidVolume for verification
 `,
   },
 ];
