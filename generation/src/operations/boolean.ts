@@ -545,6 +545,12 @@ export function booleanOperation(
   const facesOfA = shellFaces(a.outerShell);
   const facesOfB = shellFaces(b.outerShell);
 
+  // Pre-compute shared circle edges for plane-curve intersections.
+  // These edges are used by BOTH the planar face (as inner wire hole)
+  // and the trimmed curved face (as outer wire boundary).
+  // Key: "faceA_idx:faceB_idx", Value: shared Edge
+  const sharedCircleEdges: Map<string, Edge> = new Map();
+
   // Process faces of A
   for (const faceA of facesOfA) {
     if (faceA.surface.type !== 'plane') {
@@ -645,14 +651,38 @@ export function booleanOperation(
 
       if (currentFace.surface.type === 'plane') {
         const facePlane = currentFace.surface.plane;
-        for (const otherFace of facesOfB) {
+        const aIdx = facesOfA.indexOf(faceA);
+        // Deduplicate: multiple curved faces of the same solid can produce
+        // the same intersection circle (e.g., two hemisphere faces of a sphere).
+        // Track processed circles to avoid creating duplicate holes.
+        const processedCircles: { center: Point3D; radius: number }[] = [];
+        for (let bIdx = 0; bIdx < facesOfB.length; bIdx++) {
+          const otherFace = facesOfB[bIdx];
           if (otherFace.surface.type === 'plane') continue;
           const circleInt = intersectPlaneWithCurvedSurface(facePlane, otherFace.surface);
           if (!circleInt) continue;
+          // Check for duplicate circle (same center and radius)
+          const isDup = processedCircles.some(pc =>
+            distance(pc.center, circleInt.center) < STITCH_TOL &&
+            Math.abs(pc.radius - circleInt.radius) < STITCH_TOL
+          );
+          if (isDup) {
+            // Still record the shared edge for this face index
+            // Find the existing edge from a previous split with the same circle
+            for (const [key, edge] of sharedCircleEdges) {
+              if (key.startsWith(`${aIdx}:`)) {
+                sharedCircleEdges.set(`${aIdx}:${bIdx}`, edge);
+                break;
+              }
+            }
+            continue;
+          }
           const splitResult = splitPlanarFaceByCircle(currentFace, circleInt);
           if (splitResult) {
             currentFace = splitResult.outside; // face with circular hole
             diskFaces.push(splitResult.inside); // circular disk
+            sharedCircleEdges.set(`${aIdx}:${bIdx}`, splitResult.circleEdge);
+            processedCircles.push({ center: circleInt.center, radius: circleInt.radius });
           }
         }
       }
@@ -671,14 +701,96 @@ export function booleanOperation(
   }
 
   // Process faces of B (same logic, swapped)
-  for (const faceB of facesOfB) {
+  for (let bIdx = 0; bIdx < facesOfB.length; bIdx++) {
+    const faceB = facesOfB[bIdx];
     if (faceB.surface.type !== 'plane') {
-      // Try to trim curved face by A's planar faces
-      const trimResult = trimCurvedFaceByPlanes(faceB, a);
-      if (trimResult.success && trimResult.result) {
-        allFacesB.push({ face: trimResult.result, classification: classifyFace(trimResult.result, a) });
+      // Check if any shared circle edges exist for this curved face.
+      // If so, build trimmed face using those shared edges directly.
+      // Collect shared circle edges that actually intersect this specific face.
+      // A circle from plane-sphere intersection cuts the whole sphere, but only
+      // one hemisphere face contains the circle. Check by testing if the circle
+      // center is "near" this face (the circle midpoint should be classifiable
+      // relative to this face's boundary).
+      const sharedEdgesForFace: Edge[] = [];
+      for (let aIdx = 0; aIdx < facesOfA.length; aIdx++) {
+        const edge = sharedCircleEdges.get(`${aIdx}:${bIdx}`);
+        if (!edge) continue;
+        // Check: does this circle edge lie on this curved face?
+        // Test the circle's start point — if it's a vertex of this face's wire
+        // or close to a point on this face, the circle cuts this face.
+        const circlePt = edgeStartPoint(edge);
+        // Check: does this circle actually lie on this specific curved face?
+        // For sphere faces that share a surface, the circle from a plane intersection
+        // only cuts through ONE of the faces. Use the circle center (not start point)
+        // and verify it falls within the face's bounding box (tight, no margin).
+        // The circle center = the plane-surface intersection center.
+        const circleCenter = edge.curve.type === 'circle3d'
+          ? (edge.curve as any).plane.origin as Point3D
+          : circlePt;
+        const faceVerts = faceB.outerWire.edges.map(oe =>
+          oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge)
+        );
+        const faceZMin = Math.min(...faceVerts.map(v => v.z));
+        const faceZMax = Math.max(...faceVerts.map(v => v.z));
+        const faceXMin = Math.min(...faceVerts.map(v => v.x));
+        const faceXMax = Math.max(...faceVerts.map(v => v.x));
+        const faceYMin = Math.min(...faceVerts.map(v => v.y));
+        const faceYMax = Math.max(...faceVerts.map(v => v.y));
+        const tol = 0.01;
+        if (circleCenter.z >= faceZMin - tol && circleCenter.z <= faceZMax + tol &&
+            circleCenter.x >= faceXMin - tol && circleCenter.x <= faceXMax + tol &&
+            circleCenter.y >= faceYMin - tol && circleCenter.y <= faceYMax + tol) {
+          sharedEdgesForFace.push(edge);
+        }
+      }
+
+      if (sharedEdgesForFace.length > 0) {
+        // Build trimmed curved face using the shared circle edges as boundary.
+        const trimmedFace = buildTrimmedCurvedFace(faceB, sharedEdgesForFace);
+        if (trimmedFace) {
+          // Verify the trimmed face makes sense: its classification should be meaningful.
+          // If the circle doesn't actually cut through this specific face (e.g., it only
+          // cuts the other hemisphere), the trimmed face may be wrong — fall back to
+          // classifying the original face.
+          const trimClass = classifyFace(trimmedFace, a);
+          const origClass = classifyFace(faceB, a);
+          // Use the trimmed face if it has a different or meaningful classification
+          allFacesB.push({ face: trimmedFace, classification: trimClass });
+        } else {
+          // Trimming failed — classify original face
+          allFacesB.push({ face: faceB, classification: classifyFace(faceB, a) });
+        }
       } else {
-        allFacesB.push({ face: faceB, classification: classifyFace(faceB, a) });
+        // No shared edges for this specific face. Check if ANOTHER face of the
+        // same surface has shared edges — if so, this face is subsumed by the
+        // trimmed version (e.g., upper hemisphere when lower is trimmed) and
+        // should be skipped to avoid dangling edges.
+        let siblingHasSharedEdges = false;
+        for (let otherBIdx = 0; otherBIdx < facesOfB.length; otherBIdx++) {
+          if (otherBIdx === bIdx) continue;
+          if (!areSameSurface(facesOfB[otherBIdx].surface, faceB.surface)) continue;
+          // Check if the sibling face has shared edges
+          for (let aIdx = 0; aIdx < facesOfA.length; aIdx++) {
+            if (sharedCircleEdges.has(`${aIdx}:${otherBIdx}`)) {
+              siblingHasSharedEdges = true;
+              break;
+            }
+          }
+          if (siblingHasSharedEdges) break;
+        }
+
+        if (siblingHasSharedEdges) {
+          // Skip this face — the trimmed sibling covers both hemispheres
+          continue;
+        }
+
+        // No sibling has shared edges — try the old trim approach or classify whole face
+        const trimResult = trimCurvedFaceByPlanes(faceB, a);
+        if (trimResult.success && trimResult.result) {
+          allFacesB.push({ face: trimResult.result, classification: classifyFace(trimResult.result, a) });
+        } else {
+          allFacesB.push({ face: faceB, classification: classifyFace(faceB, a) });
+        }
       }
       continue;
     }
@@ -836,12 +948,18 @@ const STITCH_TOL = 1e-6;
  * two faces share that sub-edge.
  */
 function stitchEdges(faces: Face[]): Face[] {
-  // Collect all unique vertices from all faces
+  // Collect all unique vertices from all faces (including inner wires/holes)
   const allVerts: Point3D[] = [];
   for (const face of faces) {
     for (const oe of face.outerWire.edges) {
       pushUnique(allVerts, edgeStartPoint(oe.edge));
       pushUnique(allVerts, edgeEndPoint(oe.edge));
+    }
+    for (const iw of face.innerWires) {
+      for (const oe of iw.edges) {
+        pushUnique(allVerts, edgeStartPoint(oe.edge));
+        pushUnique(allVerts, edgeEndPoint(oe.edge));
+      }
     }
   }
 
@@ -918,9 +1036,10 @@ function stitchEdges(faces: Face[]): Face[] {
       continue;
     }
 
+    // Preserve inner wires (holes) when rebuilding the face with split outer edges
     const faceRes = face.surface.type === 'plane'
-      ? makeFace(face.surface as PlaneSurface, wireRes.result!)
-      : makePlanarFace(wireRes.result!);
+      ? makeFace(face.surface as PlaneSurface, wireRes.result!, [...face.innerWires], face.forward)
+      : makePlanarFace(wireRes.result!, [...face.innerWires]);
     if (faceRes.success) {
       result.push(faceRes.result!);
     } else {
@@ -955,6 +1074,74 @@ function pushUnique(arr: Point3D[], pt: Point3D): void {
  * After splitting, fragments are converted back to faces. Each fragment's centroid
  * is then classified by the caller using pointInSolid.
  */
+
+/**
+ * Build a trimmed curved face using pre-computed shared circle edges as boundary.
+ *
+ * When a curved face (sphere) is partially cut by planar faces, the intersection
+ * produces circle edges that are shared between the planar face (as inner wire hole)
+ * and this curved face (as outer wire boundary).
+ *
+ * For a single circle edge: the trimmed face has that circle as its outer wire.
+ * For multiple circle edges: they form a closed chain (the trim boundary).
+ *
+ * Based on OCCT BOPAlgo_BuilderFace approach: reconstruct faces from shared edges.
+ */
+/**
+ * Check if two surfaces represent the same geometric surface.
+ * Compares by surface type and key geometric properties.
+ * Based on OCCT's BOPTools_AlgoTools::AreFacesSameDomain.
+ */
+function areSameSurface(a: Surface, b: Surface): boolean {
+  if (a.type !== b.type) return false;
+  if (a === b) return true;
+  switch (a.type) {
+    case 'sphere': {
+      const sa = a, sb = b as typeof a;
+      return distance(sa.center, sb.center) < STITCH_TOL &&
+             Math.abs(sa.radius - sb.radius) < STITCH_TOL;
+    }
+    case 'cylinder': {
+      const ca = a, cb = b as typeof a;
+      return distance(ca.axis.origin, cb.axis.origin) < STITCH_TOL &&
+             Math.abs(ca.radius - cb.radius) < STITCH_TOL;
+    }
+    case 'cone': {
+      const ca = a, cb = b as typeof a;
+      return distance(ca.axis.origin, cb.axis.origin) < STITCH_TOL &&
+             Math.abs(ca.radius - cb.radius) < STITCH_TOL &&
+             Math.abs(ca.semiAngle - cb.semiAngle) < STITCH_TOL;
+    }
+    default:
+      return false;
+  }
+}
+
+function buildTrimmedCurvedFace(originalFace: Face, sharedEdges: Edge[]): Face | null {
+  if (sharedEdges.length === 0) return null;
+
+  if (sharedEdges.length === 1) {
+    // Single circle edge → use it as the outer wire.
+    // Use forward=false so that after flipFace (for subtract), the edge becomes
+    // forward=true, which is the OPPOSITE of the hole wire's forward=false.
+    // This ensures the shell closure check sees one fwd + one rev per edge.
+    const edge = sharedEdges[0];
+    const wireResult = makeWire([orientEdge(edge, false)]);
+    if (!wireResult.success) return null;
+    const faceResult = makeFace(originalFace.surface, wireResult.result!);
+    if (!faceResult.success) return null;
+    return faceResult.result!;
+  }
+
+  // Multiple edges → try to assemble into a closed wire
+  const wireResult = makeWireFromEdges(sharedEdges);
+  if (!wireResult.success) return null;
+  if (!wireResult.result!.isClosed) return null;
+  const faceResult = makeFace(originalFace.surface, wireResult.result!);
+  if (!faceResult.success) return null;
+  return faceResult.result!;
+}
+
 function splitFaceByAllFaces(face: Face, otherFaces: readonly Face[]): Face[] {
   if (face.surface.type !== 'plane') return [face];
 

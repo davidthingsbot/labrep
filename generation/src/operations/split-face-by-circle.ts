@@ -2,7 +2,7 @@ import { Point3D, point3d, vec3d, Plane, plane, normalize, cross, worldToSketch,
 import { makeCircle3D } from '../geometry';
 import type { PlaneCircleIntersection } from '../geometry/intersections3d';
 import { Face, Surface, makeFace } from '../topology/face';
-import { makeEdgeFromCurve, edgeStartPoint, edgeEndPoint } from '../topology/edge';
+import { Edge, makeEdgeFromCurve, edgeStartPoint, edgeEndPoint } from '../topology/edge';
 import { Wire, makeWire, makeWireFromEdges, orientEdge, reverseOrientedEdge, orientedEdgeStartPoint } from '../topology/wire';
 import { PlaneSurface } from '../surfaces/plane-surface';
 
@@ -14,6 +14,8 @@ export interface SplitFaceByCircleResult {
   readonly outside: Face;
   /** A new circular disk face filling the hole */
   readonly inside: Face;
+  /** The shared circle edge (used in both outside's inner wire and inside's outer wire) */
+  readonly circleEdge: Edge;
 }
 
 /**
@@ -80,6 +82,7 @@ export function splitPlanarFaceByCircle(
   return {
     outside: outsideFace.result,
     inside: insideFace.result,
+    circleEdge: circleEdge.result,
   };
 }
 

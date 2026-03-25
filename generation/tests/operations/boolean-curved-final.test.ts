@@ -136,6 +136,65 @@ describe('F4: L-bracket − sphere', () => {
 });
 
 // ═══════════════════════════════════════════════════════
+// F2: SPHERE PARTIALLY OUTSIDE BOX
+// ═══════════════════════════════════════════════════════
+
+describe('F2: sphere partially outside box', () => {
+  it('sphere sticking out bottom of box → closed shell', () => {
+    // Box z=-0.5..3.5, sphere r=1 at origin: lower hemisphere extends below z=-0.5
+    const box = makeBox(0, 0, -0.5, 4, 4, 4);
+    const sphere = makeSphere(1);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    expect(result.result!.solid.outerShell.isClosed).toBe(true);
+  });
+
+  it('sphere sticking out bottom → correct volume (box minus spherical cap)', () => {
+    const box = makeBox(0, 0, -0.5, 4, 4, 4);
+    const sphere = makeSphere(1);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    const vol = solidVolume(result.result!.solid);
+    // Box vol = 64. Spherical cap inside box: from z=-0.5 to z=1, height h=1.5
+    // Cap volume = π*h²*(3r-h)/3 = π*2.25*1.5/3 = π*1.125 ≈ 3.534
+    const capVol = Math.PI * 1.5 * 1.5 * (3 * 1 - 1.5) / 3;
+    const expected = 64 - capVol;
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.02);
+  });
+
+  it('sphere sticking out bottom → has planar faces with hole + trimmed sphere face', () => {
+    const box = makeBox(0, 0, -0.5, 4, 4, 4);
+    const sphere = makeSphere(1);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    const faces = shellFaces(result.result!.solid.outerShell);
+    const planeCount = faces.filter(f => f.surface.type === 'plane').length;
+    const sphereCount = faces.filter(f => f.surface.type === 'sphere').length;
+    expect(planeCount).toBeGreaterThanOrEqual(6);
+    expect(sphereCount).toBeGreaterThan(0);
+  });
+
+  it('sphere sticking out bottom → tessellates', () => {
+    const box = makeBox(0, 0, -0.5, 4, 4, 4);
+    const sphere = makeSphere(1);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    const mesh = solidToMesh(result.result!.solid);
+    expect(mesh.success).toBe(true);
+    expect(meshTriangleCount(mesh.result!)).toBeGreaterThan(50);
+  });
+
+  it('sphere sticking out one side → closed shell', () => {
+    // Box x=-0.5..3.5, sphere r=1 at origin: left side sticks out
+    const box = makeBox(1.5, 0, -2, 4, 4, 4);
+    const sphere = makeSphere(1);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    expect(result.result!.solid.outerShell.isClosed).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
 // F6: EDGE CASES
 // ═══════════════════════════════════════════════════════
 
@@ -144,9 +203,18 @@ describe('F6: edge cases', () => {
     const box = makeBox(10, 10, 10, 2, 2, 2);
     const sphere = makeSphere(0.5); // at origin, far from box
     const result = booleanSubtract(box.solid, sphere.solid);
-    // Should succeed — no intersection, box unchanged
     expect(result.success).toBe(true);
     const vol = solidVolume(result.result!.solid);
     expect(vol).toBeCloseTo(8, 0); // 2×2×2 = 8
+  });
+
+  it('sphere fully inside box → volume = box − sphere', () => {
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const sphere = makeSphere(0.5);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    const vol = solidVolume(result.result!.solid);
+    const expected = 64 - (4 / 3) * Math.PI * 0.125;
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.02);
   });
 });

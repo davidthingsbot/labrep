@@ -40,9 +40,9 @@ import {
   makeRevolutionSurface,
   canonicalizeRevolutionSurface,
 } from '../surfaces';
-import { Line3D, makeLine3D } from '../geometry/line3d';
-import { Circle3D, makeCircle3D } from '../geometry/circle3d';
-import { Arc3D, makeArc3D } from '../geometry/arc3d';
+import { Line3D, makeLine3D, evaluateLine3D } from '../geometry/line3d';
+import { Circle3D, makeCircle3D, evaluateCircle3D } from '../geometry/circle3d';
+import { Arc3D, makeArc3D, evaluateArc3D } from '../geometry/arc3d';
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -284,9 +284,19 @@ export function validateRevolveProfile(
  * Extract the meridional plane from the wire (plane containing both the wire and the axis).
  */
 function extractMeridionalPlane(wire: Wire, ax: Axis): OperationResult<Plane> {
-  // Find the first off-axis point to define the meridional plane
+  // Find the first off-axis point to define the meridional plane.
+  // Check edge endpoints first, then sample curve midpoints for arcs/circles
+  // whose endpoints are both on the axis (e.g., a semicircle from pole to pole).
   for (const oe of wire.edges) {
     const pts = [edgeStartPoint(oe.edge), edgeEndPoint(oe.edge)];
+
+    // Also sample the midpoint for curved edges (arcs/circles)
+    if (oe.edge.curve.type !== 'line3d') {
+      const midParam = (oe.edge.startParam + oe.edge.endParam) / 2;
+      const midPt = evaluateCurveAt(oe.edge.curve, midParam);
+      if (midPt) pts.push(midPt);
+    }
+
     for (const pt of pts) {
       if (!isOnAxis(pt, ax)) {
         const d = vec3d(pt.x - ax.origin.x, pt.y - ax.origin.y, pt.z - ax.origin.z);
@@ -305,6 +315,22 @@ function extractMeridionalPlane(wire: Wire, ax: Axis): OperationResult<Plane> {
   }
 
   return failure('Profile has no off-axis points — cannot determine meridional plane');
+}
+
+/**
+ * Evaluate a 3D curve at parameter t.
+ */
+function evaluateCurveAt(curve: Curve3D, t: number): Point3D | null {
+  switch (curve.type) {
+    case 'line3d':
+      return evaluateLine3D(curve, t);
+    case 'circle3d':
+      return evaluateCircle3D(curve, t);
+    case 'arc3d':
+      return evaluateArc3D(curve, t);
+    default:
+      return null;
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -336,8 +362,10 @@ function generateRevolveSideFace(
   const startOnAxis = isOnAxis(startPt, ax);
   const endOnAxis = isOnAxis(endPt, ax);
 
-  // Both endpoints on axis → edge lies on axis → no face generated
-  if (startOnAxis && endOnAxis) {
+  // Both endpoints on axis: for line edges, the edge lies entirely on the axis
+  // and generates no face. For arc/circle edges, the curve bulges off-axis
+  // (e.g., a semicircle from south pole to north pole) and generates a face.
+  if (startOnAxis && endOnAxis && edge.curve.type === 'line3d') {
     return success(null);
   }
 
@@ -378,7 +406,15 @@ function generateFullRevolveFace(
 ): OperationResult<Face | null> {
   const wireEdges: OrientedEdge[] = [];
 
-  if (!startOnAxis && !endOnAxis) {
+  if (startOnAxis && endOnAxis) {
+    // Both poles on axis: the face is bounded by the seam edge traversed
+    // forward and backward. This produces a "lens" face like OCCT's single-face sphere.
+    // Wire: seam (forward) → seam (reversed)
+    wireEdges.push(
+      orientEdge(edge, true),   // seam: forward (pole to pole)
+      orientEdge(edge, false),  // seam: reversed (pole to pole, other way)
+    );
+  } else if (!startOnAxis && !endOnAxis) {
     // Normal case: 4-edge face
     // seam (forward) → circle@end → seam (reversed) → circle@start (reversed)
     const endCircleResult = makeSweepEdge(endPt, ax, 0, 2 * Math.PI);
