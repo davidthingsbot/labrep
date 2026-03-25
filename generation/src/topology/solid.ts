@@ -6,6 +6,7 @@ import { edgeStartPoint, edgeEndPoint, Curve3D } from './edge';
 import { evaluateLine3D } from '../geometry/line3d';
 import { evaluateCircle3D } from '../geometry/circle3d';
 import { evaluateArc3D } from '../geometry/arc3d';
+import { evaluateEllipse3D } from '../geometry/ellipse3d';
 import {
   evaluateSphericalSurface, normalSphericalSurface, projectToSphericalSurface,
   evaluateCylindricalSurface, normalCylindricalSurface, projectToCylindricalSurface,
@@ -100,6 +101,8 @@ function evaluateCurve(curve: Curve3D, t: number): Pt {
       return evaluateCircle3D(curve, t);
     case 'arc3d':
       return evaluateArc3D(curve, t);
+    case 'ellipse3d':
+      return evaluateEllipse3D(curve, t);
   }
 }
 

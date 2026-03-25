@@ -71,6 +71,14 @@ export {
 } from './arc3d';
 
 export {
+  type Ellipse3D,
+  makeEllipse3D,
+  evaluateEllipse3D,
+  tangentEllipse3D,
+  lengthEllipse3D,
+} from './ellipse3d';
+
+export {
   type ArcInterval,
   type ClipCircle,
   clipCircleByHalfSpaces,

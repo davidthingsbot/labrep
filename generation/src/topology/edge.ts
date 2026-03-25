@@ -1,5 +1,6 @@
 import { Point3D, distance, TOLERANCE } from '../core';
 import { Line3D, lengthLine3D, Circle3D, lengthCircle3D, Arc3D, lengthArc3D } from '../geometry';
+import { Ellipse3D, lengthEllipse3D } from '../geometry/ellipse3d';
 import { OperationResult, success, failure } from '../mesh/mesh';
 import { Vertex, makeVertex } from './vertex';
 import type { PCurve } from './pcurve';
@@ -7,7 +8,7 @@ import type { PCurve } from './pcurve';
 /**
  * Union type for all 3D curve types that can be used in an edge.
  */
-export type Curve3D = Line3D | Circle3D | Arc3D;
+export type Curve3D = Line3D | Circle3D | Arc3D | Ellipse3D;
 
 /**
  * A topological edge — a bounded curve segment.
@@ -54,6 +55,8 @@ function curveLength(curve: Curve3D): number {
       return lengthCircle3D(curve);
     case 'arc3d':
       return lengthArc3D(curve);
+    case 'ellipse3d':
+      return lengthEllipse3D(curve);
   }
 }
 
