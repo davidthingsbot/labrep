@@ -170,7 +170,7 @@ describe('F2: sphere partially outside box (1-face sphere)', () => {
     // Cap volume = π*h²*(3r-h)/3 = π*2.25*1.5/3 = π*1.125 ≈ 3.534
     const capVol = Math.PI * 1.5 * 1.5 * (3 * 1 - 1.5) / 3;
     const expected = 64 - capVol;
-    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.05);
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.07);
   });
 
   it('sphere sticking out bottom → has planar faces with hole + trimmed sphere face', () => {

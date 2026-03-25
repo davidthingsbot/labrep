@@ -430,13 +430,48 @@ function coplanarSameNormal(faceA: Face, faceB: Face): boolean {
  */
 function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on' {
   const wire = face.outerWire;
-  let cx = 0, cy = 0, cz = 0, n = 0;
-  for (const oe of wire.edges) {
-    const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-    cx += pt.x; cy += pt.y; cz += pt.z; n++;
+
+  // Compute a representative interior point for classification.
+  // Special cases:
+  // - Faces with holes: use outer edge midpoint (centroid might fall in hole)
+  // - Curved faces with closed-curve wire (circle boundary): use surface
+  //   evaluate at wire interior, not the single wire vertex which sits on
+  //   the boundary of both solids and classifies as 'on'.
+  let centroid: Point3D;
+  if (face.surface.type !== 'plane' && wire.edges.length > 0 && wire.edges[0].edge.curve.isClosed) {
+    // Curved face with circle boundary: sample a point on the surface interior.
+    // For a sphere face bounded by a circle, the "center" of the cap is along
+    // the circle's normal direction from the circle center.
+    const circleEdge = wire.edges[0].edge;
+    if (circleEdge.curve.type === 'circle3d') {
+      const circlePlane = (circleEdge.curve as any).plane;
+      const circleCenter = circlePlane.origin;
+      const circleNormal = circlePlane.normal;
+      // Nudge from circle center along the normal toward the surface interior
+      // Use a significant offset so we're clearly inside the face, not on the boundary
+      centroid = point3d(
+        circleCenter.x + circleNormal.x * 0.1,
+        circleCenter.y + circleNormal.y * 0.1,
+        circleCenter.z + circleNormal.z * 0.1,
+      );
+    } else {
+      centroid = edgeStartPoint(circleEdge);
+    }
+  } else if (face.innerWires.length > 0 && wire.edges.length > 0) {
+    // Use midpoint of first outer edge
+    const oe = wire.edges[0];
+    const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+    centroid = point3d((start.x + end.x) / 2, (start.y + end.y) / 2, (start.z + end.z) / 2);
+  } else {
+    let cx = 0, cy = 0, cz = 0, n = 0;
+    for (const oe of wire.edges) {
+      const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      cx += pt.x; cy += pt.y; cz += pt.z; n++;
+    }
+    if (n === 0) return 'outside';
+    centroid = point3d(cx / n, cy / n, cz / n);
   }
-  if (n === 0) return 'outside';
-  const centroid = point3d(cx / n, cy / n, cz / n);
 
   // Nudge slightly along face normal to avoid "on" classification
   let normal: { x: number; y: number; z: number } | null = null;
@@ -669,9 +704,9 @@ export function booleanOperation(
           if (isDup) {
             // Still record the shared edge for this face index
             // Find the existing edge from a previous split with the same circle
-            for (const [key, edge] of sharedCircleEdges) {
-              if (key.startsWith(`${aIdx}:`)) {
-                sharedCircleEdges.set(`${aIdx}:${bIdx}`, edge);
+            for (const [existingKey, existingEdge] of Array.from(sharedCircleEdges.entries())) {
+              if (existingKey.startsWith(`${aIdx}:`)) {
+                sharedCircleEdges.set(`${aIdx}:${bIdx}`, existingEdge);
                 break;
               }
             }
@@ -687,8 +722,10 @@ export function booleanOperation(
         }
       }
 
-      // Then do line-based splitting for planar-planar intersections
-      const splitFaces = splitFaceByAllFaces(currentFace, facesOfB);
+      // Then do line-based splitting for planar-planar intersections only.
+      // Curved faces were already handled by circle splitting above.
+      const planarFacesOfB = facesOfB.filter(f => f.surface.type === 'plane');
+      const splitFaces = splitFaceByAllFaces(currentFace, planarFacesOfB);
 
       for (const sf of splitFaces) {
         allFacesA.push({ face: sf, classification: classifyFace(sf, b) });
@@ -753,8 +790,6 @@ export function booleanOperation(
           // cuts the other hemisphere), the trimmed face may be wrong — fall back to
           // classifying the original face.
           const trimClass = classifyFace(trimmedFace, a);
-          const origClass = classifyFace(faceB, a);
-          // Use the trimmed face if it has a different or meaningful classification
           allFacesB.push({ face: trimmedFace, classification: trimClass });
         } else {
           // Trimming failed — classify original face
@@ -864,7 +899,8 @@ export function booleanOperation(
         }
       }
 
-      const splitFaces = splitFaceByAllFaces(currentFaceB, facesOfA);
+      const planarFacesOfA = facesOfA.filter(f => f.surface.type === 'plane');
+      const splitFaces = splitFaceByAllFaces(currentFaceB, planarFacesOfA);
       for (const sf of splitFaces) {
         allFacesB.push({ face: sf, classification: classifyFace(sf, a) });
       }
