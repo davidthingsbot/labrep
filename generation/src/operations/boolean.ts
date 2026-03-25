@@ -26,6 +26,9 @@ import { Face, Surface, makeFace, makePlanarFace, faceOuterWire } from '../topol
 import { Shell, makeShell, shellIsClosed, shellFaces } from '../topology/shell';
 import { Solid, makeSolid, solidVolume } from '../topology/solid';
 import { PlaneSurface, makePlaneSurface } from '../surfaces';
+import { evaluateSphericalSurface, projectToSphericalSurface } from '../surfaces/spherical-surface';
+import { evaluateCylindricalSurface, projectToCylindricalSurface } from '../surfaces/cylindrical-surface';
+import { evaluateConicalSurface, projectToConicalSurface } from '../surfaces/conical-surface';
 import { pointInSolid } from './point-in-solid';
 import { trimCurvedFaceByPlanes } from './trim-curved-face';
 import { splitPlanarFaceByCircle } from './split-face-by-circle';
@@ -430,6 +433,26 @@ function coplanarSameNormal(faceA: Face, faceB: Face): boolean {
  * Classify a face relative to another solid.
  * Uses ray casting from the face centroid.
  */
+/** Evaluate a surface at (u,v). Local dispatch for classifyFace. */
+function evalSurfaceLocal(s: Surface, u: number, v: number): Point3D | null {
+  switch (s.type) {
+    case 'sphere': return evaluateSphericalSurface(s, u, v);
+    case 'cylinder': return evaluateCylindricalSurface(s, u, v);
+    case 'cone': return evaluateConicalSurface(s, u, v);
+    default: return null;
+  }
+}
+
+/** Project a 3D point to surface UV. Local dispatch for classifyFace. */
+function projectToSurfaceLocal(s: Surface, pt: Point3D): { u: number; v: number } | null {
+  switch (s.type) {
+    case 'sphere': return projectToSphericalSurface(s, pt);
+    case 'cylinder': return projectToCylindricalSurface(s, pt);
+    case 'cone': return projectToConicalSurface(s, pt);
+    default: return null;
+  }
+}
+
 function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on' {
   const wire = face.outerWire;
 
@@ -502,6 +525,27 @@ function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on
     // interior to the disk.
     const circlePlane = (wire.edges[0].edge.curve as any).plane;
     centroid = circlePlane.origin as Point3D;
+  } else if (face.surface.type !== 'plane') {
+    // Curved face: wire vertices (poles, seam points) may be far from the
+    // face's actual surface. Evaluate the surface at the midpoint of the
+    // wire's UV projection for a representative interior point.
+    // Fallback: use the midpoint of the first edge evaluated on the surface.
+    const midEdge = wire.edges[Math.floor(wire.edges.length / 2)];
+    const t = (midEdge.edge.curve.startParam + midEdge.edge.curve.endParam) / 2;
+    const curvedBBox = computeCurvedFaceBBox(face);
+    // Use face bbox center projected onto surface
+    const bboxCenter = point3d(
+      (curvedBBox.xMin + curvedBBox.xMax) / 2,
+      (curvedBBox.yMin + curvedBBox.yMax) / 2,
+      (curvedBBox.zMin + curvedBBox.zMax) / 2,
+    );
+    // Project bbox center onto the surface for a point ON the surface
+    const proj = projectToSurfaceLocal(face.surface, bboxCenter);
+    if (proj) {
+      centroid = evalSurfaceLocal(face.surface, proj.u, proj.v) || bboxCenter;
+    } else {
+      centroid = bboxCenter;
+    }
   } else {
     let cx = 0, cy = 0, cz = 0, n = 0;
     for (const oe of wire.edges) {
@@ -616,10 +660,23 @@ function generalBooleanPipeline(
 
   for (let ai = 0; ai < facesOfA.length; ai++) {
     for (let bi = 0; bi < facesOfB.length; bi++) {
-      // Quick AABB check on face pair
-      const bboxA = boundingBoxFromFace(facesOfA[ai]);
-      const bboxB = boundingBoxFromFace(facesOfB[bi]);
-      if (!bboxIntersects(bboxA, bboxB)) continue;
+      // Quick AABB check on face pair.
+      // Use computeCurvedFaceBBox for curved faces — boundingBoxFromFace only
+      // uses wire vertices, which are degenerate for seam-only wires (e.g., sphere poles).
+      const bboxFA = computeCurvedFaceBBox(facesOfA[ai]);
+      const bboxFB = computeCurvedFaceBBox(facesOfB[bi]);
+      // Convert to BoundingBox3D format for bboxIntersects
+      const bbA: BoundingBox3D = {
+        min: point3d(bboxFA.xMin, bboxFA.yMin, bboxFA.zMin),
+        max: point3d(bboxFA.xMax, bboxFA.yMax, bboxFA.zMax),
+      };
+      const bbB: BoundingBox3D = {
+        min: point3d(bboxFB.xMin, bboxFB.yMin, bboxFB.zMin),
+        max: point3d(bboxFB.xMax, bboxFB.yMax, bboxFB.zMax),
+      };
+      if (!bboxIntersects(bbA, bbB)) {
+        continue;
+      }
 
       const ffi = intersectFaceFace(facesOfA[ai], facesOfB[bi]);
       if (!ffi) continue;
@@ -638,6 +695,7 @@ function generalBooleanPipeline(
   }
 
   // Stage 3: Split all faces
+
   const allFacesA: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
   const allFacesB: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
 
@@ -745,17 +803,23 @@ export function booleanOperation(
   const facesOfB = shellFaces(b.outerShell);
 
   // Detect if we need the general FFI pipeline.
-  // The legacy pipeline handles: subtract where at most one operand has all-curved faces.
-  // The general pipeline handles: union/intersect with curved, or both operands are curved-only.
+  // The legacy pipeline handles subtract when B has at most one curved surface type
+  // and A has at most planar + one curved surface type (i.e., the box-minus-primitive pattern).
+  // The general pipeline handles: all-curved solids (sphere-sphere, cyl-cyl), and union/intersect.
   const hasCurvedA = facesOfA.some(f => f.surface.type !== 'plane');
   const hasCurvedB = facesOfB.some(f => f.surface.type !== 'plane');
-  const allCurvedA = facesOfA.every(f => f.surface.type !== 'plane');
-  const allCurvedB = facesOfB.every(f => f.surface.type !== 'plane');
-  // Use general pipeline only when both solids are entirely curved (sphere-sphere, cyl-cyl)
-  // or for union/intersect with curved surfaces where the legacy pipeline fails.
-  const needsGeneralPipeline = (allCurvedA && allCurvedB) ||
-    ((hasCurvedA || hasCurvedB) && op === 'union') ||
-    ((hasCurvedA || hasCurvedB) && op === 'intersect' && allCurvedA !== allCurvedB);
+  const curvedTypesA = new Set(facesOfA.filter(f => f.surface.type !== 'plane').map(f => f.surface.type));
+  const curvedTypesB = new Set(facesOfB.filter(f => f.surface.type !== 'plane').map(f => f.surface.type));
+  // Legacy can handle subtract if A and B each have at most 1 curved surface type
+  // (e.g., A = planar+cylindrical, B = pure cylinder)
+  const legacyCanHandle = op === 'subtract' &&
+    curvedTypesA.size <= 1 && curvedTypesB.size <= 1 &&
+    // But not if both have curved faces of the SAME type (e.g., cylinder-cylinder)
+    !(curvedTypesA.size === 1 && curvedTypesB.size === 1 &&
+      [...curvedTypesA][0] === [...curvedTypesB][0] &&
+      facesOfA.every(f => f.surface.type !== 'plane') &&
+      facesOfB.every(f => f.surface.type !== 'plane'));
+  const needsGeneralPipeline = !legacyCanHandle && (hasCurvedA || hasCurvedB);
 
   if (needsGeneralPipeline) {
     return generalBooleanPipeline(a, b, op, facesOfA, facesOfB);

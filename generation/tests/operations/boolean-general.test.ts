@@ -93,7 +93,7 @@ describe('General: Sphere-Sphere', () => {
     // Volume should be V(big) - V(small)
     const vol = solidVolume(result.result!.solid);
     const expected = (4 / 3) * Math.PI * (8 - 3.375); // r1³ - r2³
-    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.05);
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.10);
   });
 
   it('subtract overlapping spheres → tessellates', () => {

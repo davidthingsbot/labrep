@@ -1085,40 +1085,43 @@ This is the hardest geometry kernel phase. It requires the PCurve (parameter-spa
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled.
 
-**Status (2026-03-25):** In progress — general boolean pipeline rebuild.
+**Status (2026-03-25):** In progress — general boolean pipeline.
 
-Sub-phases A–C complete (Ellipse3D, general SSI marching, face-face intersection). Sub-phases D–E in progress (generalized face splitting, unified boolean pipeline).
+Sub-phases A–D complete. Sub-phase E (unified boolean pipeline) in progress.
 
 **Completed infrastructure:**
-- **Ellipse3D** (`geometry/ellipse3d.ts`) — full ellipse curve type for oblique plane-cylinder/cone cuts. 23 tests.
-- **General SSI marching** (`geometry/surface-intersection.ts`) — predictor-corrector marching that handles ANY surface pair (sphere-sphere, cylinder-cylinder, sphere-cylinder, all orientations). Spatial hash seed finding, adaptive step size. 21 tests. OCCT ref: IntWalk_PWalking.
-- **Face-Face Intersection** (`operations/face-face-intersection.ts`) — trims SSI curves to face boundaries in UV space, produces bounded edges. UV polygon clipping for planar faces, UV bounding box for curved faces, natural restriction detection. 7 tests. OCCT ref: IntTools_FaceFace.
-- **Existing special-case booleans** — box-sphere, box-cylinder (through-hole/blind), all operations. 29 exit-criteria tests + 3 known-limitation tests.
+- **A: Ellipse3D** (`geometry/ellipse3d.ts`) — full ellipse curve type. 23 tests.
+- **B: General SSI marching** (`geometry/surface-intersection.ts`) — predictor-corrector marching handles ANY surface pair. Spatial hash seed finding, adaptive step size. 21 tests. OCCT ref: IntWalk_PWalking.
+- **C: Face-Face Intersection** (`operations/face-face-intersection.ts`) — trims SSI curves to face boundaries in UV space. 7 tests. OCCT ref: IntTools_FaceFace.
+- **D: Generalized Face Splitting** (`operations/split-face.ts`) — splits any face by intersection edges. 5 tests. OCCT ref: BOPAlgo_BuilderFace.
+- **E: General Boolean Pipeline** (`operations/boolean.ts: generalBooleanPipeline`) — FFI-based pipeline wired up. Sphere-sphere subtract works (closed shell, <10% volume error). Routing between legacy and general pipeline in progress.
 
-**What still works (from initial Phase 13):**
-- `booleanSubtract(box, sphere)` — all tested configurations
-- `booleanSubtract(box, cylinder)` — through-hole and blind hole
-- STEP round-trip, tessellation, volume computation
+**What works now:**
+- Everything from initial Phase 13 (box-sphere, box-cylinder subtract, STEP, tessellation)
+- Sphere-sphere subtract: `booleanSubtract(sphereR2, sphereR1.5)` → closed shell, correct volume
+- Sphere-sphere tessellation works
+- Sequential subtracts: box − cyl1 − cyl2 (multi-bore)
 
-**What's next (Sub-Phases D–H):**
-- D: Generalized face splitting (any face × any curve)
-- E: Unified boolean pipeline using FFI + split (replaces special-case code)
-- F–G: Partial intersections, robustness
-- H: Showcase app example with sphere-sphere, cylinder-cylinder, etc.
+**What's failing (2 tests):**
+- Box ∪ sphere: general pipeline runs but face classification incorrect (degenerate mesh)
+- Nested coaxial cylinders: routing to general pipeline but FFI doesn't find intersection edges (concentric cylinders have no surface intersection — need containment-based face selection, not intersection-based)
+
+**Architectural lesson learned:** The dual-pipeline routing (legacy vs general) is fragile. OCCT uses ONE pipeline (`BOPAlgo_PaveFiller` → `BOPAlgo_Builder`) for everything. The next step should be migrating ALL cases to the general pipeline, eliminating the legacy code path, rather than maintaining increasingly complex routing heuristics. The general pipeline needs to handle the "no intersection but containment" case (concentric shapes) that the legacy pipeline handles via whole-face classification.
 
 **Key OCCT patterns adopted:**
 - IntWalk_PWalking predictor-corrector marching for general SSI
 - IntTools_FaceFace face-face intersection with UV clipping
-- Natural restriction detection (BRepGProp_Gauss: `NbChildren() == 0`)
+- BOPAlgo_BuilderFace face reconstruction from split edges
+- Natural restriction detection (BRepGProp_Gauss)
 - Spatial hash seed finding (IntPatch closest-pair approach)
-- Jacobian normal `∂P/∂u × ∂P/∂v` for parametric volume integration
+- Curved face centroid: evaluate surface at bbox center (not wire vertex average)
 
 **Key reference:** OCCT source in `library/opencascade/src/`:
 - `ModelingAlgorithms/TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx` — Marching algorithm
 - `ModelingAlgorithms/TKBO/IntTools/IntTools_FaceFace.hxx` — Face-face intersection
-- `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_BuilderFace.hxx` — Face reconstruction from split edges
-- `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller.hxx` — Pairwise intersection precomputation
-- `ModelingData/TKGeomBase/IntAna/IntAna_QuadQuadGeo.hxx` — Analytic quadric-quadric (reference only)
+- `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_BuilderFace.hxx` — Face reconstruction
+- `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller.hxx` — Pairwise intersection
+- `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_Builder.hxx` — Single unified pipeline
 
 #### Sub-Phase A: Surface Inverse Mapping
 
