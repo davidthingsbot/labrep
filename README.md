@@ -61,7 +61,11 @@ labrep/
 | 10 | Sketch on Face | getPlaneFromFace, sketch on any planar face |
 | 11 | Boolean Operations + STEP | Union, subtract, intersect with exact volumes (planar solids) |
 | 12 | Solid Tessellation | solidToMesh for all surface types, ear clipping, analytic normals |
-| 13 | PCurve + Curved Booleans | Box−sphere, box−cylinder (through-hole), L-bracket−sphere with exact volumes |
+### In Progress
+
+| Phase | Name | Description |
+|-------|------|-------------|
+| 13 | Full Curved Booleans | General SSI marching (any surface pair), face-face intersection, generalized face splitting. Rebuilding boolean pipeline for arbitrary solid-solid operations. |
 
 ### Upcoming
 

@@ -1085,34 +1085,40 @@ This is the hardest geometry kernel phase. It requires the PCurve (parameter-spa
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled.
 
-**Status (2026-03-25):** Complete. All exit-criteria tests pass (26/26). STEP round-trip tests for curved boolean results. App example re-enabled.
+**Status (2026-03-25):** In progress — general boolean pipeline rebuild.
 
-What works:
-- `booleanSubtract(box, sphere)` — sphere fully inside: closed shell, exact volume (<1% error)
-- `booleanSubtract(box, sphere)` — sphere partially outside (any axis): closed shell, correct volume
-- `booleanSubtract(box, cylinder)` — cylinder fully inside: closed shell, correct volume
-- `booleanSubtract(box, cylinder)` — through-hole: closed shell, cylindrical face, correct volume (<2% error)
-- `booleanSubtract(lBracket, sphere)` — complex non-convex solid: closed shell, correct volume
-- 1-face sphere construction (OCCT-style single semicircle revolve)
-- `solidVolume` with divergence theorem, Jacobian normals, natural restriction, and parametric integration for flipped curved faces
-- STEP export with SPHERICAL_SURFACE + CYLINDRICAL_SURFACE entities
-- Tessellation of boolean results with curved faces
+Sub-phases A–C complete (Ellipse3D, general SSI marching, face-face intersection). Sub-phases D–E in progress (generalized face splitting, unified boolean pipeline).
 
-Key OCCT patterns adopted:
-- Natural restriction faces (BRepGProp_Gauss: `NbChildren() == 0`) use full surface parametric range for volume
-- Same-domain face detection (BOPAlgo_Builder_2: `FillSameDomainFaces`) for sibling hemisphere handling
-- Shared intersection edges (BOPAlgo_PaveFiller pave blocks) between planar holes and trimmed curved faces
-- Jacobian normal `∂P/∂u × ∂P/∂v` for parametric volume integration (BRepGProp_Vinert)
+**Completed infrastructure:**
+- **Ellipse3D** (`geometry/ellipse3d.ts`) — full ellipse curve type for oblique plane-cylinder/cone cuts. 23 tests.
+- **General SSI marching** (`geometry/surface-intersection.ts`) — predictor-corrector marching that handles ANY surface pair (sphere-sphere, cylinder-cylinder, sphere-cylinder, all orientations). Spatial hash seed finding, adaptive step size. 21 tests. OCCT ref: IntWalk_PWalking.
+- **Face-Face Intersection** (`operations/face-face-intersection.ts`) — trims SSI curves to face boundaries in UV space, produces bounded edges. UV polygon clipping for planar faces, UV bounding box for curved faces, natural restriction detection. 7 tests. OCCT ref: IntTools_FaceFace.
+- **Existing special-case booleans** — box-sphere, box-cylinder (through-hole/blind), all operations. 29 exit-criteria tests + 3 known-limitation tests.
+
+**What still works (from initial Phase 13):**
+- `booleanSubtract(box, sphere)` — all tested configurations
+- `booleanSubtract(box, cylinder)` — through-hole and blind hole
+- STEP round-trip, tessellation, volume computation
+
+**What's next (Sub-Phases D–H):**
+- D: Generalized face splitting (any face × any curve)
+- E: Unified boolean pipeline using FFI + split (replaces special-case code)
+- F–G: Partial intersections, robustness
+- H: Showcase app example with sphere-sphere, cylinder-cylinder, etc.
+
+**Key OCCT patterns adopted:**
+- IntWalk_PWalking predictor-corrector marching for general SSI
+- IntTools_FaceFace face-face intersection with UV clipping
+- Natural restriction detection (BRepGProp_Gauss: `NbChildren() == 0`)
+- Spatial hash seed finding (IntPatch closest-pair approach)
+- Jacobian normal `∂P/∂u × ∂P/∂v` for parametric volume integration
 
 **Key reference:** OCCT source in `library/opencascade/src/`:
-- `ModelingData/TKBRep/BRep/BRep_TEdge.hxx` — Edge with PCurve list
-- `ModelingData/TKBRep/BRep/BRep_CurveOnSurface.hxx` — PCurve data structure
-- `ModelingAlgorithms/TKBO/IntTools/IntTools_Curve.hxx` — Intersection result (3D + 2 PCurves)
+- `ModelingAlgorithms/TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx` — Marching algorithm
 - `ModelingAlgorithms/TKBO/IntTools/IntTools_FaceFace.hxx` — Face-face intersection
 - `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_BuilderFace.hxx` — Face reconstruction from split edges
-- `ModelingData/TKGeomBase/ProjLib/ProjLib_Sphere.cxx` — Sphere inverse mapping
-- `ModelingData/TKGeomBase/ProjLib/ProjLib_Cylinder.cxx` — Cylinder inverse mapping
-- `ModelingData/TKGeomBase/ProjLib/ProjLib_Cone.cxx` — Cone inverse mapping
+- `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller.hxx` — Pairwise intersection precomputation
+- `ModelingData/TKGeomBase/IntAna/IntAna_QuadQuadGeo.hxx` — Analytic quadric-quadric (reference only)
 
 #### Sub-Phase A: Surface Inverse Mapping
 
