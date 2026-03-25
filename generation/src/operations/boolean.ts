@@ -338,7 +338,7 @@ function flipFace(face: Face): OperationResult<Face> {
 function intersectPlaneWithCurvedSurface(
   pl: Plane,
   surface: Surface,
-): { center: Point3D; radius: number; normal: { x: number; y: number; z: number } } | null {
+): { type: 'circle'; center: Point3D; radius: number; normal: { x: number; y: number; z: number } } | null {
   if (surface.type === 'sphere') {
     const result = intersectPlaneSphere(pl, surface);
     if (!result.success || !result.result) return null;

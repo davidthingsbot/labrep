@@ -555,9 +555,4 @@ function computeShellSignedVolume(shell: Shell): number {
   return totalVolume;
 }
 
-/**
- * Helper to get edge end point.
- */
-function edgeEndPoint(edge: { endVertex: { point: { x: number; y: number; z: number } } }): { x: number; y: number; z: number } {
-  return edge.endVertex.point;
-}
+// edgeEndPoint imported from ./edge
