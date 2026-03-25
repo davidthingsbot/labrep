@@ -11,8 +11,10 @@ import {
 } from '../../src/core';
 import { makeArc3D } from '../../src/geometry/arc3d';
 import { makeLine3D } from '../../src/geometry/line3d';
+import { makeCircle3D } from '../../src/geometry/circle3d';
+import { intersectPlaneCylinder } from '../../src/geometry/intersections3d';
 import { makeEdgeFromCurve } from '../../src/topology/edge';
-import { makeWireFromEdges } from '../../src/topology/wire';
+import { makeWire, makeWireFromEdges, orientEdge } from '../../src/topology/wire';
 import { shellFaces } from '../../src/topology/shell';
 import { solidVolume } from '../../src/topology/solid';
 import { extrude } from '../../src/operations/extrude';
@@ -202,6 +204,136 @@ describe('F2: sphere partially outside box (1-face sphere)', () => {
     const result = booleanSubtract(box.solid, sphere.solid);
     expect(result.error ?? 'success').toBe('success');
     expect(result.result!.solid.outerShell.isClosed).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// F6: EDGE CASES
+// ═══════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════
+// F3: BOX − CYLINDER (THROUGH-HOLE)
+// ═══════════════════════════════════════════════════════
+
+/** Create a cylinder along Z axis at origin: extrude a circle from z=-height/2 */
+function makeCylinder(r: number, height: number) {
+  const circlePlane = plane(point3d(0, 0, -height / 2), vec3d(0, 0, 1), vec3d(1, 0, 0));
+  const circle = makeCircle3D(circlePlane, r).result!;
+  const edge = makeEdgeFromCurve(circle).result!;
+  const wire = makeWire([orientEdge(edge, true)]).result!;
+  return extrude(wire, vec3d(0, 0, 1), height).result!;
+}
+
+describe('F3: box − cylinder (through-hole)', () => {
+  it('cylinder creation: 3 faces, correct volume', () => {
+    const cyl = makeCylinder(0.5, 6);
+    const faces = shellFaces(cyl.solid.outerShell);
+    expect(faces.length).toBe(3); // 2 caps + 1 side
+    expect(cyl.solid.outerShell.isClosed).toBe(true);
+    const vol = solidVolume(cyl.solid);
+    expect(Math.abs(vol - Math.PI * 0.25 * 6) / (Math.PI * 0.25 * 6)).toBeLessThan(0.01);
+  });
+
+  it('cylinder has cylindrical surface face', () => {
+    const cyl = makeCylinder(0.5, 6);
+    const faces = shellFaces(cyl.solid.outerShell);
+    const cylFaces = faces.filter(f => f.surface.type === 'cylinder');
+    expect(cylFaces.length).toBe(1);
+  });
+
+  it('box − cylinder succeeds with closed shell', () => {
+    // 4×4×4 box centered at origin, cylinder r=0.5 along Z extending beyond box
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const cyl = makeCylinder(0.5, 6); // z from -3 to 3, extends beyond box
+    const result = booleanSubtract(box.solid, cyl.solid);
+    expect(result.error ?? 'success').toBe('success');
+    expect(result.result!.solid.outerShell.isClosed).toBe(true);
+  });
+
+  it('box − cylinder has correct volume', () => {
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const cyl = makeCylinder(0.5, 6);
+    const result = booleanSubtract(box.solid, cyl.solid);
+    expect(result.success).toBe(true);
+    const vol = solidVolume(result.result!.solid);
+    // Box vol = 64. Cylinder through-hole: π×0.5²×4 = π
+    const expected = 64 - Math.PI * 0.25 * 4;
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.02);
+  });
+
+  it('box − cylinder has planar faces with holes + cylindrical face', () => {
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const cyl = makeCylinder(0.5, 6);
+    const result = booleanSubtract(box.solid, cyl.solid);
+    expect(result.success).toBe(true);
+    const faces = shellFaces(result.result!.solid.outerShell);
+    const planeCount = faces.filter(f => f.surface.type === 'plane').length;
+    const cylCount = faces.filter(f => f.surface.type === 'cylinder').length;
+    expect(planeCount).toBeGreaterThanOrEqual(6); // 6 box faces (2 with holes)
+    expect(cylCount).toBeGreaterThan(0); // cylindrical through-hole surface
+  });
+
+  it('box − cylinder tessellates', () => {
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const cyl = makeCylinder(0.5, 6);
+    const result = booleanSubtract(box.solid, cyl.solid);
+    expect(result.success).toBe(true);
+    const mesh = solidToMesh(result.result!.solid);
+    expect(mesh.success).toBe(true);
+    expect(meshTriangleCount(mesh.result!)).toBeGreaterThan(100);
+  });
+
+  it('through-hole: result currently has 8 planar faces, 2 with holes (debug)', () => {
+    // This test documents current behavior to track progress
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const cyl = makeCylinder(0.5, 6);
+    const result = booleanSubtract(box.solid, cyl.solid);
+    expect(result.success).toBe(true);
+    const faces = shellFaces(result.result!.solid.outerShell);
+    const types: Record<string, number> = {};
+    for (const f of faces) types[f.surface.type] = (types[f.surface.type] || 0) + 1;
+    const holedCount = faces.filter(f => f.innerWires.length > 0).length;
+
+    // Current: 8 plane, 0 cylinder, 2 holed — cylinder face missing
+    // Target: 6+ plane, 1+ cylinder, 2 holed
+    expect(types['plane']).toBeGreaterThanOrEqual(6);
+    // This assertion documents the bug — it should be > 0 when fixed:
+    expect(types['cylinder'] ?? 0).toBeGreaterThan(0);
+  });
+
+  it('through-hole: shared edges are created for both top and bottom', () => {
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const cyl = makeCylinder(0.5, 6);
+    const boxFaces = shellFaces(box.solid.outerShell);
+    const cylFaces = shellFaces(cyl.solid.outerShell);
+
+    // Cylinder has 3 faces: 2 planar caps + 1 cylindrical side
+    const cylSide = cylFaces.find(f => f.surface.type === 'cylinder');
+    expect(cylSide).toBeDefined();
+
+    // Box top and bottom faces should intersect the cylinder
+    let intersectionCount = 0;
+    for (const bf of boxFaces) {
+      if (bf.surface.type !== 'plane') continue;
+      const int = intersectPlaneCylinder(bf.surface.plane, cylSide!.surface);
+      if (int.success && int.result && int.result.type === 'circle') {
+        intersectionCount++;
+      }
+    }
+    // Top face at z=2 and bottom face at z=-2 both intersect
+    expect(intersectionCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('cylinder fully inside box (no through-hole) → correct result', () => {
+    // Short cylinder fully inside box
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const cyl = makeCylinder(0.5, 2); // z from -1 to 1, inside box
+    const result = booleanSubtract(box.solid, cyl.solid);
+    expect(result.success).toBe(true);
+    expect(result.result!.solid.outerShell.isClosed).toBe(true);
+    const vol = solidVolume(result.result!.solid);
+    const expected = 64 - Math.PI * 0.25 * 2;
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.02);
   });
 });
 

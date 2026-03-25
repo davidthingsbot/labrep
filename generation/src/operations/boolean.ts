@@ -439,23 +439,51 @@ function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on
   //   the boundary of both solids and classifies as 'on'.
   let centroid: Point3D;
   if (face.surface.type !== 'plane' && wire.edges.length > 0 && wire.edges[0].edge.curve.isClosed) {
-    // Curved face with circle boundary: sample a point on the surface interior.
-    // For a sphere face bounded by a circle, the "center" of the cap is along
-    // the circle's normal direction from the circle center.
-    const circleEdge = wire.edges[0].edge;
-    if (circleEdge.curve.type === 'circle3d') {
-      const circlePlane = (circleEdge.curve as any).plane;
-      const circleCenter = circlePlane.origin;
-      const circleNormal = circlePlane.normal;
-      // Nudge from circle center along the normal toward the surface interior
-      // Use a significant offset so we're clearly inside the face, not on the boundary
-      centroid = point3d(
-        circleCenter.x + circleNormal.x * 0.1,
-        circleCenter.y + circleNormal.y * 0.1,
-        circleCenter.z + circleNormal.z * 0.1,
-      );
+    // Curved face with circle boundary: sample a point on the face interior.
+    // The circle's vertex sits on the boundary of both solids ('on'), so we
+    // need a point that's clearly on the face but away from edges.
+    if (wire.edges.length === 1) {
+      // Single circle boundary (sphere cap): nudge from circle center
+      // toward the surface's geometric center.
+      const circleEdge = wire.edges[0].edge;
+      if (circleEdge.curve.type === 'circle3d') {
+        const circlePlane = (circleEdge.curve as any).plane;
+        const circleCenter = circlePlane.origin as Point3D;
+        // Nudge toward the surface center
+        let surfCenter: Point3D | null = null;
+        if (face.surface.type === 'sphere') surfCenter = (face.surface as any).center;
+        else if (face.surface.type === 'cylinder') surfCenter = (face.surface as any).axis.origin;
+        if (surfCenter) {
+          const dx = surfCenter.x - circleCenter.x;
+          const dy = surfCenter.y - circleCenter.y;
+          const dz = surfCenter.z - circleCenter.z;
+          const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          if (d > 1e-10) {
+            centroid = point3d(circleCenter.x + 0.1 * dx / d, circleCenter.y + 0.1 * dy / d, circleCenter.z + 0.1 * dz / d);
+          } else {
+            // Circle center IS the surface center — nudge along circle normal
+            const cn = circlePlane.normal;
+            centroid = point3d(circleCenter.x + cn.x * 0.1, circleCenter.y + cn.y * 0.1, circleCenter.z + cn.z * 0.1);
+          }
+        } else {
+          centroid = edgeStartPoint(circleEdge);
+        }
+      } else {
+        centroid = edgeStartPoint(wire.edges[0].edge);
+      }
     } else {
-      centroid = edgeStartPoint(circleEdge);
+      // Multi-edge boundary (cylinder through-hole): use centroid of all vertices.
+      // Seam line endpoints give points between the circles → inside the face.
+      let cx = 0, cy = 0, cz = 0, n = 0;
+      for (const oe of wire.edges) {
+        const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+        cx += start.x; cy += start.y; cz += start.z; n++;
+        if (!oe.edge.curve.isClosed) {
+          const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+          cx += end.x; cy += end.y; cz += end.z; n++;
+        }
+      }
+      centroid = n > 0 ? point3d(cx / n, cy / n, cz / n) : edgeStartPoint(wire.edges[0].edge);
     }
   } else if (face.innerWires.length > 0 && wire.edges.length > 0) {
     // Use midpoint of first outer edge
@@ -1169,13 +1197,66 @@ function buildTrimmedCurvedFace(originalFace: Face, sharedEdges: Edge[]): Face |
     return faceResult.result!;
   }
 
-  // Multiple edges → try to assemble into a closed wire
-  const wireResult = makeWireFromEdges(sharedEdges);
+  // Multiple shared edges (e.g., through-hole: top and bottom circles).
+  // The trimmed face wire connects the shared circle edges via seam segments.
+  //
+  // For a through-hole cylinder with 2 circle edges:
+  // Wire = circle-top → seam-down → circle-bottom(reversed) → seam-up
+  // The seam segments connect the circle start/end points.
+  //
+  // Based on OCCT's pave block approach: split seam edges at intersection points.
+
+  if (sharedEdges.length === 2) {
+    const e0 = sharedEdges[0]; // e.g., circle at z=2
+    const e1 = sharedEdges[1]; // e.g., circle at z=-2
+
+    // Find connection points: the circles' start points (they're closed, start=end)
+    const p0 = edgeStartPoint(e0); // point on circle 0
+    const p1 = edgeStartPoint(e1); // point on circle 1
+
+    // Create seam lines connecting the two circles
+    const seamDown = makeLine3D(p0, p1);
+    const seamUp = makeLine3D(p1, p0); // reverse direction for the return path
+
+    if (!seamDown.success || !seamUp.success) return null;
+    const seamDownEdge = makeEdgeFromCurve(seamDown.result!);
+    const seamUpEdge = makeEdgeFromCurve(seamUp.result!);
+    if (!seamDownEdge.success || !seamUpEdge.success) return null;
+
+    // Assemble: circle0(fwd) → seamDown → circle1(rev) → seamUp
+    const wireResult = makeWire([
+      orientEdge(e0, false),              // circle at top (reversed for subtract compatibility)
+      orientEdge(seamDownEdge.result!, true),  // seam going down
+      orientEdge(e1, true),              // circle at bottom
+      orientEdge(seamUpEdge.result!, true),    // seam going up
+    ]);
+    if (!wireResult.success) {
+      // Try alternate winding
+      const wireResult2 = makeWire([
+        orientEdge(e0, true),
+        orientEdge(seamDownEdge.result!, true),
+        orientEdge(e1, false),
+        orientEdge(seamUpEdge.result!, true),
+      ]);
+      if (!wireResult2.success) return null;
+      const faceResult = makeFace(originalFace.surface, wireResult2.result!);
+      return faceResult.success ? faceResult.result! : null;
+    }
+    const faceResult = makeFace(originalFace.surface, wireResult.result!);
+    return faceResult.success ? faceResult.result! : null;
+  }
+
+  // General fallback: try to assemble all shared edges + original seam edges
+  const seamEdges: Edge[] = [];
+  for (const oe of originalFace.outerWire.edges) {
+    if (!oe.edge.curve.isClosed) seamEdges.push(oe.edge);
+  }
+  const allEdges = [...sharedEdges, ...seamEdges];
+  const wireResult = makeWireFromEdges(allEdges);
   if (!wireResult.success) return null;
   if (!wireResult.result!.isClosed) return null;
   const faceResult = makeFace(originalFace.surface, wireResult.result!);
-  if (!faceResult.success) return null;
-  return faceResult.result!;
+  return faceResult.success ? faceResult.result! : null;
 }
 
 function splitFaceByAllFaces(face: Face, otherFaces: readonly Face[]): Face[] {
