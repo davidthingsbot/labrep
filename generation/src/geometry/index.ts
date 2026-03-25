@@ -74,6 +74,7 @@ export {
   type ArcInterval,
   type ClipCircle,
   clipCircleByHalfSpaces,
+  clipCircleByHalfSpacesMulti,
 } from './clip-curve';
 
 export {

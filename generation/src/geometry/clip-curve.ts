@@ -243,3 +243,150 @@ function arcLen(start: number, end: number): number {
   if (len < 0) len += TWO_PI;
   return len;
 }
+
+/**
+ * Clip a circle by a set of half-space constraints, returning ALL surviving
+ * arc intervals (not just one).
+ *
+ * When a circle is clipped by multiple planes (e.g., the 4 sides of a box),
+ * multiple disjoint arc segments can survive. This function returns all of them.
+ *
+ * Each half-space is defined by a Plane: points where dot(P - origin, normal) < 0
+ * are considered "inside" (surviving).
+ *
+ * @param circle - The circle to clip
+ * @param planes - Half-space constraints
+ * @returns Array of surviving arc intervals, empty if fully clipped
+ */
+export function clipCircleByHalfSpacesMulti(
+  circle: ClipCircle,
+  planes: readonly Plane[],
+): ArcInterval[] {
+  // Represent the surviving region as a set of arc intervals.
+  // Start with the full circle [0, 2π), then intersect with each half-space.
+  let intervals: ArcInterval[] = [{ startAngle: 0, endAngle: TWO_PI }];
+
+  for (const pl of planes) {
+    const rel = subtractPoints(circle.center, pl.origin);
+    const C = dot(rel, pl.normal);
+    const A = circle.radius * dot(circle.xAxis, pl.normal);
+    const B = circle.radius * dot(circle.yAxis, pl.normal);
+    const R = Math.sqrt(A * A + B * B);
+
+    if (R < 1e-10) {
+      if (C >= 0) return []; // Fully clipped
+      continue; // Fully inside
+    }
+
+    const ratio = -C / R;
+    if (ratio >= 1 - 1e-10) continue; // All inside
+    if (ratio <= -1 + 1e-10) return []; // All outside
+
+    // Two crossings
+    const phi = Math.atan2(B, A);
+    const delta = Math.acos(Math.max(-1, Math.min(1, ratio)));
+    const t1 = normalizeAngle(phi - delta);
+    const t2 = normalizeAngle(phi + delta);
+
+    // Determine which arc is "inside" (A*cos(t) + B*sin(t) + C < 0)
+    const tMid = normalizeAngle(phi + Math.PI);
+    const testVal = A * Math.cos(tMid) + B * Math.sin(tMid) + C;
+
+    let insideStart: number, insideEnd: number;
+    if (testVal < 0) {
+      insideStart = t2;
+      insideEnd = t1;
+    } else {
+      insideStart = t1;
+      insideEnd = t2;
+    }
+
+    // Intersect each existing interval with [insideStart, insideEnd]
+    const newIntervals: ArcInterval[] = [];
+    for (const iv of intervals) {
+      const clipped = intersectArcIntervals(iv.startAngle, iv.endAngle, insideStart, insideEnd);
+      for (const c of clipped) {
+        const len = arcLen(c.startAngle, c.endAngle);
+        if (len > 1e-8) newIntervals.push(c);
+      }
+    }
+    intervals = newIntervals;
+    if (intervals.length === 0) return [];
+  }
+
+  return intervals;
+}
+
+/**
+ * Intersect two arc intervals, returning 0, 1, or 2 result intervals.
+ * Handles wraparound correctly.
+ */
+function intersectArcIntervals(
+  aStart: number, aEnd: number,
+  bStart: number, bEnd: number,
+): ArcInterval[] {
+  // Convert arcs to sorted angular ranges for intersection.
+  // An arc [s, e) with s < e covers [s, e).
+  // An arc [s, e) with s > e wraps around: [s, 2π) ∪ [0, e).
+  //
+  // Strategy: check if each endpoint is in the other arc. Build result from
+  // the detected containment pattern.
+
+  const inArc = (t: number, start: number, end: number): boolean => {
+    const s = normalizeAngle(start);
+    const e = normalizeAngle(end);
+    const tt = normalizeAngle(t);
+    if (Math.abs(arcLen(s, e) - TWO_PI) < 1e-8) return true; // Full circle
+    if (s < e) {
+      return tt >= s - 1e-10 && tt <= e + 1e-10;
+    } else {
+      return tt >= s - 1e-10 || tt <= e + 1e-10;
+    }
+  };
+
+  // Check containment of all 4 endpoints
+  const aStartInB = inArc(aStart, bStart, bEnd);
+  const aEndInB = inArc(aEnd, bStart, bEnd);
+  const bStartInA = inArc(bStart, aStart, aEnd);
+  const bEndInA = inArc(bEnd, aStart, aEnd);
+
+  const results: ArcInterval[] = [];
+
+  if (!aStartInB && !aEndInB && !bStartInA && !bEndInA) {
+    // No overlap
+    return [];
+  }
+
+  if (aStartInB && aEndInB && !bStartInA && !bEndInA) {
+    // A is entirely inside B
+    return [{ startAngle: aStart, endAngle: aEnd }];
+  }
+
+  if (bStartInA && bEndInA && !aStartInB && !aEndInB) {
+    // B is entirely inside A
+    return [{ startAngle: bStart, endAngle: bEnd }];
+  }
+
+  // Partial overlaps: collect intervals
+  // The intersection starts at whichever "start" is inside the other arc,
+  // and ends at whichever "end" is inside the other arc.
+
+  if (aStartInB && bEndInA) {
+    // Overlap: [aStart, bEnd]
+    results.push({ startAngle: aStart, endAngle: normalizeAngle(bEnd) });
+  }
+  if (bStartInA && aEndInB) {
+    // Overlap: [bStart, aEnd]
+    results.push({ startAngle: normalizeAngle(bStart), endAngle: aEnd });
+  }
+
+  // Deduplicate: if both overlaps produce the same interval, keep one
+  if (results.length === 2) {
+    const len0 = arcLen(results[0].startAngle, results[0].endAngle);
+    const len1 = arcLen(results[1].startAngle, results[1].endAngle);
+    if (len0 < 1e-8) results.splice(0, 1);
+    else if (len1 < 1e-8) results.splice(1, 1);
+  }
+
+  return results;
+}

@@ -19,19 +19,36 @@ import { makeWireFromEdges } from '../topology/wire';
 import { shellFaces } from '../topology/shell';
 import { Solid } from '../topology/solid';
 import { makeArc3D, Arc3D } from '../geometry/arc3d';
+import { makeCircle3D } from '../geometry/circle3d';
 import {
   intersectPlaneSphere,
   intersectPlaneCylinder,
   intersectPlaneCone,
   PlaneCircleIntersection,
 } from '../geometry/intersections3d';
-import { clipCircleByHalfSpaces, ClipCircle } from '../geometry/clip-curve';
+import { clipCircleByHalfSpaces, clipCircleByHalfSpacesMulti, ClipCircle } from '../geometry/clip-curve';
 import { SphericalSurface } from '../surfaces/spherical-surface';
 import { CylindricalSurface } from '../surfaces/cylindrical-surface';
 import { ConicalSurface } from '../surfaces/conical-surface';
 import { pointInSolid } from './point-in-solid';
 
 const STITCH_TOL = 1e-4;
+
+/**
+ * Approximate the center of a solid by averaging all face vertex positions.
+ * Used to determine which side of a plane the solid interior is on.
+ */
+function computeSolidCenter(solid: Solid): Point3D {
+  const faces = shellFaces(solid.outerShell);
+  let sx = 0, sy = 0, sz = 0, count = 0;
+  for (const f of faces) {
+    for (const oe of f.outerWire.edges) {
+      const p = oe.forward ? oe.edge.startVertex.point : oe.edge.endVertex.point;
+      sx += p.x; sy += p.y; sz += p.z; count++;
+    }
+  }
+  return count > 0 ? point3d(sx / count, sy / count, sz / count) : point3d(0, 0, 0);
+}
 
 /**
  * Compute a perpendicular direction to a given normal, preferring alignment
@@ -172,71 +189,119 @@ export function trimCurvedFaceByPlanes(
       yAxis: circleYAxis,
     };
 
-    // Collect all OTHER planes as half-space constraints.
-    // The "inside" of the other solid is on the side OPPOSITE to the face normal
-    // (face normals point outward from the solid).
+    // Collect all OTHER planes as half-space constraints, oriented so that
+    // the solid interior is on the NEGATIVE side (dot(P-origin, normal) < 0).
+    //
+    // Face normals may point outward OR inward depending on the extrude convention.
+    // To determine the correct orientation, test which side of each plane the
+    // solid's center point (approx: centroid of all face vertices) is on.
+    // If the center is on the positive side, flip the plane normal.
+    const solidCenter = computeSolidCenter(otherSolid);
     const otherPlanes: Plane[] = [];
     for (let pi = 0; pi < planarFaces.length; pi++) {
       if (pi === circles[ci].faceIndex) continue;
       const pf = planarFaces[pi];
       if (pf.surface.type !== 'plane') continue;
-      otherPlanes.push(pf.surface.plane);
+      const pl = pf.surface.plane;
+      const rel = subtractPoints(solidCenter, pl.origin);
+      const side = dot(rel, pl.normal);
+      if (side > 0) {
+        // Solid center is on positive side — flip so interior is on negative side
+        otherPlanes.push(plane(pl.origin, vec3d(-pl.normal.x, -pl.normal.y, -pl.normal.z), pl.xAxis));
+      } else {
+        otherPlanes.push(pl);
+      }
     }
 
-    const arcInterval = clipCircleByHalfSpaces(clipCircle, otherPlanes);
-    if (!arcInterval) continue; // Fully clipped
+    // Use multi-interval clipper to handle cases where multiple disjoint arcs survive
+    const arcIntervals = clipCircleByHalfSpacesMulti(clipCircle, otherPlanes);
+    if (arcIntervals.length === 0) continue; // Fully clipped
 
-    // Also need to check that the arc is on the correct side of its own plane.
-    // The surviving arc should be on the "inside" side of its own plane
-    // (the side toward the solid interior).
-    // Test the arc midpoint against its own plane.
-    const midAngle = arcInterval.startAngle +
-      ((arcInterval.endAngle - arcInterval.startAngle + 2 * Math.PI) % (2 * Math.PI)) / 2;
-    const midPt = evalCircle(circlePlane, intersection.radius, midAngle);
+    for (const arcInterval of arcIntervals) {
+      // Check that the arc midpoint is inside the other solid.
+      // Nudge slightly inward from the intersecting plane to avoid boundary classification issues.
+      const rawSpan = arcInterval.endAngle - arcInterval.startAngle;
+      const span = rawSpan < 0 ? rawSpan + 2 * Math.PI : rawSpan;
+      const midAngle = arcInterval.startAngle + span / 2;
+      const midPtOnCircle = evalCircle(circlePlane, intersection.radius, midAngle);
 
-    // Check if the midpoint is inside the other solid
-    const midClass = pointInSolid(midPt, otherSolid);
-    if (midClass === 'outside') continue; // Arc is on wrong side
+      // Nudge inward: move the midpoint slightly toward the solid center
+      const nudgeDist = 1e-3;
+      const toCenter = subtractPoints(solidCenter, midPtOnCircle);
+      const toCenterLen = length(toCenter);
+      const midPt = toCenterLen > 1e-10
+        ? point3d(
+            midPtOnCircle.x + nudgeDist * toCenter.x / toCenterLen,
+            midPtOnCircle.y + nudgeDist * toCenter.y / toCenterLen,
+            midPtOnCircle.z + nudgeDist * toCenter.z / toCenterLen,
+          )
+        : midPtOnCircle;
 
-    const startPt = evalCircle(circlePlane, intersection.radius, arcInterval.startAngle);
-    const endPt = evalCircle(circlePlane, intersection.radius, arcInterval.endAngle);
+      const midClass = pointInSolid(midPt, otherSolid);
+      if (midClass === 'outside') continue; // Arc is on wrong side
 
-    arcs.push({
-      circlePlane,
-      radius: intersection.radius,
-      startAngle: arcInterval.startAngle,
-      endAngle: arcInterval.endAngle,
-      startPt,
-      endPt,
-      faceIndex: circles[ci].faceIndex,
-    });
+      const startPt = evalCircle(circlePlane, intersection.radius, arcInterval.startAngle);
+      const endPt = evalCircle(circlePlane, intersection.radius, arcInterval.endAngle);
+
+      arcs.push({
+        circlePlane,
+        radius: intersection.radius,
+        startAngle: arcInterval.startAngle,
+        endAngle: arcInterval.endAngle,
+        startPt,
+        endPt,
+        faceIndex: circles[ci].faceIndex,
+      });
+    }
   }
 
-  if (arcs.length < 2) {
-    // Not enough arcs to form a closed wire.
-    // If 0 arcs, the face might be entirely inside/outside — let caller classify.
-    // If 1 arc, something went wrong (open boundary).
+  if (arcs.length === 0) {
+    // No arcs survived clipping. The face is entirely inside or outside.
     return success(null);
   }
 
-  // Step 3: Order arcs into a closed chain by matching endpoints
-  const ordered = orderArcsIntoChain(arcs);
-  if (!ordered) {
-    return failure('Failed to order trim arcs into a closed chain');
-  }
+  // Step 3: Build the trim wire from surviving arcs.
+  // Special case: a single arc that spans a full circle → use Circle3D edge.
+  // Otherwise, order arcs into a closed chain.
 
-  // Step 4: Create edges and build wire
   const edges = [];
-  for (const arc of ordered) {
-    const arcResult = makeArc3D(arc.circlePlane, arc.radius, arc.startAngle, arc.endAngle);
-    if (!arcResult.success) {
-      return failure(`Failed to create trim arc: ${arcResult.error}`);
+
+  if (arcs.length === 1) {
+    const arc = arcs[0];
+    // Check if it's a full circle (endAngle - startAngle ≈ 2π)
+    const rawSpan = arc.endAngle - arc.startAngle;
+    const isFullCircle = Math.abs(rawSpan - 2 * Math.PI) < 0.01 ||
+                          Math.abs(rawSpan + 2 * Math.PI) < 0.01 ||
+                          (distance(arc.startPt, arc.endPt) < STITCH_TOL && rawSpan > Math.PI);
+    if (isFullCircle) {
+      // Full circle — create a Circle3D edge
+      const circleResult = makeCircle3D(arc.circlePlane, arc.radius);
+      if (!circleResult.success) return failure(`Failed to create trim circle: ${circleResult.error}`);
+      const edgeResult = makeEdgeFromCurve(circleResult.result!);
+      if (!edgeResult.success) return failure(`Failed to create trim edge: ${edgeResult.error}`);
+      edges.push(edgeResult.result!);
+    } else {
+      // Single arc — not a closed boundary. Let caller classify.
+      return success(null);
     }
-    const edgeResult = makeEdgeFromCurve(arcResult.result!);
-    if (!edgeResult.success) {
-      return failure(`Failed to create trim edge: ${edgeResult.error}`);
+  } else {
+    // Multiple arcs — order into a closed chain
+    const ordered = orderArcsIntoChain(arcs);
+    if (!ordered) {
+      return failure('Failed to order trim arcs into a closed chain');
     }
-    edges.push(edgeResult.result!);
+
+    for (const arc of ordered) {
+      const arcResult = makeArc3D(arc.circlePlane, arc.radius, arc.startAngle, arc.endAngle);
+      if (!arcResult.success) {
+        return failure(`Failed to create trim arc: ${arcResult.error}`);
+      }
+      const edgeResult = makeEdgeFromCurve(arcResult.result!);
+      if (!edgeResult.success) {
+        return failure(`Failed to create trim edge: ${edgeResult.error}`);
+      }
+      edges.push(edgeResult.result!);
+    }
   }
 
   const wireResult = makeWireFromEdges(edges);
@@ -244,7 +309,7 @@ export function trimCurvedFaceByPlanes(
     return failure(`Failed to create trim wire: ${wireResult.error}`);
   }
 
-  // Step 5: Create the trimmed face
+  // Step 4: Create the trimmed face
   return makeFace(surface, wireResult.result!);
 }
 
