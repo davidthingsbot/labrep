@@ -45,3 +45,10 @@ export {
   solidInnerShells,
   solidVolume,
 } from './solid';
+
+export {
+  type PCurve,
+  makePCurve,
+  evaluatePCurve3D,
+  computeIntersectionPCurves,
+} from './pcurve';

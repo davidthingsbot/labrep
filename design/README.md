@@ -1085,22 +1085,18 @@ This is the hardest geometry kernel phase. It requires the PCurve (parameter-spa
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled.
 
-**Status (2026-03-24):**
-
-Sub-phases A–C complete (surface inverse mapping, PCurve infrastructure, circle-based face splitting). Sub-phase D (curved face trimming) partially complete. Sub-phases E–F in progress.
+**Status (2026-03-25):** Complete. All exit-criteria tests pass (26/26). STEP round-trip tests for curved boolean results. App example re-enabled.
 
 What works:
-- `booleanSubtract(box, sphere)` — sphere fully inside box: closed shell, correct volume (<1% error), tessellation with smooth normals
-- `booleanSubtract(box, sphere)` — sphere partially outside (sticking out bottom): closed shell, correct volume (<7% error), shared circle edges between planar hole and trimmed sphere face
-- `booleanSubtract(box, cylinder)` — cylinder fully inside box: closed shell, correct volume
-- `booleanSubtract(lBracket, sphere)` — sphere fully inside L-bracket base: closed shell, correct volume, tessellation
-- 1-face sphere construction (OCCT-style: single semicircle arc revolve → 1 face, like BRepPrimAPI_MakeSphere)
-- `solidVolume` for sphere faces using OCCT's divergence theorem with Jacobian normals and natural restriction detection
-- `Face.forward` orientation flag (OCCT TopAbs_Orientation pattern)
-
-What's in progress (6 failing tests):
-- Cylinder through-hole (`booleanSubtract(box, cylinder)` where cylinder extends beyond box): `buildTrimmedCurvedFace` with 2 shared circle edges needs proper wire assembly with seam lines
-- Sphere sticking out one side (X-axis offset): `classifyFace` centroid for single-circle curved face on boundary
+- `booleanSubtract(box, sphere)` — sphere fully inside: closed shell, exact volume (<1% error)
+- `booleanSubtract(box, sphere)` — sphere partially outside (any axis): closed shell, correct volume
+- `booleanSubtract(box, cylinder)` — cylinder fully inside: closed shell, correct volume
+- `booleanSubtract(box, cylinder)` — through-hole: closed shell, cylindrical face, correct volume (<2% error)
+- `booleanSubtract(lBracket, sphere)` — complex non-convex solid: closed shell, correct volume
+- 1-face sphere construction (OCCT-style single semicircle revolve)
+- `solidVolume` with divergence theorem, Jacobian normals, natural restriction, and parametric integration for flipped curved faces
+- STEP export with SPHERICAL_SURFACE + CYLINDRICAL_SURFACE entities
+- Tessellation of boolean results with curved faces
 
 Key OCCT patterns adopted:
 - Natural restriction faces (BRepGProp_Gauss: `NbChildren() == 0`) use full surface parametric range for volume

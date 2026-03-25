@@ -43,7 +43,7 @@ import { MeshComplexExample } from './MeshComplexExample';
 import { BooleanBasicExample } from './BooleanBasicExample';
 import { BooleanShapesExample } from './BooleanShapesExample';
 import { BooleanStepExample } from './BooleanStepExample';
-// BooleanCurvedExample removed — requires Phase 13 (PCurve infrastructure) to work correctly
+import { BooleanCurvedExample } from './BooleanCurvedExample';
 
 /** All registered examples. */
 export const examples: Example[] = [
@@ -1168,7 +1168,26 @@ const stepText = writeStep(builder.build());
 const parsed = parseStep(stepText); // Round-trip!
 `,
   },
-  // "Boolean: Curved Shapes" example planned for Phase 13 (PCurve infrastructure)
+  {
+    id: 'boolean-curved',
+    name: 'Boolean: Curved Shapes',
+    description: 'L-bracket with animated sphere subtract — curved boolean with spherical surfaces',
+    component: BooleanCurvedExample,
+    code: `// Boolean with Curved Surfaces (Phase 13)
+import { extrude, revolve, booleanSubtract,
+  solidToMesh, meshTriangleCount } from '@labrep/generation';
+
+// L-bracket from extruded profile
+const lSolid = extrude(lWire, dir, 4).result!.solid;
+
+// Sphere via revolving semicircle arcs
+const sphere = revolve(arcWire, Z_AXIS, 2 * Math.PI).result!.solid;
+
+// Subtract sphere from L-bracket
+const result = booleanSubtract(lSolid, sphere);
+const mesh = solidToMesh(result.solid); // Tessellate with curved faces
+`,
+  },
 ];
 
 /** Get an example by its ID. */

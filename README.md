@@ -61,12 +61,7 @@ labrep/
 | 10 | Sketch on Face | getPlaneFromFace, sketch on any planar face |
 | 11 | Boolean Operations + STEP | Union, subtract, intersect with exact volumes (planar solids) |
 | 12 | Solid Tessellation | solidToMesh for all surface types, ear clipping, analytic normals |
-
-### In Progress
-
-| Phase | Name | Description |
-|-------|------|-------------|
-| 13 | PCurve + Curved Booleans | Box−sphere works (fully inside + partially outside). Box−cylinder fully inside works. Through-hole and multi-axis cases in progress. |
+| 13 | PCurve + Curved Booleans | Box−sphere, box−cylinder (through-hole), L-bracket−sphere with exact volumes |
 
 ### Upcoming
 

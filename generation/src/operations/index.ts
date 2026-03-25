@@ -31,3 +31,5 @@ export {
 export { pointInSolid } from './point-in-solid';
 
 export { trimCurvedFaceByPlanes } from './trim-curved-face';
+
+export { splitPlanarFaceByCircle } from './split-face-by-circle';

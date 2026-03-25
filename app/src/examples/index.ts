@@ -38,3 +38,4 @@ export { SketchOnFaceStepExample } from './SketchOnFaceStepExample';
 export { BooleanBasicExample } from './BooleanBasicExample';
 export { BooleanShapesExample } from './BooleanShapesExample';
 export { BooleanStepExample } from './BooleanStepExample';
+export { BooleanCurvedExample } from './BooleanCurvedExample';
