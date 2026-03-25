@@ -66,7 +66,7 @@ labrep/
 
 | Phase | Name | Description |
 |-------|------|-------------|
-| 13 | PCurve + Curved Booleans | Boolean ops on curved solids (box-sphere, box-cylinder). PCurve infrastructure, face trimming, curved SSI. |
+| 13 | PCurve + Curved Booleans | Box−sphere works (fully inside + partially outside). Box−cylinder fully inside works. Through-hole and multi-axis cases in progress. |
 
 ### Upcoming
 

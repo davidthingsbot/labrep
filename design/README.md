@@ -1085,7 +1085,28 @@ This is the hardest geometry kernel phase. It requires the PCurve (parameter-spa
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled.
 
-**Status (2026-03-24):** WIP. Circle clipping, plane-surface intersections, and point-in-solid for spheres are implemented. The core PCurve infrastructure, face splitting, and boolean integration are not yet started. Current `splitFaceByAllFaces` uses a tangent-line approximation for circles (boolean.ts:962) — this must be replaced with proper circle-based splitting.
+**Status (2026-03-24):**
+
+Sub-phases A–C complete (surface inverse mapping, PCurve infrastructure, circle-based face splitting). Sub-phase D (curved face trimming) partially complete. Sub-phases E–F in progress.
+
+What works:
+- `booleanSubtract(box, sphere)` — sphere fully inside box: closed shell, correct volume (<1% error), tessellation with smooth normals
+- `booleanSubtract(box, sphere)` — sphere partially outside (sticking out bottom): closed shell, correct volume (<7% error), shared circle edges between planar hole and trimmed sphere face
+- `booleanSubtract(box, cylinder)` — cylinder fully inside box: closed shell, correct volume
+- `booleanSubtract(lBracket, sphere)` — sphere fully inside L-bracket base: closed shell, correct volume, tessellation
+- 1-face sphere construction (OCCT-style: single semicircle arc revolve → 1 face, like BRepPrimAPI_MakeSphere)
+- `solidVolume` for sphere faces using OCCT's divergence theorem with Jacobian normals and natural restriction detection
+- `Face.forward` orientation flag (OCCT TopAbs_Orientation pattern)
+
+What's in progress (6 failing tests):
+- Cylinder through-hole (`booleanSubtract(box, cylinder)` where cylinder extends beyond box): `buildTrimmedCurvedFace` with 2 shared circle edges needs proper wire assembly with seam lines
+- Sphere sticking out one side (X-axis offset): `classifyFace` centroid for single-circle curved face on boundary
+
+Key OCCT patterns adopted:
+- Natural restriction faces (BRepGProp_Gauss: `NbChildren() == 0`) use full surface parametric range for volume
+- Same-domain face detection (BOPAlgo_Builder_2: `FillSameDomainFaces`) for sibling hemisphere handling
+- Shared intersection edges (BOPAlgo_PaveFiller pave blocks) between planar holes and trimmed curved faces
+- Jacobian normal `∂P/∂u × ∂P/∂v` for parametric volume integration (BRepGProp_Vinert)
 
 **Key reference:** OCCT source in `library/opencascade/src/`:
 - `ModelingData/TKBRep/BRep/BRep_TEdge.hxx` — Edge with PCurve list
