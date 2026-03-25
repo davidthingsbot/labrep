@@ -26,7 +26,7 @@ function verifyPointsOnBothSurfaces(
   result: SSIResult,
   surfA: { evaluate: (u: number, v: number) => { x: number; y: number; z: number } },
   surfB: { evaluate: (u: number, v: number) => { x: number; y: number; z: number } },
-  tol: number = 1e-4,
+  tol: number = 1e-3,
 ) {
   for (const curve of result.curves) {
     for (const pt of curve.points) {

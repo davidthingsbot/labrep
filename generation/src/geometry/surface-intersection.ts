@@ -156,92 +156,115 @@ function estimateGridCellSize(surf: Surface, bounds: ReturnType<typeof surfaceBo
 
 const SEED_GRID = 30; // Grid resolution for seed finding
 const SEED_TOL = 0.2; // Distance tolerance for seed candidates
-const NEWTON_TOL = 1e-8; // Newton-Raphson convergence tolerance
-const NEWTON_MAX = 20; // Max Newton iterations
+const NEWTON_TOL = 1e-10; // Newton-Raphson convergence tolerance
+const NEWTON_MAX = 50; // Max Newton iterations
 
 /**
  * Find seed points where the two surfaces approximately meet.
  *
- * Two-phase approach:
- * Phase 1: Sample surface A's UV domain, project onto B (fast, finds most seeds).
- * Phase 2: Sample surface B's UV domain, project onto A (finds seeds that
- *          Phase 1 misses — e.g., the far-side intersection line of parallel
- *          cylinders, where A→B projection always snaps to the near side).
+ * Uses spatial hashing to find closest-pair points between two surface grids.
+ * This avoids the projection-to-nearest-point problem that misses far-side
+ * intersections (e.g., second intersection line of parallel cylinders).
  *
- * Each candidate is refined with Newton-Raphson and deduplicated.
+ * Algorithm:
+ * 1. Sample both surfaces on their UV grids → two sets of 3D points
+ * 2. Hash all points from surface B into spatial bins
+ * 3. For each point from surface A, check nearby bins for close B-points
+ * 4. Refine close pairs with Newton-Raphson
  */
 function findSeeds(
   surfA: Surface, surfB: Surface,
   boundsA: ReturnType<typeof surfaceBounds>,
   boundsB: ReturnType<typeof surfaceBounds>,
-  seedTol: number = SEED_TOL,
 ): SSIPoint[] {
+  type GridPt = { pt: Point3D; u: number; v: number };
+
+  // Sample both surfaces
+  const gridA = sampleSurfaceGrid(surfA, boundsA);
+  const gridB = sampleSurfaceGrid(surfB, boundsB);
+
+  if (gridA.length === 0 || gridB.length === 0) return [];
+
+  // Determine bin size from grid density
+  const cellA = estimateGridCellSize(surfA, boundsA);
+  const cellB = estimateGridCellSize(surfB, boundsB);
+  const binSize = Math.max(cellA, cellB) * 0.8;
+  const searchTol = binSize; // Points within one bin size are candidates
+
+  // Hash B-points into spatial bins
+  const bins = new Map<string, GridPt[]>();
+  for (const gp of gridB) {
+    const key = `${Math.floor(gp.pt.x / binSize)},${Math.floor(gp.pt.y / binSize)},${Math.floor(gp.pt.z / binSize)}`;
+    const list = bins.get(key) || [];
+    list.push(gp);
+    bins.set(key, list);
+  }
+
+  // Find close pairs
   const seeds: SSIPoint[] = [];
 
-  // Phase 1: sample A → project to B
-  findSeedsOneDirection(surfA, surfB, boundsA, seedTol, seeds, false);
-  // Phase 2: sample B → project to A (swap UV in results)
-  findSeedsOneDirection(surfB, surfA, boundsB, seedTol, seeds, true);
+  for (const gpA of gridA) {
+    const bx = Math.floor(gpA.pt.x / binSize);
+    const by = Math.floor(gpA.pt.y / binSize);
+    const bz = Math.floor(gpA.pt.z / binSize);
+
+    // Check 3×3×3 neighborhood
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const key = `${bx + dx},${by + dy},${bz + dz}`;
+          const list = bins.get(key);
+          if (!list) continue;
+
+          for (const gpB of list) {
+            const d = distance(gpA.pt, gpB.pt);
+            if (d > searchTol) continue;
+
+            // Refine with Newton-Raphson
+            const refined = refineIntersectionPoint(surfA, surfB, gpA.u, gpA.v, gpB.u, gpB.v);
+            if (!refined) continue;
+
+            const pA = evalSurface(surfA, refined.u1, refined.v1);
+            const pB = evalSurface(surfB, refined.u2, refined.v2);
+            if (!pA || !pB) continue;
+            if (distance(pA, pB) > 1e-3) continue;
+
+            // Deduplicate
+            const tooClose = seeds.some(s => distance(s.point, pA) < searchTol * 0.5);
+            if (tooClose) continue;
+
+            seeds.push({
+              point: pA,
+              u1: refined.u1, v1: refined.v1,
+              u2: refined.u2, v2: refined.v2,
+            });
+          }
+        }
+      }
+    }
+  }
 
   return seeds;
 }
 
-function findSeedsOneDirection(
-  surfFrom: Surface, surfTo: Surface,
-  boundsFrom: ReturnType<typeof surfaceBounds>,
-  seedTol: number,
-  seeds: SSIPoint[],
-  swapUV: boolean,
-): void {
-  const du = (boundsFrom.uMax - boundsFrom.uMin) / SEED_GRID;
-  const dv = (boundsFrom.vMax - boundsFrom.vMin) / SEED_GRID;
+/** Sample a surface on its UV grid, returning 3D points with UV coordinates. */
+function sampleSurfaceGrid(
+  surf: Surface,
+  bounds: ReturnType<typeof surfaceBounds>,
+): { pt: Point3D; u: number; v: number }[] {
+  const points: { pt: Point3D; u: number; v: number }[] = [];
+  const du = (bounds.uMax - bounds.uMin) / SEED_GRID;
+  const dv = (bounds.vMax - bounds.vMin) / SEED_GRID;
 
   for (let i = 0; i <= SEED_GRID; i++) {
     for (let j = 0; j <= SEED_GRID; j++) {
-      const uFrom = boundsFrom.uMin + i * du;
-      const vFrom = boundsFrom.vMin + j * dv;
-
-      const ptFrom = evalSurface(surfFrom, uFrom, vFrom);
-      if (!ptFrom) continue;
-
-      const uvTo = projectToSurface(surfTo, ptFrom);
-      if (!uvTo) continue;
-
-      const ptTo = evalSurface(surfTo, uvTo.u, uvTo.v);
-      if (!ptTo) continue;
-
-      const d = distance(ptFrom, ptTo);
-      if (d > seedTol) continue;
-
-      // Assign UV coordinates in the canonical (A, B) order
-      const u1 = swapUV ? uvTo.u : uFrom;
-      const v1 = swapUV ? uvTo.v : vFrom;
-      const u2 = swapUV ? uFrom : uvTo.u;
-      const v2 = swapUV ? vFrom : uvTo.v;
-
-      const surfA = swapUV ? surfTo : surfFrom;
-      const surfB = swapUV ? surfFrom : surfTo;
-
-      // Refine with Newton-Raphson
-      const refined = refineIntersectionPoint(surfA, surfB, u1, v1, u2, v2);
-      if (!refined) continue;
-
-      const pA = evalSurface(surfA, refined.u1, refined.v1);
-      const pB = evalSurface(surfB, refined.u2, refined.v2);
-      if (!pA || !pB) continue;
-      if (distance(pA, pB) > 1e-3) continue;
-
-      // Deduplicate: check not too close to existing seed
-      const tooClose = seeds.some(s => distance(s.point, pA) < seedTol * 1.5);
-      if (tooClose) continue;
-
-      seeds.push({
-        point: pA,
-        u1: refined.u1, v1: refined.v1,
-        u2: refined.u2, v2: refined.v2,
-      });
+      const u = bounds.uMin + i * du;
+      const v = bounds.vMin + j * dv;
+      const pt = evalSurface(surf, u, v);
+      if (pt) points.push({ pt, u, v });
     }
   }
+  return points;
 }
 
 // ═══════════════════════════════════════════════
@@ -487,11 +510,16 @@ export function intersectSurfaces(surfA: Surface, surfB: Surface): SSIResult {
   const boundsA = surfaceBounds(surfA);
   const boundsB = surfaceBounds(surfB);
 
-  const scaledSeedTol = SEED_TOL;
-  const scaledMarchStep = MARCH_STEP;
+  // Scale march step with geometry size. Use a fraction of the smaller grid cell.
+  // For standard geometry (cell ~0.2-1), this stays at MARCH_STEP.
+  // For large geometry (cell ~20), step scales up to avoid fragmented curves.
+  const cellA = estimateGridCellSize(surfA, boundsA);
+  const cellB = estimateGridCellSize(surfB, boundsB);
+  const smallCell = Math.min(cellA, cellB);
+  const scaledMarchStep = smallCell > 2 ? smallCell * 0.1 : MARCH_STEP;
 
   // Find seed points (samples both A→B and B→A)
-  const seeds = findSeeds(surfA, surfB, boundsA, boundsB, scaledSeedTol);
+  const seeds = findSeeds(surfA, surfB, boundsA, boundsB);
   if (seeds.length === 0) {
     return { curves: [] };
   }
@@ -537,6 +565,12 @@ export function intersectSurfaces(surfA: Surface, surfB: Surface): SSIResult {
     }
 
     if (allPoints.length < 3) continue; // Too few points — skip
+
+    // Filter out degenerate curves — if all points are clustered at one spot
+    // (tangent point), this isn't a real intersection curve.
+    const span = allPoints.reduce((max, pt) =>
+      Math.max(max, distance(pt.point, allPoints[0].point)), 0);
+    if (span < scaledMarchStep * 2) continue;
 
     // Mark seeds that are close to this curve as "used"
     for (let sj = si + 1; sj < seeds.length; sj++) {

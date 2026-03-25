@@ -36,6 +36,8 @@ These patterns are **strictly forbidden**:
 
 If a test fails, **fix the code until it passes**. If code produces wrong results, **fix the algorithm**. If you can't fix it right now, **say so and stop** — do not hide the problem behind a loose assertion or a TODO comment. Every workaround becomes permanent. Every ignored failure trains the next agent to accept broken output.
 
+**Never label failures as "known limitations."** A failing test means the code is wrong — investigate why, read the OCCT reference, and fix the root cause. Don't relabel the symptom as an accepted constraint. If the algorithm can't handle a case, the algorithm needs to be improved, not the test expectations lowered.
+
 ## OCCT Is Your Primary Reference. Use It.
 
 **OpenCASCADE (OCCT) has correct, battle-tested solutions to every problem you will face.** Do not invent your own approach when OCCT already solves it. This is not optional guidance — it is a hard requirement.
