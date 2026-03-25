@@ -28,6 +28,7 @@ import { Solid, makeSolid, solidVolume } from '../topology/solid';
 import { PlaneSurface, makePlaneSurface } from '../surfaces';
 import { pointInSolid } from './point-in-solid';
 import { trimCurvedFaceByPlanes } from './trim-curved-face';
+import { splitPlanarFaceByCircle } from './split-face-by-circle';
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -321,9 +322,9 @@ function flipFace(face: Face): OperationResult<Face> {
     return makeFace(flippedSurface, wireResult.result!);
   }
 
-  // For curved surfaces, keep the surface as-is but with reversed wire.
-  // The reversed wire winding produces correctly-oriented triangles during tessellation.
-  return makeFace(face.surface, wireResult.result!);
+  // For curved surfaces, keep the surface as-is but with reversed wire and
+  // forward=false to indicate the face normal is reversed.
+  return makeFace(face.surface, wireResult.result!, [], !face.forward);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -637,11 +638,34 @@ export function booleanOperation(
 
     if (!wasCoplanarSplit) {
       // Not coplanar — check for transverse intersection
-      let splitFaces = [faceA];
-      splitFaces = splitFaceByAllFaces(faceA, facesOfB);
+      // First, try circle-based splitting for curved face intersections.
+      // This produces proper faces with circular holes instead of polygon approximations.
+      let currentFace = faceA;
+      const diskFaces: Face[] = [];
+
+      if (currentFace.surface.type === 'plane') {
+        const facePlane = currentFace.surface.plane;
+        for (const otherFace of facesOfB) {
+          if (otherFace.surface.type === 'plane') continue;
+          const circleInt = intersectPlaneWithCurvedSurface(facePlane, otherFace.surface);
+          if (!circleInt) continue;
+          const splitResult = splitPlanarFaceByCircle(currentFace, circleInt);
+          if (splitResult) {
+            currentFace = splitResult.outside; // face with circular hole
+            diskFaces.push(splitResult.inside); // circular disk
+          }
+        }
+      }
+
+      // Then do line-based splitting for planar-planar intersections
+      const splitFaces = splitFaceByAllFaces(currentFace, facesOfB);
 
       for (const sf of splitFaces) {
         allFacesA.push({ face: sf, classification: classifyFace(sf, b) });
+      }
+      // Disk faces are inside the curved solid — classify them too
+      for (const df of diskFaces) {
+        allFacesA.push({ face: df, classification: classifyFace(df, b) });
       }
     }
   }
@@ -710,9 +734,30 @@ export function booleanOperation(
     }
 
     if (!wasCoplanarSplit) {
-      let splitFaces = splitFaceByAllFaces(faceB, facesOfA);
+      // Circle-based splitting for curved faces of A intersecting planar face B
+      let currentFaceB = faceB;
+      const diskFacesB: Face[] = [];
+
+      if (currentFaceB.surface.type === 'plane') {
+        const facePlane = currentFaceB.surface.plane;
+        for (const otherFace of facesOfA) {
+          if (otherFace.surface.type === 'plane') continue;
+          const circleInt = intersectPlaneWithCurvedSurface(facePlane, otherFace.surface);
+          if (!circleInt) continue;
+          const splitResult = splitPlanarFaceByCircle(currentFaceB, circleInt);
+          if (splitResult) {
+            currentFaceB = splitResult.outside;
+            diskFacesB.push(splitResult.inside);
+          }
+        }
+      }
+
+      const splitFaces = splitFaceByAllFaces(currentFaceB, facesOfA);
       for (const sf of splitFaces) {
         allFacesB.push({ face: sf, classification: classifyFace(sf, a) });
+      }
+      for (const df of diskFacesB) {
+        allFacesB.push({ face: df, classification: classifyFace(df, a) });
       }
     }
   }

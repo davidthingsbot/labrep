@@ -1083,81 +1083,9 @@ App Examples:
 
 This is the hardest geometry kernel phase. It requires the PCurve (parameter-space curve) infrastructure that enables exact face trimming along curved intersection boundaries.
 
-```
-Infrastructure (new data structures):
-├── PCurve: Curve2D representation of an edge in a face's UV parameter space
-├── CurveOnSurface: links a 3D edge curve to its 2D parametric form on a surface
-├── Extended Edge: stores 3D curve + list of PCurves (one per adjacent face)
-│
-├── Based on OCCT's:
-│   ├── BRep_TEdge (edge with multiple curve representations)
-│   ├── BRep_CurveOnSurface (2D curve + surface + UV bounds)
-│   └── IntTools_Curve (3D curve + two PCurves from face-face intersection)
-
-Surface-Surface Intersection (analytic — already partially implemented):
-├── intersectPlaneSphere → circle (✅ done)
-├── intersectPlaneCylinder → circle/ellipse/lines (✅ done)
-├── intersectPlaneCone → circle/ellipse/lines/parabola (✅ done)
-├── intersectCylinderCylinder → conic sections (new)
-├── intersectSphereSphere → circle (new)
-│
-├── For each intersection: produce 3D curve + PCurve in each surface's UV space
-│
-├── Based on OCCT's IntAna_QuadQuadGeo (analytic quadric-quadric)
-│   See: library/opencascade/src/ModelingData/TKGeomBase/IntAna/
-
-PCurve Construction:
-├── projectCurveToSurface(curve3D, surface) → Curve2D
-│   Project a 3D intersection curve onto a surface's (u,v) parameter space
-│
-├── For plane: trivial (worldToSketch)
-├── For sphere: (θ, φ) from inverse trig
-├── For cylinder: (θ, v) from projection onto axis + angular position
-├── For cone: similar to cylinder with semi-angle correction
-
-Face Splitting via Pave Blocks (OCCT's approach):
-├── For each face pair, compute face-face intersection → IntTools_Curve
-├── Find where intersection curves cross face edges → split points (pave points)
-├── Split edges at pave points → pave blocks (sub-edges)
-├── Rebuild faces from the pave block network
-├── Each rebuilt face gets exact trim boundaries from PCurves
-│
-├── Based on OCCT's BOPAlgo_PaveFiller + BOPAlgo_BuilderFace
-│   See: library/opencascade/src/ModelingAlgorithms/TKBO/BOPAlgo/
-
-Trimmed Face Tessellation:
-├── tessellateTrimmedFace(face, pcurveBoundary) → mesh
-├── Generate parametric grid within the PCurve boundary
-├── Cull/clip grid cells outside the trim boundary
-├── Produce smooth normals from the surface definition
-│
-├── Extends existing tessellateCurvedFace with boundary awareness
-
-Tests (must verify geometry, not just success):
-├── Box − sphere: volume = box_vol − spherical_cap_vol (within 1%)
-├── Box − cylinder (through-hole): volume = box_vol − π·r²·h (within 1%)
-├── Box − cone: volume = box_vol − cone_cap_vol (within 1%)
-├── L-bracket − sphere: correct cavity, non-convex solid handling
-├── Sphere ∩ box: volume = spherical_cap (within 1%)
-├── Cylinder ∪ box: correct union geometry
-├── Volume consistency: V(A) + V(B) = V(union) + V(intersect)
-├── Shell closure on ALL results
-├── All results tessellatable with correct normals
-├── STEP round-trip of curved boolean results
-│
-├── Edge cases:
-│   ├── Tangent configurations (sphere touching plane)
-│   ├── Near-degenerate intersections
-│   ├── Multiple intersection loops
-│   └── Non-convex solid trimming (the L-bracket case)
-
-App Examples:
-├── "Boolean: Curved Shapes" — L-bracket − sphere with animated position
-├── "Boolean: Through Hole" — Box − cylinder
-└── Shaded mesh with smooth normals on curved cavity surfaces
-```
-
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled.
+
+**Status (2026-03-24):** WIP. Circle clipping, plane-surface intersections, and point-in-solid for spheres are implemented. The core PCurve infrastructure, face splitting, and boolean integration are not yet started. Current `splitFaceByAllFaces` uses a tangent-line approximation for circles (boolean.ts:962) — this must be replaced with proper circle-based splitting.
 
 **Key reference:** OCCT source in `library/opencascade/src/`:
 - `ModelingData/TKBRep/BRep/BRep_TEdge.hxx` — Edge with PCurve list
@@ -1165,6 +1093,131 @@ App Examples:
 - `ModelingAlgorithms/TKBO/IntTools/IntTools_Curve.hxx` — Intersection result (3D + 2 PCurves)
 - `ModelingAlgorithms/TKBO/IntTools/IntTools_FaceFace.hxx` — Face-face intersection
 - `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_BuilderFace.hxx` — Face reconstruction from split edges
+- `ModelingData/TKGeomBase/ProjLib/ProjLib_Sphere.cxx` — Sphere inverse mapping
+- `ModelingData/TKGeomBase/ProjLib/ProjLib_Cylinder.cxx` — Cylinder inverse mapping
+- `ModelingData/TKGeomBase/ProjLib/ProjLib_Cone.cxx` — Cone inverse mapping
+
+#### Sub-Phase A: Surface Inverse Mapping
+
+Projection functions already exist as private functions in `tessellation.ts` (lines 270–380). Extract them as public functions into each surface module, with proper tests.
+
+**A1: Plane inverse mapping**
+- **Test** (`tests/surfaces/plane-surface.test.ts`): round-trip — `projectToPlaneSurface(evaluate(u, v))` recovers `(u, v)` for 10+ points including origin, negative coords, large values
+- **Implement**: Add `projectToPlaneSurface(surface, point) → {u, v}` using dot-product formula (OCCT ProjLib_Plane)
+
+**A2: Cylinder inverse mapping**
+- **Test** (`tests/surfaces/cylindrical-surface.test.ts`): round-trip for points at θ=0, π/2, π, 3π/2 and v=0, 5, −3. Test non-axis-aligned cylinder.
+- **Implement**: Extract from `tessellation.ts:270`. Formula: U=atan2(y_local, x_local), V=z_local
+
+**A3: Sphere inverse mapping**
+- **Test** (`tests/surfaces/spherical-surface.test.ts`): round-trip for equator, poles, 45° latitude, arbitrary points. Pole special case: v=±π/2, u arbitrary.
+- **Implement**: Extract from `tessellation.ts:287`. Formula: U=atan2(y,x), V=atan(z/sqrt(x²+y²))
+
+**A4: Cone inverse mapping**
+- **Test** (`tests/surfaces/conical-surface.test.ts`): round-trip. Test near apex. Test negative semi-angle.
+- **Implement**: Extract from `tessellation.ts:305`. Apex handling per OCCT ProjLib_Cone.
+
+**A5: Refactor tessellation.ts** — Replace private `projectTo*` with calls to new public functions. All existing tests must still pass.
+
+#### Sub-Phase B: PCurve Data Structure + Edge Extension
+
+Following OCCT's BRep_CurveOnSurface: an Edge stores N PCurves, each linking a Curve2D to a Surface.
+
+**B1: PCurve type**
+- **Test** (`tests/topology/pcurve.test.ts`): Create PCurve from Line2D + PlaneSurface and Arc2D + SphericalSurface. Verify: `surface.evaluate(curve2d(t))` matches the 3D edge curve at t.
+- **Implement**: New `src/topology/pcurve.ts` — `interface PCurve { curve2d: Curve2D; surface: Surface; }`
+
+**B2: Add pcurves field to Edge**
+- **Test** (`tests/topology/edge.test.ts`): Existing edges have `pcurves: []` (backward compatible). `addPCurveToEdge(edge, pcurve)` returns new Edge with pcurve appended.
+- **Implement**: Add `readonly pcurves: readonly PCurve[]` to Edge, default `[]`.
+
+**B3: Compute PCurves for plane-surface intersection curves**
+- **Test** (`tests/topology/pcurve.test.ts`):
+  - Plane z=0 intersects unit sphere → circle. PCurve on sphere: horizontal line at v=0 in (θ,φ) space. PCurve on plane: circle r=1 in (u,v) space. Verify at 8 sample points within 1e-7.
+  - Plane z=0.5 intersects unit sphere → circle r=√0.75. PCurve on sphere: line at v=arcsin(0.5).
+  - Plane z=h intersects cylinder r=R along Z → circle. PCurve on cylinder: line at v=h.
+- **Implement**: `computeIntersectionPCurves(circle3D, surfaceA, surfaceB) → {pcurveA, pcurveB}`
+
+#### Sub-Phase C: Planar Face Splitting by Circles
+
+Replace the tangent-line approximation in `boolean.ts:962` with proper circle-based face splitting.
+
+**C1: Split planar face by full circle (circle inside face)**
+- **Test** (`tests/operations/split-face-by-circle.test.ts`):
+  - 4×4 square face at z=0, circle r=1 at origin: produces square-with-hole (area=16−π) + disk (area=π)
+  - Square-with-hole: outerWire = 4 line edges, innerWires = [1 circle edge]
+  - Disk: outerWire = 1 circle edge
+- **Implement**: New `src/operations/split-face-by-circle.ts` — `splitPlanarFaceByCircle(face, circle) → {outside, inside} | null`
+
+**C2: Split planar face by partial circle (circle crosses face boundary)**
+- **Test**: 2×2 square, circle r=2 at (2,0,0): arc survives inside face. Two fragments with mixed line+arc edges. Areas sum to 4.0. Edge cases: tangent to edge, passes through vertex.
+- **Implement**: Use `clipCircleByHalfSpaces` → surviving arc. Compute arc-edge intersections. Split boundary edges. Assemble two closed wires.
+
+**C3: Integrate into boolean pipeline**
+- **Test** (`tests/operations/boolean-curved.test.ts`): `booleanSubtract(4×4×4 box, unit sphere)` → volume = 64 − 4π/3 ≈ 59.811 (±0.01), shell closed, 6 planar faces with circular holes + spherical cavity
+- **Implement**: Replace `tangentLines` in `splitFaceByAllFaces` with `splitPlanarFaceByCircle`
+
+#### Sub-Phase D: Curved Face Trimming (Rewrite)
+
+**D1: Trim spherical face by single plane**
+- **Test** (`tests/operations/trim-curved-face.test.ts`):
+  - Full sphere trimmed by z=0: upper hemisphere, outerWire = circle at z=0
+  - Trimmed by z=0.5: spherical cap, boundary circle r=√(R²−0.25)
+- **Implement**: Rewrite `trimCurvedFaceByPlanes` using plane-sphere intersection + clipCircleByHalfSpaces
+
+**D2: Trim spherical face by box (6 planes)**
+- **Test**: Unit sphere in 4×4×4 box → unchanged. Sphere r=2 in 2×2×2 box → 6 circles, each clipped by 5 planes, arcs assembled into closed wires per face.
+- **Implement**: For each curved face: compute all plane intersections, clip, assemble arc chain, build face.
+
+**D3: Trim cylindrical face by box**
+- **Test**: Cylinder r=0.5 along Z in 4×4×4 box → strip z=−2 to z=2, bounded by 2 circles. Cylinder r=2 in 2×2×2 box → cylindrical patch with lines + arcs.
+- **Implement**: Extend trimming for CylindricalSurface.
+
+#### Sub-Phase E: Curved Face Tessellation with Trim Boundaries
+
+**E1: Tessellate spherical cap (simple trim)**
+- **Test** (`tests/mesh/tessellation-trim.test.ts`): Cap face at z=0.5 on unit sphere. All vertices on sphere (±1e-4). Normals outward. Area ≈ 2πR(R−h) (±5%).
+- **Implement**: Modify `tessellateCurvedFace` to handle arc-bounded wires. Project wire to UV → boundary polygon. Grid + filter + triangulate.
+
+**E2: Tessellate arc-bounded spherical face (box-sphere)**
+- **Test**: Spherical face bounded by 4 arcs. Smooth mesh, no degenerate triangles, continuous normals.
+
+**E3: Tessellate cylindrical face with trim**
+- **Test**: Cylindrical strip from through-hole. Mesh wraps correctly, normals outward.
+
+#### Sub-Phase F: Full Boolean Integration + End-to-End Tests
+
+**F1: Box − sphere**
+- `booleanSubtract(box(4,4,4), sphere(r=1))`: volume = 64 − 4π/3 = 59.8113 (±0.01), shell closed, `solidToMesh` succeeds with smooth normals on cavity
+- Invariant: V(box) + V(sphere) = V(union) + V(intersect) (±0.01)
+
+**F2: Box − cylinder (through-hole)**
+- `booleanSubtract(box(4,4,4), cylinder(r=0.5, Z, h=6))`: volume = 64 − π ≈ 60.858 (±0.01), shell closed, 2 faces with holes + 1 cylindrical face
+
+**F3: Box − cone**
+- Volume verified analytically, shell closed
+
+**F4: L-bracket − sphere (exit criterion)**
+- L-bracket = union(box(4,4,1), box(1,4,3)). Sphere r=1.5 at (0,0,1). Shell closed, volume = L_vol − cap_vol (±0.05), `solidToMesh` succeeds, all normals outward. Non-convex solid, sphere crosses multiple faces.
+
+**F5: Union and intersect**
+- `booleanUnion(box, sphere)`, `booleanIntersect(box, sphere)`. Invariant: V(A) + V(B) = V(union) + V(intersect).
+
+**F6: Adversarial edge cases**
+- Sphere tangent to face (point contact), sphere centered on box edge, cylinder axis along box edge, very small sphere in large box, sphere entirely outside box
+
+#### Files to Modify/Create
+
+| File | Action |
+|------|--------|
+| `src/surfaces/{plane,cylindrical,spherical,conical}-surface.ts` | Add `projectTo*Surface` inverse mapping |
+| `src/mesh/tessellation.ts` | Refactor to use public projections; handle trim boundaries |
+| `src/topology/pcurve.ts` | **New** — PCurve type |
+| `src/topology/edge.ts` | Add `pcurves` field, `addPCurveToEdge` |
+| `src/operations/split-face-by-circle.ts` | **New** — Split planar face by circle intersection |
+| `src/operations/trim-curved-face.ts` | **Rewrite** — Proper curved face trimming |
+| `src/operations/boolean.ts` | Replace tangent-line approx with circle splitting |
+| `src/geometry/intersections3d.ts` | Add PCurve computation for intersections |
 
 ---
 

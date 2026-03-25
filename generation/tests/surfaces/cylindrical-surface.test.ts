@@ -5,6 +5,7 @@ import {
   makeCylindricalSurface,
   evaluateCylindricalSurface,
   normalCylindricalSurface,
+  projectToCylindricalSurface,
 } from '../../src/surfaces/cylindrical-surface';
 
 describe('CylindricalSurface', () => {
@@ -240,6 +241,78 @@ describe('CylindricalSurface', () => {
       const dir = result.result!.axis.direction;
       const len = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
       expect(len).toBeCloseTo(1, 10);
+    });
+  });
+
+  describe('projectToCylindricalSurface', () => {
+    it('round-trips θ=0, v=0', () => {
+      const surface = makeCylindricalSurface(Z_AXIS_3D, 1).result!;
+      const pt = evaluateCylindricalSurface(surface, 0, 0);
+      const uv = projectToCylindricalSurface(surface, pt);
+      expect(uv.u).toBeCloseTo(0, 7);
+      expect(uv.v).toBeCloseTo(0, 7);
+    });
+
+    it('round-trips θ=π/2, v=5', () => {
+      const surface = makeCylindricalSurface(Z_AXIS_3D, 1).result!;
+      const pt = evaluateCylindricalSurface(surface, Math.PI / 2, 5);
+      const uv = projectToCylindricalSurface(surface, pt);
+      expect(uv.u).toBeCloseTo(Math.PI / 2, 7);
+      expect(uv.v).toBeCloseTo(5, 7);
+    });
+
+    it('round-trips θ=π, v=-3', () => {
+      const surface = makeCylindricalSurface(Z_AXIS_3D, 2).result!;
+      const pt = evaluateCylindricalSurface(surface, Math.PI, -3);
+      const uv = projectToCylindricalSurface(surface, pt);
+      expect(uv.u).toBeCloseTo(Math.PI, 7);
+      expect(uv.v).toBeCloseTo(-3, 7);
+    });
+
+    it('round-trips θ=3π/2, v=0', () => {
+      const surface = makeCylindricalSurface(Z_AXIS_3D, 1).result!;
+      const pt = evaluateCylindricalSurface(surface, 3 * Math.PI / 2, 0);
+      const uv = projectToCylindricalSurface(surface, pt);
+      // atan2 returns in (-π, π], so 3π/2 → -π/2
+      expect(uv.u).toBeCloseTo(-Math.PI / 2, 7);
+      expect(uv.v).toBeCloseTo(0, 7);
+    });
+
+    it('round-trips on offset cylinder', () => {
+      const offsetAxis = axis(point3d(10, 20, 30), vec3d(0, 0, 1));
+      const surface = makeCylindricalSurface(offsetAxis, 3).result!;
+      const testParams = [[0, 0], [1.0, 5], [Math.PI, -2], [-0.5, 7]];
+      for (const [theta, v] of testParams) {
+        const pt = evaluateCylindricalSurface(surface, theta, v);
+        const uv = projectToCylindricalSurface(surface, pt);
+        expect(uv.u).toBeCloseTo(theta, 7);
+        expect(uv.v).toBeCloseTo(v, 7);
+      }
+    });
+
+    it('round-trips on non-Z-axis cylinder', () => {
+      const yAxis = axis(point3d(0, 0, 0), vec3d(0, 1, 0));
+      const surface = makeCylindricalSurface(yAxis, 2).result!;
+      const testParams = [[0, 0], [Math.PI / 4, 3], [Math.PI, -1], [-Math.PI / 3, 5]];
+      for (const [theta, v] of testParams) {
+        const pt = evaluateCylindricalSurface(surface, theta, v);
+        const uv = projectToCylindricalSurface(surface, pt);
+        expect(uv.u).toBeCloseTo(theta, 7);
+        expect(uv.v).toBeCloseTo(v, 7);
+      }
+    });
+
+    it('round-trips 20 random parameter pairs', () => {
+      const surface = makeCylindricalSurface(Z_AXIS_3D, 1.5).result!;
+      // Deterministic "random" angles in (-π, π] and v values
+      const thetas = [-3.0, -2.5, -2.0, -1.5, -1.0, -0.5, 0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 0.1, 0.2, 0.3, -0.1, -0.2, -0.3, 3.14];
+      const vs = [0, 1, -1, 5, -5, 10, -10, 0.5, -0.5, 100, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+      for (let i = 0; i < 20; i++) {
+        const pt = evaluateCylindricalSurface(surface, thetas[i], vs[i]);
+        const uv = projectToCylindricalSurface(surface, pt);
+        expect(uv.u).toBeCloseTo(thetas[i], 6);
+        expect(uv.v).toBeCloseTo(vs[i], 6);
+      }
     });
   });
 });

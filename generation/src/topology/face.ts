@@ -26,6 +26,15 @@ export interface Face {
 
   /** Inner boundary wires / holes (must be closed) */
   readonly innerWires: readonly Wire[];
+
+  /**
+   * Face orientation relative to the surface's natural normal direction.
+   * - true (default): face normal matches surface normal (outward)
+   * - false: face normal is reversed (inward, for cavity faces)
+   *
+   * OCCT reference: TopAbs_Orientation on TopoDS_Face (FORWARD vs REVERSED)
+   */
+  readonly forward: boolean;
 }
 
 /**
@@ -40,6 +49,7 @@ export function makeFace(
   surface: Surface,
   outerWire: Wire,
   innerWires: Wire[] = [],
+  forward: boolean = true,
 ): OperationResult<Face> {
   // Validate outer wire is closed
   if (!outerWire.isClosed) {
@@ -57,6 +67,7 @@ export function makeFace(
     surface,
     outerWire,
     innerWires: [...innerWires],
+    forward,
   });
 }
 
@@ -130,6 +141,7 @@ export function makePlanarFace(
     surface,
     outerWire,
     innerWires: [...innerWires],
+    forward: true,
   });
 }
 

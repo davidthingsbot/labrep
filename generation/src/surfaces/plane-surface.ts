@@ -1,4 +1,4 @@
-import { Point3D, point3d, Vector3D, Plane, cross, normalize } from '../core';
+import { Point3D, point3d, Vector3D, Plane, cross, normalize, dot, subtractPoints } from '../core';
 
 /**
  * An infinite planar surface.
@@ -69,4 +69,32 @@ export function evaluatePlaneSurface(surface: PlaneSurface, u: number, v: number
  */
 export function normalPlaneSurface(surface: PlaneSurface, u: number, v: number): Vector3D {
   return surface.plane.normal;
+}
+
+/**
+ * Project a 3D point onto the plane's parameter space.
+ *
+ * Inverse of evaluatePlaneSurface: given a point P, computes (u, v) such that
+ * P ≈ origin + u * xAxis + v * yAxis.
+ *
+ * The point does not need to lie exactly on the plane — it is projected
+ * orthogonally onto the plane before computing parameters.
+ *
+ * Based on OCCT ProjLib_Plane: U = dot(OP, xAxis), V = dot(OP, yAxis).
+ *
+ * @param surface - The plane surface
+ * @param point - Point to project
+ * @returns UV parameters on the surface
+ */
+export function projectToPlaneSurface(
+  surface: PlaneSurface,
+  point: Point3D,
+): { u: number; v: number } {
+  const { plane: pl } = surface;
+  const rel = subtractPoints(point, pl.origin);
+  const yAxis = planeYAxis(pl);
+  return {
+    u: dot(rel, pl.xAxis),
+    v: dot(rel, yAxis),
+  };
 }

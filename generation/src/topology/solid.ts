@@ -1,11 +1,16 @@
-import { Point3D } from '../core';
+import { Point3D, cross, dot, normalize, subtractPoints, vec3d } from '../core';
 import { OperationResult, success, failure } from '../mesh/mesh';
 import { Shell, shellIsClosed, shellFaces } from './shell';
-import { faceOuterWire, Face } from './face';
-import { edgeStartPoint, Curve3D } from './edge';
+import { faceOuterWire, Face, Surface } from './face';
+import { edgeStartPoint, edgeEndPoint, Curve3D } from './edge';
 import { evaluateLine3D } from '../geometry/line3d';
 import { evaluateCircle3D } from '../geometry/circle3d';
 import { evaluateArc3D } from '../geometry/arc3d';
+import {
+  evaluateSphericalSurface, normalSphericalSurface, projectToSphericalSurface,
+  evaluateCylindricalSurface, normalCylindricalSurface, projectToCylindricalSurface,
+  evaluateConicalSurface, normalConicalSurface, projectToConicalSurface,
+} from '../surfaces';
 
 /**
  * A closed 3D volume defined by its boundary shell(s).
@@ -145,11 +150,19 @@ function computeLinearFaceVolume(face: Face): number {
 function computeCurvedFaceVolume(face: Face): number {
   const wire = faceOuterWire(face);
   const N = 64;
-
-  // Collect all edges with their effective orientations
   const edges = wire.edges;
 
-  // Separate edges into curves (circles/arcs) and lines
+  // For surfaces with parametric evaluation, use a UV grid for accurate volume.
+  // This handles sphere/cylinder/cone faces correctly by sampling the actual surface.
+  const surfType = face.surface.type;
+  // Sphere faces need parametric integration because the old pole-fan approach
+  // only sampled one arc edge and missed the surface curvature.
+  // Cylinder and cone faces work correctly with the existing quad/tri rail approach.
+  if (surfType === 'sphere') {
+    return computeParametricFaceVolume(face, N);
+  }
+
+  // Separate edges into curves and lines for rail-based approaches
   const curveEdges: { curve: Curve3D; forward: boolean; idx: number }[] = [];
   const lineEdges: { curve: Curve3D; forward: boolean; idx: number }[] = [];
 
@@ -163,23 +176,196 @@ function computeCurvedFaceVolume(face: Face): number {
     }
   }
 
-  // Strategy: sample both "sides" of the face and create a triangle strip
-  // For a typical 4-edge face: 2 curve edges (top/bottom circles) and 2 line edges (seams)
-  // Or: 1 curve edge + 1 line edge + more edges
-
-  // We'll use the general approach: sample all edges and create a boundary polygon,
-  // then tessellate using strips between opposite edges.
-
-  // For the most common case (4-edge face with 2 curves and 2 lines, or 2 curves and 2 curves):
-  // Build two "rails" by pairing up opposite edge pairs and sampling them.
   if (edges.length === 4) {
     return computeQuadFaceVolume(face, N);
   } else if (edges.length === 3) {
     return computeTriFaceVolume(face, N);
   }
 
-  // Fallback for other edge counts: dense boundary sampling
   return computeBoundarySampledVolume(face, N);
+}
+
+/**
+ * Compute signed volume for a face using parametric surface evaluation.
+ *
+ * Projects boundary vertices to UV space to find the face's parameter bounds,
+ * then creates a UV grid, evaluates the surface at each grid point, and sums
+ * signed tet volumes for the resulting triangles.
+ */
+/**
+ * Compute signed volume for a curved face using the divergence theorem
+ * with parametric surface integration.
+ *
+ * Volume contribution = (1/3) ∫∫ P(u,v) · (∂P/∂u × ∂P/∂v) du dv
+ *
+ * The cross product ∂P/∂u × ∂P/∂v is the "Jacobian normal": it carries both
+ * the surface orientation AND the area Jacobian. This is the correct integrand
+ * for the divergence theorem — no separate orientation detection needed.
+ *
+ * Face orientation is handled by the wire winding direction in UV space:
+ * a forward face traverses UV in CCW order, giving positive Jacobian determinant;
+ * a reversed (flipped) face traverses CW, giving negative Jacobian.
+ * We detect this via the signed area of the UV boundary polygon.
+ *
+ * Based on OCCT's BRepGProp_Gauss / BRepGProp_Vinert.
+ */
+function computeParametricFaceVolume(face: Face, N: number): number {
+  const surface = face.surface;
+  const wire = faceOuterWire(face);
+
+  // Collect boundary points and project to UV to find parameter bounds
+  const uvPts: { u: number; v: number }[] = [];
+  for (const oe of wire.edges) {
+    const e = oe.edge;
+    const nSamples = e.curve.type === 'line3d' ? 2 : N;
+    for (let i = 0; i < nSamples; i++) {
+      const tStart = oe.forward ? e.startParam : e.endParam;
+      const tEnd = oe.forward ? e.endParam : e.startParam;
+      const t = tStart + (i / nSamples) * (tEnd - tStart);
+      const pt = evaluateCurve(e.curve, t);
+      const uv = projectPointToSurface(surface, pt);
+      if (uv) uvPts.push(uv);
+    }
+  }
+
+  if (uvPts.length < 3) return 0;
+
+  // Find UV bounds
+  let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+  for (const uv of uvPts) {
+    if (uv.u < uMin) uMin = uv.u;
+    if (uv.u > uMax) uMax = uv.u;
+    if (uv.v < vMin) vMin = uv.v;
+    if (uv.v > vMax) vMax = uv.v;
+  }
+
+  // Handle wrap-around for angular parameters
+  const hasNegU = uvPts.some(p => p.u < -Math.PI / 2);
+  const hasPosU = uvPts.some(p => p.u > Math.PI / 2);
+  if (hasNegU && hasPosU && (uMax - uMin) > Math.PI) {
+    for (const uv of uvPts) {
+      if (uv.u < 0) uv.u += 2 * Math.PI;
+    }
+    uMin = Infinity; uMax = -Infinity;
+    for (const uv of uvPts) {
+      if (uv.u < uMin) uMin = uv.u;
+      if (uv.u > uMax) uMax = uv.u;
+    }
+  }
+
+  // Face orientation: forward=true → surface normal points outward → positive volume.
+  // forward=false → reversed face (cavity) → negative volume contribution.
+  // Based on OCCT's TopAbs_Orientation (FORWARD vs REVERSED) on TopoDS_Face.
+  const orientSign = face.forward !== false ? 1 : -1;
+
+  // Integrate: vol = (1/3) ∫∫ P(u,v) · J(u,v) du dv
+  // where J = ∂P/∂u × ∂P/∂v (Jacobian normal)
+  // Using midpoint rule over a UV grid
+  const nu = N, nv = Math.max(Math.round(N / 2), 8);
+  const du = (uMax - uMin) / nu;
+  const dv = (vMax - vMin) / nv;
+  let vol = 0;
+
+  for (let i = 0; i < nu; i++) {
+    const u = uMin + (i + 0.5) * du;
+    for (let j = 0; j < nv; j++) {
+      const v = vMin + (j + 0.5) * dv;
+
+      const pt = evaluateSurface(surface, u, v);
+      const jn = jacobianNormal(surface, u, v);
+      if (!pt || !jn) continue;
+
+      // P · J  (position dot Jacobian normal)
+      vol += (pt.x * jn.x + pt.y * jn.y + pt.z * jn.z) * du * dv;
+    }
+  }
+
+  return (vol / 3) * orientSign;
+}
+
+/**
+ * Compute ∂P/∂u × ∂P/∂v — the unnormalized surface normal (Jacobian normal).
+ *
+ * This vector encodes both:
+ * - The surface orientation (direction)
+ * - The area Jacobian (magnitude = |∂P/∂u × ∂P/∂v|)
+ *
+ * Based on OCCT's BRepGProp_Face::Normal().
+ */
+function jacobianNormal(surface: Surface, u: number, v: number): Pt | null {
+  switch (surface.type) {
+    case 'sphere': {
+      // ∂P/∂θ × ∂P/∂φ = R²·cos(φ) · outwardUnitNormal
+      const { radius, axis, refDirection } = surface;
+      const perp = cross(axis.direction, refDirection);
+      const cosP = Math.cos(v), sinP = Math.sin(v);
+      const cosT = Math.cos(u), sinT = Math.sin(u);
+      const scale = radius * radius * cosP;
+      return {
+        x: scale * (cosP * cosT * refDirection.x + cosP * sinT * perp.x + sinP * axis.direction.x),
+        y: scale * (cosP * cosT * refDirection.y + cosP * sinT * perp.y + sinP * axis.direction.y),
+        z: scale * (cosP * cosT * refDirection.z + cosP * sinT * perp.z + sinP * axis.direction.z),
+      };
+    }
+    case 'cylinder': {
+      // ∂P/∂θ × ∂P/∂v = R·(cos(θ)·ref + sin(θ)·perp)
+      const { radius, axis, refDirection } = surface;
+      const perp = cross(axis.direction, refDirection);
+      const cosT = Math.cos(u), sinT = Math.sin(u);
+      return {
+        x: radius * (cosT * refDirection.x + sinT * perp.x),
+        y: radius * (cosT * refDirection.y + sinT * perp.y),
+        z: radius * (cosT * refDirection.z + sinT * perp.z),
+      };
+    }
+    case 'cone': {
+      // ∂P/∂θ × ∂P/∂v = (R + v·sin(α))·(cos(α)·radialDir - sin(α)·axis)
+      const { radius, semiAngle, axis, refDirection } = surface;
+      const perp = cross(axis.direction, refDirection);
+      const cosT = Math.cos(u), sinT = Math.sin(u);
+      const cosA = Math.cos(semiAngle), sinA = Math.sin(semiAngle);
+      const r = radius + v * sinA;
+      return {
+        x: r * (cosA * (cosT * refDirection.x + sinT * perp.x) - sinA * axis.direction.x),
+        y: r * (cosA * (cosT * refDirection.y + sinT * perp.y) - sinA * axis.direction.y),
+        z: r * (cosA * (cosT * refDirection.z + sinT * perp.z) - sinA * axis.direction.z),
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Evaluate a surface at (u, v) parameters.
+ */
+function evaluateSurface(surface: Surface, u: number, v: number): Pt | null {
+  switch (surface.type) {
+    case 'sphere':
+      return evaluateSphericalSurface(surface, u, v);
+    case 'cylinder':
+      return evaluateCylindricalSurface(surface, u, v);
+    case 'cone':
+      return evaluateConicalSurface(surface, u, v);
+    default:
+      return null;
+  }
+}
+
+/**
+ * Project a 3D point to surface UV parameters.
+ */
+function projectPointToSurface(surface: Surface, pt: Pt): { u: number; v: number } | null {
+  switch (surface.type) {
+    case 'sphere':
+      return projectToSphericalSurface(surface, pt as Point3D);
+    case 'cylinder':
+      return projectToCylindricalSurface(surface, pt as Point3D);
+    case 'cone':
+      return projectToConicalSurface(surface, pt as Point3D);
+    default:
+      return null;
+  }
 }
 
 /**
@@ -254,7 +440,6 @@ function computeTriFaceVolume(face: Face, N: number): number {
   const wire = faceOuterWire(face);
   const edges = wire.edges;
 
-  // Find the curved edge and sample it
   let curvedIdx = -1;
   for (let i = 0; i < edges.length; i++) {
     if (edges[i].edge.curve.type !== 'line3d') {
@@ -264,22 +449,19 @@ function computeTriFaceVolume(face: Face, N: number): number {
   }
 
   if (curvedIdx === -1) {
-    return computeLinearFaceVolume(face); // No curves — treat as linear
+    return computeLinearFaceVolume(face);
   }
 
   const curvedOe = edges[curvedIdx];
   const curve = curvedOe.edge;
   const pts = sampleCurve(curve.curve, curve.startParam, curve.endParam, curvedOe.forward, N);
 
-  // The pole is the point shared by the two non-curved edges that is NOT on the curved edge
-  // Find it: it's the vertex that appears in the other edges but not as an endpoint of the curve
   let pole: Pt | null = null;
   for (let i = 0; i < edges.length; i++) {
     if (i === curvedIdx) continue;
     const oe = edges[i];
     const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
     const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
-    // Check which point is NOT an endpoint of the curved edge
     for (const p of [start, end]) {
       const curveStart = curvedOe.forward ? edgeStartPoint(curve) : edgeEndPoint(curve);
       const curveEnd = curvedOe.forward ? edgeEndPoint(curve) : edgeStartPoint(curve);

@@ -5,6 +5,7 @@ import {
   makePlaneSurface,
   evaluatePlaneSurface,
   normalPlaneSurface,
+  projectToPlaneSurface,
 } from '../../src/surfaces/plane-surface';
 
 describe('PlaneSurface', () => {
@@ -131,6 +132,84 @@ describe('PlaneSurface', () => {
 
       const len = Math.sqrt(normal.x ** 2 + normal.y ** 2 + normal.z ** 2);
       expect(len).toBeCloseTo(1, 10);
+    });
+  });
+
+  describe('projectToPlaneSurface', () => {
+    it('projects origin to (0, 0) on XY_PLANE', () => {
+      const surface = makePlaneSurface(XY_PLANE);
+      const uv = projectToPlaneSurface(surface, point3d(0, 0, 0));
+      expect(uv.u).toBeCloseTo(0, 10);
+      expect(uv.v).toBeCloseTo(0, 10);
+    });
+
+    it('projects (3, 5, 0) to (3, 5) on XY_PLANE', () => {
+      const surface = makePlaneSurface(XY_PLANE);
+      const uv = projectToPlaneSurface(surface, point3d(3, 5, 0));
+      expect(uv.u).toBeCloseTo(3, 10);
+      expect(uv.v).toBeCloseTo(5, 10);
+    });
+
+    it('projects negative coordinates correctly', () => {
+      const surface = makePlaneSurface(XY_PLANE);
+      const uv = projectToPlaneSurface(surface, point3d(-2, -7, 0));
+      expect(uv.u).toBeCloseTo(-2, 10);
+      expect(uv.v).toBeCloseTo(-7, 10);
+    });
+
+    it('projects onto offset plane', () => {
+      const offsetPlane = plane(point3d(5, 5, 5), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const surface = makePlaneSurface(offsetPlane);
+      const uv = projectToPlaneSurface(surface, point3d(8, 9, 5));
+      expect(uv.u).toBeCloseTo(3, 10);  // 8 - 5
+      expect(uv.v).toBeCloseTo(4, 10);  // 9 - 5
+    });
+
+    it('projects onto XZ_PLANE', () => {
+      const surface = makePlaneSurface(XZ_PLANE);
+      // XZ_PLANE: normal (0,1,0), xAxis (1,0,0), yAxis = cross((0,1,0),(1,0,0)) = (0,0,-1)
+      const uv = projectToPlaneSurface(surface, point3d(3, 0, -2));
+      expect(uv.u).toBeCloseTo(3, 10);
+      expect(uv.v).toBeCloseTo(2, 10);  // z=-2 along yAxis=(0,0,-1) → v=2
+    });
+
+    it('projects onto YZ_PLANE', () => {
+      const surface = makePlaneSurface(YZ_PLANE);
+      // YZ_PLANE: normal (1,0,0), xAxis (0,1,0), yAxis = cross((1,0,0),(0,1,0)) = (0,0,1)
+      const uv = projectToPlaneSurface(surface, point3d(0, 4, -6));
+      expect(uv.u).toBeCloseTo(4, 10);
+      expect(uv.v).toBeCloseTo(-6, 10);  // z=-6 along yAxis=(0,0,1) → v=-6
+    });
+
+    it('round-trips with evaluatePlaneSurface for 10 points', () => {
+      const surface = makePlaneSurface(XY_PLANE);
+      const testPoints = [
+        [0, 0], [1, 0], [0, 1], [3, 5], [-2, -7],
+        [100, 200], [-50, 30], [0.001, 0.002], [1e6, -1e6], [Math.PI, Math.E],
+      ];
+      for (const [u, v] of testPoints) {
+        const pt = evaluatePlaneSurface(surface, u, v);
+        const uv = projectToPlaneSurface(surface, pt);
+        expect(uv.u).toBeCloseTo(u, 7);
+        expect(uv.v).toBeCloseTo(v, 7);
+      }
+    });
+
+    it('round-trips on tilted plane', () => {
+      // Plane at 45 degrees
+      const tiltedPlane = plane(
+        point3d(1, 2, 3),
+        vec3d(0, 0, 1),   // normal pointing up in Z
+        vec3d(1, 0, 0),   // xAxis along X
+      );
+      const surface = makePlaneSurface(tiltedPlane);
+      const testUV = [[0, 0], [5, -3], [-10, 7], [0.5, 0.5]];
+      for (const [u, v] of testUV) {
+        const pt = evaluatePlaneSurface(surface, u, v);
+        const uv = projectToPlaneSurface(surface, pt);
+        expect(uv.u).toBeCloseTo(u, 7);
+        expect(uv.v).toBeCloseTo(v, 7);
+      }
     });
   });
 });

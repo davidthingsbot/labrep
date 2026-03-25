@@ -3,6 +3,7 @@ export {
   makePlaneSurface,
   evaluatePlaneSurface,
   normalPlaneSurface,
+  projectToPlaneSurface,
 } from './plane-surface';
 
 export {
@@ -10,6 +11,7 @@ export {
   makeCylindricalSurface,
   evaluateCylindricalSurface,
   normalCylindricalSurface,
+  projectToCylindricalSurface,
 } from './cylindrical-surface';
 
 export {
@@ -27,6 +29,7 @@ export {
   makeSphericalSurface,
   evaluateSphericalSurface,
   normalSphericalSurface,
+  projectToSphericalSurface,
 } from './spherical-surface';
 
 export {
@@ -34,6 +37,7 @@ export {
   makeConicalSurface,
   evaluateConicalSurface,
   normalConicalSurface,
+  projectToConicalSurface,
 } from './conical-surface';
 
 export {

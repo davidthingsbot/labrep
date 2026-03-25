@@ -23,7 +23,8 @@ import { extrude } from '../../src/operations/extrude';
 import { revolve } from '../../src/operations/revolve';
 import { pointInSolid } from '../../src/operations/point-in-solid';
 import { solidToMesh, meshTriangleCount } from '../../src/mesh';
-import { booleanSubtract } from '../../src/operations/boolean';
+import { booleanSubtract, booleanUnion, booleanIntersect } from '../../src/operations/boolean';
+import { solidVolume } from '../../src/topology/solid';
 
 // ═══════════════════════════════════════════════════════
 // HELPERS
@@ -114,5 +115,45 @@ describe('planar booleans (regression)', () => {
     const result = booleanSubtract(boxA.solid, boxB.solid);
     expect(result.success).toBe(true);
     expect(result.result!.solid.outerShell.isClosed).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// CURVED BOOLEAN OPERATIONS
+// ═══════════════════════════════════════════════════════
+
+describe('box − sphere (curved boolean)', () => {
+  it('succeeds with closed shell', () => {
+    const box = makeBox(0, 0, -2, 4, 4, 4); // 4×4×4 centered at origin
+    const sphere = makeSphere(1);            // unit sphere at origin
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    expect(result.result!.solid.outerShell.isClosed).toBe(true);
+  });
+
+  it('has correct volume: box_vol − sphere_vol', () => {
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const sphere = makeSphere(1);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+
+    const vol = solidVolume(result.result!.solid);
+    const expectedVol = 64 - (4 / 3) * Math.PI; // 64 − 4.189 ≈ 59.811
+    expect(vol).toBeCloseTo(expectedVol, 0); // within 0.5
+  });
+
+  it('has planar faces with circular holes + spherical cavity faces', () => {
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const sphere = makeSphere(1);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+
+    const faces = shellFaces(result.result!.solid.outerShell);
+    const planeCount = faces.filter(f => f.surface.type === 'plane').length;
+    const sphereCount = faces.filter(f => f.surface.type === 'sphere').length;
+
+    // Should have planar faces (some with holes) + spherical cavity faces
+    expect(planeCount).toBeGreaterThanOrEqual(6);
+    expect(sphereCount).toBeGreaterThan(0);
   });
 });

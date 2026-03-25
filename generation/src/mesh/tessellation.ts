@@ -5,9 +5,9 @@ import { Face, Surface } from '../topology/face';
 import { shellFaces } from '../topology/shell';
 import { edgeStartPoint, edgeEndPoint } from '../topology/edge';
 import {
-  CylindricalSurface, evaluateCylindricalSurface, normalCylindricalSurface,
-  SphericalSurface, evaluateSphericalSurface, normalSphericalSurface,
-  ConicalSurface, evaluateConicalSurface, normalConicalSurface,
+  CylindricalSurface, evaluateCylindricalSurface, normalCylindricalSurface, projectToCylindricalSurface,
+  SphericalSurface, evaluateSphericalSurface, normalSphericalSurface, projectToSphericalSurface,
+  ConicalSurface, evaluateConicalSurface, normalConicalSurface, projectToConicalSurface,
   ToroidalSurface, evaluateToroidalSurface, normalToroidalSurface,
   RevolutionSurface, evaluateRevolutionSurface, normalRevolutionSurface,
   ExtrusionSurface, evaluateExtrusionSurface, normalExtrusionSurface,
@@ -268,53 +268,21 @@ type SurfaceNormalFn = (u: number, v: number) => Vector3D;
  * Project a 3D point onto a cylindrical surface's (θ, v) parameters.
  */
 function projectToCylinder(surface: CylindricalSurface, pt: Point3D): { u: number; v: number } {
-  const { axis, refDirection } = surface;
-  const perpDir = cross(axis.direction, refDirection);
-  const rel = subtractPoints(pt, axis.origin);
-  const v = dot(rel, axis.direction);
-  const inPlane = vec3d(
-    rel.x - v * axis.direction.x,
-    rel.y - v * axis.direction.y,
-    rel.z - v * axis.direction.z,
-  );
-  const u = Math.atan2(dot(inPlane, perpDir), dot(inPlane, refDirection));
-  return { u, v };
+  return projectToCylindricalSurface(surface, pt);
 }
 
 /**
  * Project a 3D point onto a spherical surface's (θ, φ) parameters.
  */
 function projectToSphere(surface: SphericalSurface, pt: Point3D): { u: number; v: number } {
-  const { center, radius, axis, refDirection } = surface;
-  const perpDir = cross(axis.direction, refDirection);
-  const rel = vec3d(pt.x - center.x, pt.y - center.y, pt.z - center.z);
-  const sinPhi = dot(rel, axis.direction) / radius;
-  const phi = Math.asin(Math.max(-1, Math.min(1, sinPhi)));
-  const inEquator = vec3d(
-    rel.x - sinPhi * radius * axis.direction.x,
-    rel.y - sinPhi * radius * axis.direction.y,
-    rel.z - sinPhi * radius * axis.direction.z,
-  );
-  const theta = Math.atan2(dot(inEquator, perpDir), dot(inEquator, refDirection));
-  return { u: theta, v: phi };
+  return projectToSphericalSurface(surface, pt);
 }
 
 /**
  * Project a 3D point onto a conical surface's (θ, v) parameters.
  */
 function projectToCone(surface: ConicalSurface, pt: Point3D): { u: number; v: number } {
-  const { axis, radius, semiAngle, refDirection } = surface;
-  const perpDir = cross(axis.direction, refDirection);
-  const rel = subtractPoints(pt, axis.origin);
-  const axialDist = dot(rel, axis.direction);
-  const v = axialDist / Math.cos(semiAngle);
-  const inPlane = vec3d(
-    rel.x - axialDist * axis.direction.x,
-    rel.y - axialDist * axis.direction.y,
-    rel.z - axialDist * axis.direction.z,
-  );
-  const u = Math.atan2(dot(inPlane, perpDir), dot(inPlane, refDirection));
-  return { u, v };
+  return projectToConicalSurface(surface, pt);
 }
 
 /**

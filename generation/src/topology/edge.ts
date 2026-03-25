@@ -2,6 +2,7 @@ import { Point3D, distance, TOLERANCE } from '../core';
 import { Line3D, lengthLine3D, Circle3D, lengthCircle3D, Arc3D, lengthArc3D } from '../geometry';
 import { OperationResult, success, failure } from '../mesh/mesh';
 import { Vertex, makeVertex } from './vertex';
+import type { PCurve } from './pcurve';
 
 /**
  * Union type for all 3D curve types that can be used in an edge.
@@ -32,6 +33,14 @@ export interface Edge {
 
   /** End parameter on the curve */
   readonly endParam: number;
+
+  /**
+   * PCurves — 2D representations of this edge in adjacent faces' parameter spaces.
+   * One per adjacent face. Empty for edges not yet associated with surfaces.
+   *
+   * OCCT reference: BRep_TEdge stores a list of BRep_CurveRepresentation
+   */
+  readonly pcurves: readonly PCurve[];
 }
 
 /**
@@ -79,6 +88,7 @@ export function makeEdge(
     endVertex,
     startParam: curve.startParam,
     endParam: curve.endParam,
+    pcurves: [],
   });
 }
 
@@ -102,7 +112,24 @@ export function makeEdgeFromCurve(curve: Curve3D): OperationResult<Edge> {
     endVertex,
     startParam: curve.startParam,
     endParam: curve.endParam,
+    pcurves: [],
   });
+}
+
+/**
+ * Create a new edge with an additional PCurve appended.
+ *
+ * Returns a new edge — the original is not mutated.
+ *
+ * @param edge - The original edge
+ * @param pcurve - The PCurve to add
+ * @returns A new Edge with the PCurve appended to its pcurves list
+ */
+export function addPCurveToEdge(edge: Edge, pcurve: PCurve): Edge {
+  return {
+    ...edge,
+    pcurves: [...edge.pcurves, pcurve],
+  };
 }
 
 /**

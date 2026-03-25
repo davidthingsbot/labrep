@@ -1,4 +1,4 @@
-import { Point3D, point3d, Vector3D, vec3d, Axis, axis, isZero, cross, normalize } from '../core';
+import { Point3D, point3d, Vector3D, vec3d, Axis, axis, isZero, cross, normalize, dot } from '../core';
 import { OperationResult, success, failure } from '../mesh/mesh';
 
 /**
@@ -165,4 +165,42 @@ export function normalSphericalSurface(
       cosPhi * sinTheta * perpDirection.z +
       sinPhi * axis.direction.z,
   );
+}
+
+/**
+ * Project a 3D point onto the sphere's parameter space (θ, φ).
+ *
+ * Inverse of evaluateSphericalSurface: given a point P, computes (θ, φ) such that
+ * P ≈ evaluate(θ, φ). The point does not need to lie exactly on the surface.
+ *
+ * Based on OCCT ProjLib_Sphere:
+ *   φ = asin(clamp(dot(rel, axis) / radius))
+ *   θ = atan2(dot(equatorial, perpDir), dot(equatorial, refDir))
+ *
+ * At the poles (|φ| ≈ π/2), θ is degenerate (equatorial component vanishes).
+ *
+ * @param surface - The spherical surface
+ * @param point - Point to project
+ * @returns { u: θ (longitude, radians), v: φ (latitude, radians) }
+ */
+export function projectToSphericalSurface(
+  surface: SphericalSurface,
+  point: Point3D,
+): { u: number; v: number } {
+  const { center, radius, axis: ax, refDirection } = surface;
+  const perpDir = cross(ax.direction, refDirection);
+  const rel = vec3d(point.x - center.x, point.y - center.y, point.z - center.z);
+
+  const sinPhi = dot(rel, ax.direction) / radius;
+  const phi = Math.asin(Math.max(-1, Math.min(1, sinPhi)));
+
+  // Remove the axial (polar) component to get the equatorial projection
+  const inEquator = vec3d(
+    rel.x - sinPhi * radius * ax.direction.x,
+    rel.y - sinPhi * radius * ax.direction.y,
+    rel.z - sinPhi * radius * ax.direction.z,
+  );
+  const theta = Math.atan2(dot(inEquator, perpDir), dot(inEquator, refDirection));
+
+  return { u: theta, v: phi };
 }

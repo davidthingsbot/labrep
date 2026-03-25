@@ -1,4 +1,4 @@
-import { Point3D, point3d, Vector3D, vec3d, Axis, isZero, cross, normalize } from '../core';
+import { Point3D, point3d, Vector3D, vec3d, Axis, isZero, cross, normalize, dot, subtractPoints } from '../core';
 import { OperationResult, success, failure } from '../mesh/mesh';
 
 /**
@@ -163,4 +163,35 @@ export function normalCylindricalSurface(
     cosT * refDirection.y + sinT * perpDirection.y,
     cosT * refDirection.z + sinT * perpDirection.z,
   );
+}
+
+/**
+ * Project a 3D point onto the cylinder's parameter space (θ, v).
+ *
+ * Inverse of evaluateCylindricalSurface: given a point P, computes (θ, v) such that
+ * P ≈ evaluate(θ, v). The point does not need to lie exactly on the surface.
+ *
+ * Based on OCCT ProjLib_Cylinder:
+ *   v = dot(P - origin, axis.direction)
+ *   θ = atan2(dot(inPlane, perpDirection), dot(inPlane, refDirection))
+ *
+ * @param surface - The cylindrical surface
+ * @param point - Point to project
+ * @returns { u: θ (radians, in (-π, π]), v: axial parameter }
+ */
+export function projectToCylindricalSurface(
+  surface: CylindricalSurface,
+  point: Point3D,
+): { u: number; v: number } {
+  const { axis: ax, refDirection } = surface;
+  const perpDir = cross(ax.direction, refDirection);
+  const rel = subtractPoints(point, ax.origin);
+  const v = dot(rel, ax.direction);
+  const inPlane = vec3d(
+    rel.x - v * ax.direction.x,
+    rel.y - v * ax.direction.y,
+    rel.z - v * ax.direction.z,
+  );
+  const u = Math.atan2(dot(inPlane, perpDir), dot(inPlane, refDirection));
+  return { u, v };
 }

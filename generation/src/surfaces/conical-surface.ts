@@ -1,4 +1,4 @@
-import { Point3D, point3d, Vector3D, vec3d, Axis, isZero, cross, normalize } from '../core';
+import { Point3D, point3d, Vector3D, vec3d, Axis, isZero, cross, normalize, dot, subtractPoints } from '../core';
 import { OperationResult, success, failure } from '../mesh/mesh';
 
 /**
@@ -169,4 +169,37 @@ export function normalConicalSurface(
   }
 
   return vec3d(nx, ny, nz);
+}
+
+/**
+ * Project a 3D point onto the cone's parameter space (θ, v).
+ *
+ * Inverse of evaluateConicalSurface: given a point P, computes (θ, v) such that
+ * P ≈ evaluate(θ, v). The point does not need to lie exactly on the surface.
+ *
+ * Based on OCCT ProjLib_Cone:
+ *   axialDist = dot(P - origin, axis.direction)
+ *   v = axialDist / cos(semiAngle)
+ *   θ = atan2(dot(inPlane, perpDir), dot(inPlane, refDir))
+ *
+ * @param surface - The conical surface
+ * @param point - Point to project
+ * @returns { u: θ (radians), v: generatrix parameter }
+ */
+export function projectToConicalSurface(
+  surface: ConicalSurface,
+  point: Point3D,
+): { u: number; v: number } {
+  const { axis: ax, semiAngle, refDirection } = surface;
+  const perpDir = cross(ax.direction, refDirection);
+  const rel = subtractPoints(point, ax.origin);
+  const axialDist = dot(rel, ax.direction);
+  const v = axialDist / Math.cos(semiAngle);
+  const inPlane = vec3d(
+    rel.x - axialDist * ax.direction.x,
+    rel.y - axialDist * ax.direction.y,
+    rel.z - axialDist * ax.direction.z,
+  );
+  const u = Math.atan2(dot(inPlane, perpDir), dot(inPlane, refDirection));
+  return { u, v };
 }

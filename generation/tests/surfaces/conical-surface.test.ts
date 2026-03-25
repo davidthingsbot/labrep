@@ -5,6 +5,7 @@ import {
   makeConicalSurface,
   evaluateConicalSurface,
   normalConicalSurface,
+  projectToConicalSurface,
 } from '../../src/surfaces/conical-surface';
 
 describe('ConicalSurface', () => {
@@ -219,6 +220,71 @@ describe('ConicalSurface', () => {
       const dir = result.result!.axis.direction;
       const len = Math.sqrt(dir.x * dir.x + dir.y * dir.y + dir.z * dir.z);
       expect(len).toBeCloseTo(1, 10);
+    });
+  });
+
+  describe('projectToConicalSurface', () => {
+    const semiAngle = Math.PI / 6; // 30°
+
+    it('round-trips θ=0, v=0', () => {
+      const surface = makeConicalSurface(Z_AXIS_3D, 2, semiAngle).result!;
+      const pt = evaluateConicalSurface(surface, 0, 0);
+      const uv = projectToConicalSurface(surface, pt);
+      expect(uv.u).toBeCloseTo(0, 7);
+      expect(uv.v).toBeCloseTo(0, 7);
+    });
+
+    it('round-trips θ=π/2, v=3', () => {
+      const surface = makeConicalSurface(Z_AXIS_3D, 2, semiAngle).result!;
+      const pt = evaluateConicalSurface(surface, Math.PI / 2, 3);
+      const uv = projectToConicalSurface(surface, pt);
+      expect(uv.u).toBeCloseTo(Math.PI / 2, 7);
+      expect(uv.v).toBeCloseTo(3, 7);
+    });
+
+    it('round-trips θ=π, v=-1', () => {
+      const surface = makeConicalSurface(Z_AXIS_3D, 2, semiAngle).result!;
+      const pt = evaluateConicalSurface(surface, Math.PI, -1);
+      const uv = projectToConicalSurface(surface, pt);
+      expect(uv.u).toBeCloseTo(Math.PI, 6);
+      expect(uv.v).toBeCloseTo(-1, 6);
+    });
+
+    it('round-trips near apex (v that makes r≈0)', () => {
+      // radius=2, semiAngle=30°: r=0 at v = -2/sin(30°) = -4
+      const surface = makeConicalSurface(Z_AXIS_3D, 2, semiAngle).result!;
+      const pt = evaluateConicalSurface(surface, 0.5, -3.9);
+      const uv = projectToConicalSurface(surface, pt);
+      expect(uv.v).toBeCloseTo(-3.9, 5);
+    });
+
+    it('round-trips on offset cone', () => {
+      const offsetAxis = axis(point3d(5, 10, 15), vec3d(0, 0, 1));
+      const surface = makeConicalSurface(offsetAxis, 3, Math.PI / 4).result!;
+      const testParams = [[0, 0], [1.0, 2], [Math.PI, -1], [-0.5, 5]];
+      for (const [theta, v] of testParams) {
+        const pt = evaluateConicalSurface(surface, theta, v);
+        const uv = projectToConicalSurface(surface, pt);
+        expect(uv.u).toBeCloseTo(theta, 6);
+        expect(uv.v).toBeCloseTo(v, 6);
+      }
+    });
+
+    it('round-trips 15 parameter pairs (positive effective radius)', () => {
+      // Use radius=5 and moderate v values to stay in the positive-radius region
+      const surface = makeConicalSurface(Z_AXIS_3D, 5, Math.PI / 5).result!;
+      const params: [number, number][] = [
+        [0, 0], [0.5, 1], [-0.5, -1], [1.0, 2], [-1.0, -2],
+        [2.0, 3], [-2.0, -3], [Math.PI, 0], [-Math.PI + 0.01, 0],
+        [0.1, 5], [-0.1, -5], [3.0, 0.5], [-3.0, 0.5],
+        [0, 4], [0, -4],
+      ];
+      for (const [theta, v] of params) {
+        const pt = evaluateConicalSurface(surface, theta, v);
+        const uv = projectToConicalSurface(surface, pt);
+        expect(uv.u).toBeCloseTo(theta, 5);
+        expect(uv.v).toBeCloseTo(v, 5);
+      }
     });
   });
 });

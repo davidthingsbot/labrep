@@ -9,7 +9,11 @@ import {
   edgeStartPoint,
   edgeEndPoint,
   edgeLength,
+  addPCurveToEdge,
 } from '../../src/topology/edge';
+import { makePCurve } from '../../src/topology/pcurve';
+import { makeLine2D } from '../../src/geometry';
+import { makePlaneSurface } from '../../src/surfaces';
 
 describe('Edge', () => {
   describe('makeEdge', () => {
@@ -155,6 +159,69 @@ describe('Edge', () => {
       const edge = makeEdgeFromCurve(circle).result!;
 
       expect(edgeLength(edge)).toBeCloseTo(2 * Math.PI, 10);
+    });
+  });
+
+  describe('pcurves', () => {
+    it('makeEdge creates edge with empty pcurves', () => {
+      const line = makeLine3D(point3d(0, 0, 0), point3d(1, 0, 0)).result!;
+      const v1 = makeVertex(point3d(0, 0, 0));
+      const v2 = makeVertex(point3d(1, 0, 0));
+      const edge = makeEdge(line, v1, v2).result!;
+      expect(edge.pcurves).toEqual([]);
+    });
+
+    it('makeEdgeFromCurve creates edge with empty pcurves', () => {
+      const line = makeLine3D(point3d(0, 0, 0), point3d(1, 0, 0)).result!;
+      const edge = makeEdgeFromCurve(line).result!;
+      expect(edge.pcurves).toEqual([]);
+    });
+
+    it('addPCurveToEdge appends a PCurve', () => {
+      const line3d = makeLine3D(point3d(0, 0, 0), point3d(1, 0, 0)).result!;
+      const edge = makeEdgeFromCurve(line3d).result!;
+
+      const surface = makePlaneSurface(XY_PLANE);
+      const line2d = makeLine2D({ x: 0, y: 0 }, { x: 1, y: 0 }).result!;
+      const pcurve = makePCurve(line2d, surface);
+
+      const edgeWithPC = addPCurveToEdge(edge, pcurve);
+      expect(edgeWithPC.pcurves).toHaveLength(1);
+      expect(edgeWithPC.pcurves[0]).toBe(pcurve);
+      // Original edge unchanged
+      expect(edge.pcurves).toHaveLength(0);
+    });
+
+    it('addPCurveToEdge can add multiple PCurves', () => {
+      const line3d = makeLine3D(point3d(0, 0, 0), point3d(1, 0, 0)).result!;
+      const edge = makeEdgeFromCurve(line3d).result!;
+
+      const surface = makePlaneSurface(XY_PLANE);
+      const line2d = makeLine2D({ x: 0, y: 0 }, { x: 1, y: 0 }).result!;
+      const pc1 = makePCurve(line2d, surface);
+      const pc2 = makePCurve(line2d, surface);
+
+      const edge1 = addPCurveToEdge(edge, pc1);
+      const edge2 = addPCurveToEdge(edge1, pc2);
+      expect(edge2.pcurves).toHaveLength(2);
+      expect(edge2.pcurves[0]).toBe(pc1);
+      expect(edge2.pcurves[1]).toBe(pc2);
+    });
+
+    it('addPCurveToEdge preserves all other edge fields', () => {
+      const line3d = makeLine3D(point3d(0, 0, 0), point3d(1, 0, 0)).result!;
+      const edge = makeEdgeFromCurve(line3d).result!;
+
+      const surface = makePlaneSurface(XY_PLANE);
+      const line2d = makeLine2D({ x: 0, y: 0 }, { x: 1, y: 0 }).result!;
+      const pcurve = makePCurve(line2d, surface);
+
+      const edgeWithPC = addPCurveToEdge(edge, pcurve);
+      expect(edgeWithPC.curve).toBe(edge.curve);
+      expect(edgeWithPC.startVertex).toBe(edge.startVertex);
+      expect(edgeWithPC.endVertex).toBe(edge.endVertex);
+      expect(edgeWithPC.startParam).toBe(edge.startParam);
+      expect(edgeWithPC.endParam).toBe(edge.endParam);
     });
   });
 });

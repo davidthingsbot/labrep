@@ -5,6 +5,7 @@ import {
   makeSphericalSurface,
   evaluateSphericalSurface,
   normalSphericalSurface,
+  projectToSphericalSurface,
 } from '../../src/surfaces/spherical-surface';
 
 describe('SphericalSurface', () => {
@@ -212,6 +213,85 @@ describe('SphericalSurface', () => {
     it('handles very large radius', () => {
       const result = makeSphericalSurface(point3d(0, 0, 0), 1e6);
       expect(result.success).toBe(true);
+    });
+  });
+
+  describe('projectToSphericalSurface', () => {
+    it('round-trips equator at θ=0 (θ=0, φ=0)', () => {
+      const surface = makeSphericalSurface(point3d(0, 0, 0), 1).result!;
+      const pt = evaluateSphericalSurface(surface, 0, 0);
+      const uv = projectToSphericalSurface(surface, pt);
+      expect(uv.u).toBeCloseTo(0, 7);
+      expect(uv.v).toBeCloseTo(0, 7);
+    });
+
+    it('round-trips equator at θ=π/2', () => {
+      const surface = makeSphericalSurface(point3d(0, 0, 0), 1).result!;
+      const pt = evaluateSphericalSurface(surface, Math.PI / 2, 0);
+      const uv = projectToSphericalSurface(surface, pt);
+      expect(uv.u).toBeCloseTo(Math.PI / 2, 7);
+      expect(uv.v).toBeCloseTo(0, 7);
+    });
+
+    it('round-trips 45° latitude', () => {
+      const surface = makeSphericalSurface(point3d(0, 0, 0), 1).result!;
+      const pt = evaluateSphericalSurface(surface, 0, Math.PI / 4);
+      const uv = projectToSphericalSurface(surface, pt);
+      expect(uv.u).toBeCloseTo(0, 7);
+      expect(uv.v).toBeCloseTo(Math.PI / 4, 7);
+    });
+
+    it('round-trips north pole (φ=π/2)', () => {
+      const surface = makeSphericalSurface(point3d(0, 0, 0), 1).result!;
+      const pt = evaluateSphericalSurface(surface, 0, Math.PI / 2);
+      const uv = projectToSphericalSurface(surface, pt);
+      // At pole, θ is degenerate — only φ matters
+      expect(uv.v).toBeCloseTo(Math.PI / 2, 7);
+    });
+
+    it('round-trips south pole (φ=-π/2)', () => {
+      const surface = makeSphericalSurface(point3d(0, 0, 0), 1).result!;
+      const pt = evaluateSphericalSurface(surface, 0, -Math.PI / 2);
+      const uv = projectToSphericalSurface(surface, pt);
+      expect(uv.v).toBeCloseTo(-Math.PI / 2, 7);
+    });
+
+    it('round-trips negative longitude θ=-π/3', () => {
+      const surface = makeSphericalSurface(point3d(0, 0, 0), 2).result!;
+      const pt = evaluateSphericalSurface(surface, -Math.PI / 3, 0.3);
+      const uv = projectToSphericalSurface(surface, pt);
+      expect(uv.u).toBeCloseTo(-Math.PI / 3, 7);
+      expect(uv.v).toBeCloseTo(0.3, 7);
+    });
+
+    it('round-trips on offset sphere', () => {
+      const surface = makeSphericalSurface(point3d(10, 20, 30), 5).result!;
+      const testParams = [[0, 0], [1.0, 0.5], [Math.PI, -0.3], [-0.5, 1.2]];
+      for (const [theta, phi] of testParams) {
+        const pt = evaluateSphericalSurface(surface, theta, phi);
+        const uv = projectToSphericalSurface(surface, pt);
+        expect(uv.u).toBeCloseTo(theta, 6);
+        expect(uv.v).toBeCloseTo(phi, 6);
+      }
+    });
+
+    it('round-trips 15 points across the sphere', () => {
+      const surface = makeSphericalSurface(point3d(0, 0, 0), 3).result!;
+      const params: [number, number][] = [
+        [0, 0], [Math.PI/4, 0], [Math.PI/2, 0], [Math.PI, 0], [-Math.PI/2, 0],
+        [0, Math.PI/4], [0, -Math.PI/4], [0, Math.PI/3], [0, -Math.PI/3],
+        [1.0, 0.5], [-1.0, -0.5], [2.5, 1.0], [-2.5, -1.0],
+        [0.1, 1.5], [-0.1, -1.5],
+      ];
+      for (const [theta, phi] of params) {
+        const pt = evaluateSphericalSurface(surface, theta, phi);
+        const uv = projectToSphericalSurface(surface, pt);
+        // At high latitudes (near poles), θ can be noisy — only check φ there
+        if (Math.abs(phi) < 1.5) {
+          expect(uv.u).toBeCloseTo(theta, 5);
+        }
+        expect(uv.v).toBeCloseTo(phi, 5);
+      }
     });
   });
 });
