@@ -19,7 +19,7 @@ import { shellFaces } from '../../src/topology/shell';
 import { solidVolume } from '../../src/topology/solid';
 import { extrude } from '../../src/operations/extrude';
 import { revolve } from '../../src/operations/revolve';
-import { booleanSubtract, booleanUnion } from '../../src/operations/boolean';
+import { booleanSubtract, booleanUnion, booleanIntersect } from '../../src/operations/boolean';
 import { solidToMesh } from '../../src/mesh/tessellation';
 import { meshTriangleCount } from '../../src/mesh/mesh';
 
@@ -385,5 +385,59 @@ describe('F6: edge cases', () => {
     const vol = solidVolume(result.result!.solid);
     const expected = 64 - (4 / 3) * Math.PI * 0.125;
     expect(Math.abs(vol - expected) / expected).toBeLessThan(0.02);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// F7: KNOWN BROKEN — document failures for future phases
+// ═══════════════════════════════════════════════════════
+
+describe('F7: known limitations (curved union/intersect, non-convex)', () => {
+  it('box ∪ sphere: union succeeds but mesh is degenerate (12 tris)', () => {
+    // Union "succeeds" but produces a near-empty mesh (12 triangles instead of ~1000+).
+    // This documents the current limitation — union with curved surfaces needs
+    // the general SSI pipeline from Phase 13B+.
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const sphere = makeSphere(1);
+    const result = booleanUnion(box.solid, sphere.solid);
+    // The boolean itself claims success
+    expect(result.success).toBe(true);
+    // But the mesh is nearly empty — this is the bug
+    const mesh = solidToMesh(result.result!.solid);
+    expect(mesh.success).toBe(true);
+    const tris = meshTriangleCount(mesh.result!);
+    // Document: union mesh is degenerate. When fixed, this should be > 500.
+    expect(tris).toBeLessThan(50); // Currently 12 — proves it's broken
+  });
+
+  it('box ∩ sphere: intersect succeeds with reasonable mesh', () => {
+    // Intersect works because the sphere faces classified "inside" the box
+    // are kept whole, which happens to produce correct geometry.
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const sphere = makeSphere(1);
+    const result = booleanIntersect(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    const mesh = solidToMesh(result.result!.solid);
+    expect(mesh.success).toBe(true);
+    expect(meshTriangleCount(mesh.result!)).toBeGreaterThan(500);
+  });
+
+  it('L-bracket (extruded L-profile) minus sphere fails: shell not closed', () => {
+    // L-bracket from an extruded L-shaped profile (not union of 2 boxes).
+    // The sphere at the concave corner triggers the non-convex trimming bug:
+    // half-space clipping produces wrong trim arcs for non-convex solids.
+    const pts = [
+      point3d(-2.5, -1, -2), point3d(2.5, -1, -2),
+      point3d(2.5, 1, -2), point3d(-0.5, 1, -2),
+      point3d(-0.5, 4, -2), point3d(-2.5, 4, -2),
+    ];
+    const edges = pts.map((p, i) =>
+      makeEdgeFromCurve(makeLine3D(p, pts[(i + 1) % pts.length]).result!).result!,
+    );
+    const lSolid = extrude(makeWireFromEdges(edges).result!, vec3d(0, 0, 1), 4).result!;
+    const sphere = makeSphere(1.2);
+    const result = booleanSubtract(lSolid.solid, sphere.solid);
+    // Documents the failure — non-convex solid trimming is broken
+    expect(result.success).toBe(false);
   });
 });
