@@ -635,101 +635,44 @@ export function booleanOperation(
     }
   }
 
-  // ── Stage 2.5: Pre-split edges at FFI vertices (OCCT MakeSplitEdges) ──
-  // Following OCCT BOPAlgo_PaveFiller::MakeSplitEdges: split boundary edges
-  // in a shared vertex pool BEFORE face reconstruction. This ensures adjacent
-  // faces of the same solid share identical split edge objects, eliminating
-  // the need for post-hoc stitching.
-
-  const ffiVertices: Point3D[] = [];
-  for (const edges of edgesOnA.values()) {
-    for (const e of edges) {
-      pushUnique(ffiVertices, edgeStartPoint(e));
-      pushUnique(ffiVertices, edgeEndPoint(e));
-    }
-  }
-  for (const edges of edgesOnB.values()) {
-    for (const e of edges) {
-      pushUnique(ffiVertices, edgeStartPoint(e));
-      pushUnique(ffiVertices, edgeEndPoint(e));
-    }
-  }
-
-  // Snap FFI edge endpoints to canonical vertices. Different FFI calls may
-  // compute the same geometric point via different arithmetic paths, producing
-  // slightly different coordinates. Snapping ensures consistency.
-  function snapVertex(pt: Point3D): Point3D {
-    for (const v of ffiVertices) {
-      if (distance(pt, v) < STITCH_TOL) return v;
-    }
-    return pt;
-  }
-
-  function snapEdge(edge: Edge): Edge {
-    if (edge.curve.type !== 'line3d') return edge;
-    const s = snapVertex(edgeStartPoint(edge));
-    const e = snapVertex(edgeEndPoint(edge));
-    if (s === edgeStartPoint(edge) && e === edgeEndPoint(edge)) return edge;
-    const lineRes = makeLine3D(s, e);
-    if (!lineRes.success) return edge;
-    const edgeRes = makeEdgeFromCurve(lineRes.result!);
-    return edgeRes.success ? edgeRes.result! : edge;
-  }
-
-  // Snap all FFI edges to canonical vertices
-  for (const [face, edges] of edgesOnA) {
-    edgesOnA.set(face, edges.map(snapEdge));
-  }
-  for (const [face, edges] of edgesOnB) {
-    edgesOnB.set(face, edges.map(snapEdge));
-  }
-
-  // Pre-split faces: rebuild each face's wire with boundary edges split at FFI vertices
-  const preSplitFacesOfA = facesOfA.map(f => preSplitFaceAtVertices(f, ffiVertices));
-  const preSplitFacesOfB = facesOfB.map(f => preSplitFaceAtVertices(f, ffiVertices));
-
   // ── Stage 3: Split faces and classify ──
 
   const allFacesA: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
   const allFacesB: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
 
   // Process faces of A
-  for (let i = 0; i < facesOfA.length; i++) {
-    const origFace = facesOfA[i];
-    const face = preSplitFacesOfA[i];
-    if (coplanarA.has(origFace)) {
-      handleCoplanarFace(face, coplanarA.get(origFace)!, op, a, b, allFacesA);
+  for (const faceA of facesOfA) {
+    if (coplanarA.has(faceA)) {
+      handleCoplanarFace(faceA, coplanarA.get(faceA)!, op, a, b, allFacesA);
       continue;
     }
 
-    const intEdges = edgesOnA.get(origFace);
+    const intEdges = edgesOnA.get(faceA);
     if (intEdges && intEdges.length > 0) {
-      const subFaces = builderFace(face, intEdges);
+      const subFaces = builderFace(faceA, intEdges);
       for (const sf of subFaces) {
         allFacesA.push({ face: sf, classification: classifyFace(sf, b) });
       }
     } else {
-      allFacesA.push({ face: face, classification: classifyFace(face, b) });
+      allFacesA.push({ face: faceA, classification: classifyFace(faceA, b) });
     }
   }
 
   // Process faces of B
-  for (let i = 0; i < facesOfB.length; i++) {
-    const origFace = facesOfB[i];
-    const face = preSplitFacesOfB[i];
-    if (coplanarB.has(origFace)) {
-      handleCoplanarFaceSideB(face, coplanarB.get(origFace)!, op, a, b, allFacesB);
+  for (const faceB of facesOfB) {
+    if (coplanarB.has(faceB)) {
+      handleCoplanarFaceSideB(faceB, coplanarB.get(faceB)!, op, a, b, allFacesB);
       continue;
     }
 
-    const intEdges = edgesOnB.get(origFace);
+    const intEdges = edgesOnB.get(faceB);
     if (intEdges && intEdges.length > 0) {
-      const subFaces = builderFace(face, intEdges);
+      const subFaces = builderFace(faceB, intEdges);
       for (const sf of subFaces) {
         allFacesB.push({ face: sf, classification: classifyFace(sf, a) });
       }
     } else {
-      allFacesB.push({ face: face, classification: classifyFace(face, a) });
+      allFacesB.push({ face: faceB, classification: classifyFace(faceB, a) });
     }
   }
 
@@ -772,12 +715,42 @@ export function booleanOperation(
   }
 
   if (selectedFaces.length < 2) {
-    return failure(`Boolean ${op} produced only ${selectedFaces.length} faces — result is degenerate`);
+    return failure(`Boolean ${op} produced only ${selectedFaces.length} faces (A:${allFacesA.length} [${allFacesA.map(f=>f.classification)}], B:${allFacesB.length} [${allFacesB.map(f=>f.classification)}]) — result is degenerate`);
   }
 
   // ── Stage 5: Stitch edges and assemble ──
 
   const stitched = stitchEdges(selectedFaces);
+
+  // DEBUG: dump edge analysis before shell creation
+  if (typeof process !== 'undefined' && process.env.BOOLEAN_DEBUG) {
+    const round = (n: number) => Math.round(n / TOLERANCE) * TOLERANCE;
+    const edgeUsage = new Map<string, string[]>();
+    for (const face of stitched) {
+      for (const oe of face.outerWire.edges) {
+        const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+        const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+        const k1 = `${round(s.x)},${round(s.y)},${round(s.z)}`;
+        const k2 = `${round(e.x)},${round(e.y)},${round(e.z)}`;
+        const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+        const dir = oe.edge.curve.isClosed ? `${k1}|${oe.forward?'F':'R'}` : `${k1}->${k2}`;
+        if (!edgeUsage.has(key)) edgeUsage.set(key, []);
+        edgeUsage.get(key)!.push(dir);
+      }
+    }
+    let issues = 0;
+    for (const [key, dirs] of edgeUsage) {
+      if (dirs.length !== 2 || dirs[0] === dirs[1]) {
+        console.log(`  EDGE_ISSUE: ${key} (${dirs.length}): ${dirs.join(' | ')}`);
+        issues++;
+      }
+    }
+    console.log(`  [debug] ${stitched.length} faces, ${edgeUsage.size} unique edges, ${issues} issues`);
+    // Check inner wires
+    let innerCount = 0;
+    for (const f of stitched) innerCount += f.innerWires.length;
+    console.log(`  [debug] inner wires: ${innerCount}`);
+  }
 
   const shellResult = makeShell(stitched);
   if (!shellResult.success) return failure(`Shell creation failed: ${shellResult.error}`);
