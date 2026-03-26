@@ -469,15 +469,18 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       const startIdx = findOrAddVertex(vertices, vertices2D, startPt, startUV);
       const endIdx = findOrAddVertex(vertices, vertices2D, endPt, endUV);
 
+      // Add both forward and reverse half-edges for all boundary edges.
+      // Following OCCT BOPAlgo_Builder_2.cxx BuildSplitFaces: all edges
+      // get both orientations when the face is being split.
       boundaryHalfEdges.push({
-        edge: oe.edge,
-        forward: oe.forward,
-        startVtx: startIdx,
-        endVtx: endIdx,
-        angleAtStart: 0,
-        angleAtEnd: 0,
-        used: false,
-        isBoundary: true,
+        edge: oe.edge, forward: oe.forward,
+        startVtx: startIdx, endVtx: endIdx,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
+      });
+      boundaryHalfEdges.push({
+        edge: oe.edge, forward: !oe.forward,
+        startVtx: endIdx, endVtx: startIdx,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
       });
     } else {
       // Sort hits by parameter and split edge into sub-segments.
@@ -605,31 +608,55 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         // Extract sub-loop: edges from loopStartIdx onward
         const subLoop = pathEdges.splice(loopStartIdx);
         pathVertices.splice(loopStartIdx + 1);
-        if (subLoop.length >= 1) {
+        // Filter degenerate loops: a 2-edge loop where both edges are the
+        // same underlying Edge (forward+reverse) is an artifact of bidirectional
+        // boundary edges, not a real face.
+        const isDegenerate = subLoop.length === 2 &&
+          subLoop[0].edge === subLoop[1].edge;
+        if (subLoop.length >= 1 && !isDegenerate) {
           loops.push(subLoop);
+        } else {
+          // Put edges back as unused
+          for (const he of subLoop) he.used = false;
         }
         if (pathEdges.length === 0) break;
         // Don't find next edge — check for more sub-loops at this vertex
         continue;
       }
 
-      // Find the next half-edge: smallest clockwise angle
+      // Find next half-edge using OCCT BOPAlgo_WireSplitter_1.cxx logic:
+      // 1. If only 1 unpassed outgoing edge → take it
+      // 2. If incoming is boundary and exactly 1 interior edge → prioritize it
+      // 3. Otherwise → smallest clockwise angle
       const lastEdge = pathEdges[pathEdges.length - 1];
       const candidates = outgoing.get(vtx);
       if (!candidates) break;
 
-      const incomingAngle = lastEdge.angleAtEnd;
-      let bestAngle = Infinity;
-      let bestHE: HalfEdge | null = null;
-
+      const viable: HalfEdge[] = [];
       for (const cand of candidates) {
         if (cand.used) continue;
         if (cand.edge === lastEdge.edge && cand.forward !== lastEdge.forward) continue;
+        viable.push(cand);
+      }
 
-        const cwAngle = clockwiseAngle(incomingAngle, cand.angleAtStart);
-        if (cwAngle < bestAngle) {
-          bestAngle = cwAngle;
-          bestHE = cand;
+      let bestHE: HalfEdge | null = null;
+      if (viable.length === 1) {
+        bestHE = viable[0];
+      } else if (viable.length > 1) {
+        // OCCT priority: if incoming was boundary and exactly 1 interior edge, take it
+        const interiorViable = viable.filter(h => !h.isBoundary);
+        if (interiorViable.length === 1 && lastEdge.isBoundary) {
+          bestHE = interiorViable[0];
+        } else {
+          const incomingAngle = lastEdge.angleAtEnd;
+          let bestAngle = Infinity;
+          for (const cand of viable) {
+            const cwAngle = clockwiseAngle(incomingAngle, cand.angleAtStart);
+            if (cwAngle < bestAngle) {
+              bestAngle = cwAngle;
+              bestHE = cand;
+            }
+          }
         }
       }
 
