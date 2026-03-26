@@ -158,113 +158,6 @@ function pointInPolygon2DSimple(pt: Pt2, poly: Pt2[]): boolean {
 // COPLANAR BOUNDARY INTERSECTION
 // ═══════════════════════════════════════════════════════
 
-/**
- * Clip a 2D line segment against a polygon, returning parameter ranges
- * of the segment that lie strictly inside the polygon.
- */
-function clipSegmentByPolygon2D(
-  segStart: Pt2, segEnd: Pt2, polygon: Pt2[],
-): { t1: number; t2: number }[] {
-  if (polygon.length < 3) return [];
-  const dx = segEnd.x - segStart.x;
-  const dy = segEnd.y - segStart.y;
-  if (dx * dx + dy * dy < 1e-20) return [];
-
-  // Collect intersection parameters with polygon edges
-  const crossings: number[] = [];
-  for (let i = 0; i < polygon.length; i++) {
-    const j = (i + 1) % polygon.length;
-    const ex = polygon[j].x - polygon[i].x;
-    const ey = polygon[j].y - polygon[i].y;
-    const denom = dx * ey - dy * ex;
-    if (Math.abs(denom) < 1e-12) continue;
-    const t = ((polygon[i].x - segStart.x) * ey - (polygon[i].y - segStart.y) * ex) / denom;
-    const s = ((polygon[i].x - segStart.x) * dy - (polygon[i].y - segStart.y) * dx) / denom;
-    if (s < -1e-8 || s > 1 + 1e-8) continue;
-    if (t < -1e-8 || t > 1 + 1e-8) continue;
-    crossings.push(Math.max(0, Math.min(1, t)));
-  }
-
-  // Build sorted unique parameter list including endpoints
-  crossings.push(0, 1);
-  crossings.sort((a, b) => a - b);
-  const unique: number[] = [crossings[0]];
-  for (let i = 1; i < crossings.length; i++) {
-    if (crossings[i] - unique[unique.length - 1] > 1e-8) unique.push(crossings[i]);
-  }
-
-  // Check midpoint of each sub-segment
-  const result: { t1: number; t2: number }[] = [];
-  for (let i = 0; i < unique.length - 1; i++) {
-    const t1 = unique[i], t2 = unique[i + 1];
-    if (t2 - t1 < 1e-8) continue;
-    const midT = (t1 + t2) / 2;
-    const mid = { x: segStart.x + midT * dx, y: segStart.y + midT * dy };
-    if (pointInPolygon2DSimple(mid, polygon)) {
-      if (result.length > 0 && Math.abs(result[result.length - 1].t2 - t1) < 1e-8) {
-        result[result.length - 1].t2 = t2;
-      } else {
-        result.push({ t1, t2 });
-      }
-    }
-  }
-  return result;
-}
-
-/**
- * Compute coplanar boundary intersection edges for two same-normal
- * coplanar faces. Returns segments of each face's boundary that lie
- * inside the other face — these become splitting edges for BuilderFace.
- *
- * OCCT reference: BOPAlgo_PaveFiller::PostTreatFF for tangent faces.
- */
-function computeCoplanarEdges(
-  faceA: Face, faceB: Face, pl: Plane,
-): { edgesForA: Edge[]; edgesForB: Edge[] } {
-  const polyA = faceToPolygon2D(faceA, pl);
-  const polyB = faceToPolygon2D(faceB, pl);
-  const edgesForA: Edge[] = [];
-  const edgesForB: Edge[] = [];
-
-  // Segments of B's boundary inside A → splitting edges for A
-  // Filter: skip segments on A's boundary (touching, not interior)
-  for (const oe of faceB.outerWire.edges) {
-    const s3 = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-    const e3 = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
-    const s2 = worldToSketch(pl, s3);
-    const e2 = worldToSketch(pl, e3);
-    for (const { t1, t2 } of clipSegmentByPolygon2D(s2, e2, polyA)) {
-      const p1 = point3d(s3.x + t1 * (e3.x - s3.x), s3.y + t1 * (e3.y - s3.y), s3.z + t1 * (e3.z - s3.z));
-      const p2 = point3d(s3.x + t2 * (e3.x - s3.x), s3.y + t2 * (e3.y - s3.y), s3.z + t2 * (e3.z - s3.z));
-      if (distance(p1, p2) < 1e-6) continue;
-      const lr = makeLine3D(p1, p2);
-      if (!lr.success) continue;
-      const er = makeEdgeFromCurve(lr.result!);
-      if (!er.success) continue;
-      if (!edgeLiesOnFaceBoundary(er.result!, faceA)) edgesForA.push(er.result!);
-    }
-  }
-
-  // Segments of A's boundary inside B → splitting edges for B
-  for (const oe of faceA.outerWire.edges) {
-    const s3 = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-    const e3 = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
-    const s2 = worldToSketch(pl, s3);
-    const e2 = worldToSketch(pl, e3);
-    for (const { t1, t2 } of clipSegmentByPolygon2D(s2, e2, polyB)) {
-      const p1 = point3d(s3.x + t1 * (e3.x - s3.x), s3.y + t1 * (e3.y - s3.y), s3.z + t1 * (e3.z - s3.z));
-      const p2 = point3d(s3.x + t2 * (e3.x - s3.x), s3.y + t2 * (e3.y - s3.y), s3.z + t2 * (e3.z - s3.z));
-      if (distance(p1, p2) < 1e-6) continue;
-      const lr = makeLine3D(p1, p2);
-      if (!lr.success) continue;
-      const er = makeEdgeFromCurve(lr.result!);
-      if (!er.success) continue;
-      if (!edgeLiesOnFaceBoundary(er.result!, faceB)) edgesForB.push(er.result!);
-    }
-  }
-
-  return { edgesForA, edgesForB };
-}
 
 /**
  * Classify a sub-face from a coplanar face split by BuilderFace.
@@ -834,49 +727,31 @@ export function booleanOperation(
   const coplanarA: Map<Face, { partner: Face; sameNormal: boolean }> = new Map();
   const coplanarB: Map<Face, { partner: Face; sameNormal: boolean }> = new Map();
 
+  // Following OCCT BOPAlgo_PaveFiller: first detect coplanar (tangent) pairs,
+  // then compute FFI for all non-coplanar pairs. Coplanar faces receive their
+  // splitting edges from non-coplanar FFI (e.g., A's side wall intersects B's
+  // coplanar top face), NOT from separate boundary clipping.
   for (const faceA of facesOfA) {
     for (const faceB of facesOfB) {
       if (areFacesCoplanar(faceA, faceB)) {
         const sameN = coplanarSameNormal(faceA, faceB);
-
         if (sameN) {
-          // Same-normal coplanar: compute boundary intersection edges
+          // Same-normal coplanar: check if faces actually overlap (2D area test).
+          // Non-overlapping pairs (e.g., stacked box side walls) are skipped.
           const pl = (faceA.surface as PlaneSurface).plane;
-          const { edgesForA, edgesForB } = computeCoplanarEdges(faceA, faceB, pl);
-          if (edgesForA.length > 0 || edgesForB.length > 0) {
-            // Partial overlap — register as coplanar and add edges for BuilderFace
+          const polyA = faceToPolygon2D(faceA, pl);
+          const polyB = faceToPolygon2D(faceB, pl);
+          const overlapArea = Math.abs(polygonArea2D(clipPolygon(polyA, polyB)));
+          if (overlapArea > 1e-8) {
             if (!coplanarA.has(faceA)) coplanarA.set(faceA, { partner: faceB, sameNormal: true });
             if (!coplanarB.has(faceB)) coplanarB.set(faceB, { partner: faceA, sameNormal: true });
-            // For union: keep A's face whole (as 'on'), only split B's face
-            // to extract its L-shape. Splitting A would create internal edges
-            // with no matching partners (internal walls are discarded for union).
-            if (op !== 'union' && edgesForA.length > 0) {
-              if (!edgesOnA.has(faceA)) edgesOnA.set(faceA, []);
-              edgesOnA.get(faceA)!.push(...edgesForA);
-            }
-            if (edgesForB.length > 0) {
-              if (!edgesOnB.has(faceB)) edgesOnB.set(faceB, []);
-              edgesOnB.get(faceB)!.push(...edgesForB);
-            }
-          } else {
-            // No splitting edges — check if faces fully overlap (identical or contained).
-            // This happens when all boundary edges of one face lie on the other's boundary.
-            const polyA = faceToPolygon2D(faceA, pl);
-            const polyB = faceToPolygon2D(faceB, pl);
-            const overlapArea = Math.abs(polygonArea2D(clipPolygon(polyA, polyB)));
-            if (overlapArea > 1e-8) {
-              // Full overlap — register as coplanar (no splitting needed, whole face is overlap)
-              if (!coplanarA.has(faceA)) coplanarA.set(faceA, { partner: faceB, sameNormal: true });
-              if (!coplanarB.has(faceB)) coplanarB.set(faceB, { partner: faceA, sameNormal: true });
-            }
           }
-          // Non-overlapping same-normal coplanar: skip (treat as non-coplanar)
         } else {
           // Opposite-normal coplanar: always register (for special handling)
           if (!coplanarA.has(faceA)) coplanarA.set(faceA, { partner: faceB, sameNormal: false });
           if (!coplanarB.has(faceB)) coplanarB.set(faceB, { partner: faceA, sameNormal: false });
         }
-        continue;
+        continue; // Coplanar surfaces don't intersect — skip FFI for this pair
       }
 
       // AABB pre-filter: skip face pairs whose bboxes don't overlap
@@ -888,15 +763,16 @@ export function booleanOperation(
       const ffiResult = intersectFaceFace(faceA, faceB);
       if (!ffiResult || ffiResult.edges.length === 0) continue;
 
+      // OCCT approach: FFI edges are added to ALL faces (including coplanar ones).
+      // Coplanar faces get their splitting edges from non-coplanar FFI — e.g.,
+      // B's side wall crossing A's top face produces a section edge on A's top.
       for (const ffiEdge of ffiResult.edges) {
         const e = ffiEdge.edge;
-        // Don't add FFI edges to coplanar faces — their splitting edges
-        // come from computeCoplanarEdges instead (avoids duplicates).
-        if (!coplanarA.has(faceA) && !edgeLiesOnFaceBoundary(e, faceA)) {
+        if (!edgeLiesOnFaceBoundary(e, faceA)) {
           if (!edgesOnA.has(faceA)) edgesOnA.set(faceA, []);
           edgesOnA.get(faceA)!.push(e);
         }
-        if (!coplanarB.has(faceB) && !edgeLiesOnFaceBoundary(e, faceB)) {
+        if (!edgeLiesOnFaceBoundary(e, faceB)) {
           if (!edgesOnB.has(faceB)) edgesOnB.set(faceB, []);
           edgesOnB.get(faceB)!.push(e);
         }
