@@ -1,17 +1,10 @@
-import { Point3D, Point2D, Vector3D, normalize, dot, cross, vec3d, subtractPoints, worldToSketch } from '../core';
+import { Point3D, Point2D, Vector3D, cross, worldToSketch } from '../core';
 import { Mesh, createMesh, OperationResult, success, failure } from './mesh';
 import { Solid } from '../topology/solid';
 import { Face, Surface } from '../topology/face';
 import { shellFaces } from '../topology/shell';
 import { edgeStartPoint, edgeEndPoint } from '../topology/edge';
-import {
-  CylindricalSurface, evaluateCylindricalSurface, normalCylindricalSurface, projectToCylindricalSurface,
-  SphericalSurface, evaluateSphericalSurface, normalSphericalSurface, projectToSphericalSurface,
-  ConicalSurface, evaluateConicalSurface, normalConicalSurface, projectToConicalSurface,
-  ToroidalSurface, evaluateToroidalSurface, normalToroidalSurface,
-  RevolutionSurface, evaluateRevolutionSurface, normalRevolutionSurface,
-  ExtrusionSurface, evaluateExtrusionSurface, normalExtrusionSurface,
-} from '../surfaces';
+import { toAdapter } from '../surfaces/surface-adapter';
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -264,101 +257,6 @@ function tessellatePlanarFace(face: Face): FaceTessellation | null {
 type SurfaceEvaluator = (u: number, v: number) => Point3D;
 type SurfaceNormalFn = (u: number, v: number) => Vector3D;
 
-/**
- * Project a 3D point onto a cylindrical surface's (θ, v) parameters.
- */
-function projectToCylinder(surface: CylindricalSurface, pt: Point3D): { u: number; v: number } {
-  return projectToCylindricalSurface(surface, pt);
-}
-
-/**
- * Project a 3D point onto a spherical surface's (θ, φ) parameters.
- */
-function projectToSphere(surface: SphericalSurface, pt: Point3D): { u: number; v: number } {
-  return projectToSphericalSurface(surface, pt);
-}
-
-/**
- * Project a 3D point onto a conical surface's (θ, v) parameters.
- */
-function projectToCone(surface: ConicalSurface, pt: Point3D): { u: number; v: number } {
-  return projectToConicalSurface(surface, pt);
-}
-
-/**
- * Project a 3D point onto a toroidal surface's (θ, φ) parameters.
- */
-function projectToTorus(surface: ToroidalSurface, pt: Point3D): { u: number; v: number } {
-  const { axis, majorRadius, refDirection } = surface;
-  const perpDir = cross(axis.direction, refDirection);
-  const rel = subtractPoints(pt, axis.origin);
-
-  // Project onto equatorial plane to find θ
-  const inPlane = vec3d(
-    rel.x - dot(rel, axis.direction) * axis.direction.x,
-    rel.y - dot(rel, axis.direction) * axis.direction.y,
-    rel.z - dot(rel, axis.direction) * axis.direction.z,
-  );
-  const theta = Math.atan2(dot(inPlane, perpDir), dot(inPlane, refDirection));
-
-  // Find φ: angle around the tube cross-section
-  const centerOnCircle = vec3d(
-    axis.origin.x + majorRadius * Math.cos(theta) * refDirection.x + majorRadius * Math.sin(theta) * perpDir.x,
-    axis.origin.y + majorRadius * Math.cos(theta) * refDirection.y + majorRadius * Math.sin(theta) * perpDir.y,
-    axis.origin.z + majorRadius * Math.cos(theta) * refDirection.z + majorRadius * Math.sin(theta) * perpDir.z,
-  );
-  const toPoint = vec3d(pt.x - centerOnCircle.x, pt.y - centerOnCircle.y, pt.z - centerOnCircle.z);
-  const radialDir = vec3d(
-    Math.cos(theta) * refDirection.x + Math.sin(theta) * perpDir.x,
-    Math.cos(theta) * refDirection.y + Math.sin(theta) * perpDir.y,
-    Math.cos(theta) * refDirection.z + Math.sin(theta) * perpDir.z,
-  );
-  const phi = Math.atan2(dot(toPoint, axis.direction), dot(toPoint, radialDir));
-
-  return { u: theta, v: phi };
-}
-
-/**
- * Project a 3D point onto a revolution surface's (θ, v) parameters.
- * θ = rotation angle, v = basis curve parameter.
- * For v, we do a closest-point search along the basis curve.
- */
-function projectToRevolution(surface: RevolutionSurface, pt: Point3D): { u: number; v: number } {
-  const { axis, refDirection } = surface;
-  const perpDir = cross(axis.direction, refDirection);
-  const rel = subtractPoints(pt, axis.origin);
-
-  // θ from the radial projection
-  const axialComp = dot(rel, axis.direction);
-  const inPlane = vec3d(
-    rel.x - axialComp * axis.direction.x,
-    rel.y - axialComp * axis.direction.y,
-    rel.z - axialComp * axis.direction.z,
-  );
-  const theta = Math.atan2(dot(inPlane, perpDir), dot(inPlane, refDirection));
-
-  // v: sample the basis curve and find closest parameter
-  const curve = surface.basisCurve;
-  let bestV = curve.startParam;
-  let bestDist = Infinity;
-  const steps = 20;
-  for (let i = 0; i <= steps; i++) {
-    const t = curve.startParam + (curve.endParam - curve.startParam) * i / steps;
-    const cp = evaluateRevolutionSurface(surface, 0, t); // evaluate at θ=0
-    // Compare radial distance and axial position
-    const cpRel = subtractPoints(cp, axis.origin);
-    const cpAxial = dot(cpRel, axis.direction);
-    const cpRadial = Math.sqrt(dot(cpRel, cpRel) - cpAxial * cpAxial);
-    const ptRadial = Math.sqrt(dot(inPlane, inPlane));
-    const dist = Math.abs(cpAxial - axialComp) + Math.abs(cpRadial - ptRadial);
-    if (dist < bestDist) {
-      bestDist = dist;
-      bestV = t;
-    }
-  }
-
-  return { u: theta, v: bestV };
-}
 
 /**
  * Check if any edge in the wire is a full circle or arc, and extract angular range.
@@ -430,27 +328,11 @@ function wireEdgeSamplePoints(face: Face): Point3D[] {
 function getParameterBounds(face: Face): { uMin: number; uMax: number; vMin: number; vMax: number } | null {
   const surface = face.surface;
 
-  let projectFn: (pt: Point3D) => { u: number; v: number };
+  // Planar faces are handled by tessellatePlanarFace — skip here
+  if (surface.type === 'plane') return null;
 
-  switch (surface.type) {
-    case 'cylinder':
-      projectFn = (pt) => projectToCylinder(surface, pt);
-      break;
-    case 'sphere':
-      projectFn = (pt) => projectToSphere(surface, pt);
-      break;
-    case 'cone':
-      projectFn = (pt) => projectToCone(surface, pt);
-      break;
-    case 'torus':
-      projectFn = (pt) => projectToTorus(surface, pt);
-      break;
-    case 'revolution':
-      projectFn = (pt) => projectToRevolution(surface, pt);
-      break;
-    default:
-      return null;
-  }
+  const adapter = toAdapter(surface);
+  const projectFn = (pt: Point3D) => adapter.projectPoint(pt);
 
   // Detect full circles / arcs from edge curves
   const { isFullCircle, arcMin, arcMax } = detectAngularRange(face);
@@ -511,35 +393,14 @@ function getParameterBounds(face: Face): { uMin: number; uMax: number; vMin: num
  * Build evaluate/normal functions for a given surface.
  */
 function getSurfaceFunctions(surface: Surface): { evaluate: SurfaceEvaluator; normal: SurfaceNormalFn } | null {
-  switch (surface.type) {
-    case 'cylinder':
-      return {
-        evaluate: (u, v) => evaluateCylindricalSurface(surface, u, v),
-        normal: (u, v) => normalCylindricalSurface(surface, u, v),
-      };
-    case 'sphere':
-      return {
-        evaluate: (u, v) => evaluateSphericalSurface(surface, u, v),
-        normal: (u, v) => normalSphericalSurface(surface, u, v),
-      };
-    case 'cone':
-      return {
-        evaluate: (u, v) => evaluateConicalSurface(surface, u, v),
-        normal: (u, v) => normalConicalSurface(surface, u, v),
-      };
-    case 'torus':
-      return {
-        evaluate: (u, v) => evaluateToroidalSurface(surface, u, v),
-        normal: (u, v) => normalToroidalSurface(surface, u, v),
-      };
-    case 'revolution':
-      return {
-        evaluate: (u, v) => evaluateRevolutionSurface(surface, u, v),
-        normal: (u, v) => normalRevolutionSurface(surface, u, v),
-      };
-    default:
-      return null;
-  }
+  // Planar faces are handled by tessellatePlanarFace — skip here
+  if (surface.type === 'plane') return null;
+
+  const adapter = toAdapter(surface);
+  return {
+    evaluate: (u, v) => adapter.evaluate(u, v),
+    normal: (u, v) => adapter.normal(u, v),
+  };
 }
 
 /**

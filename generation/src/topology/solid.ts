@@ -1,4 +1,4 @@
-import { Point3D, cross, dot, normalize, subtractPoints, vec3d } from '../core';
+import { Point3D } from '../core';
 import { OperationResult, success, failure } from '../mesh/mesh';
 import { Shell, shellIsClosed, shellFaces } from './shell';
 import { faceOuterWire, faceInnerWires, Face, Surface } from './face';
@@ -8,11 +8,7 @@ import { evaluateLine3D } from '../geometry/line3d';
 import { evaluateCircle3D } from '../geometry/circle3d';
 import { evaluateArc3D } from '../geometry/arc3d';
 import { evaluateEllipse3D } from '../geometry/ellipse3d';
-import {
-  evaluateSphericalSurface, normalSphericalSurface, projectToSphericalSurface,
-  evaluateCylindricalSurface, normalCylindricalSurface, projectToCylindricalSurface,
-  evaluateConicalSurface, normalConicalSurface, projectToConicalSurface,
-} from '../surfaces';
+import { toAdapter } from '../surfaces/surface-adapter';
 
 /**
  * A closed 3D volume defined by its boundary shell(s).
@@ -250,7 +246,6 @@ function computeParametricFaceVolume(face: Face, N: number): number {
 
       const pt = evaluateSurface(surface, u, v);
       const jn = jacobianNormal(surface, u, v);
-      if (!pt || !jn) continue;
 
       // P · J  (position dot Jacobian normal)
       vol += (pt.x * jn.x + pt.y * jn.y + pt.z * jn.z) * du * dv;
@@ -295,7 +290,7 @@ function getParametricBounds(
       const t = tStart + (i / nSamples) * (tEnd - tStart);
       const pt = evaluateCurve(e.curve, t);
       const uv = projectPointToSurface(surface, pt);
-      if (uv) uvPts.push(uv);
+      uvPts.push(uv);
     }
   }
 
@@ -352,21 +347,10 @@ function isNaturalRestriction(face: Face): boolean {
 
 /**
  * Get the natural parametric bounds for a surface type.
+ * Delegates to the SurfaceAdapter.
  */
 function getNaturalBounds(surface: Surface): { uMin: number; uMax: number; vMin: number; vMax: number } {
-  switch (surface.type) {
-    case 'sphere':
-      // θ ∈ [-π, π], φ ∈ [-π/2, π/2]
-      // Our atan2-based projection returns θ ∈ (-π, π], so use that range
-      return { uMin: -Math.PI, uMax: Math.PI, vMin: -Math.PI / 2, vMax: Math.PI / 2 };
-    case 'cylinder':
-      // θ ∈ [-π, π], v unbounded — use a reasonable default
-      return { uMin: -Math.PI, uMax: Math.PI, vMin: -10, vMax: 10 };
-    case 'cone':
-      return { uMin: -Math.PI, uMax: Math.PI, vMin: -10, vMax: 10 };
-    default:
-      return { uMin: 0, uMax: 2 * Math.PI, vMin: -Math.PI / 2, vMax: Math.PI / 2 };
-  }
+  return toAdapter(surface).uvBounds();
 }
 
 /**
@@ -376,82 +360,55 @@ function getNaturalBounds(surface: Surface): { uMin: number; uMax: number; vMin:
  * - The surface orientation (direction)
  * - The area Jacobian (magnitude = |∂P/∂u × ∂P/∂v|)
  *
+ * Uses central finite differences on the adapter's evaluate() to compute
+ * partial derivatives, then cross product. This works for all surface types.
+ *
  * Based on OCCT's BRepGProp_Face::Normal().
  */
-function jacobianNormal(surface: Surface, u: number, v: number): Pt | null {
-  switch (surface.type) {
-    case 'sphere': {
-      // ∂P/∂θ × ∂P/∂φ = R²·cos(φ) · outwardUnitNormal
-      const { radius, axis, refDirection } = surface;
-      const perp = cross(axis.direction, refDirection);
-      const cosP = Math.cos(v), sinP = Math.sin(v);
-      const cosT = Math.cos(u), sinT = Math.sin(u);
-      const scale = radius * radius * cosP;
-      return {
-        x: scale * (cosP * cosT * refDirection.x + cosP * sinT * perp.x + sinP * axis.direction.x),
-        y: scale * (cosP * cosT * refDirection.y + cosP * sinT * perp.y + sinP * axis.direction.y),
-        z: scale * (cosP * cosT * refDirection.z + cosP * sinT * perp.z + sinP * axis.direction.z),
-      };
-    }
-    case 'cylinder': {
-      // ∂P/∂θ × ∂P/∂v = R·(cos(θ)·ref + sin(θ)·perp)
-      const { radius, axis, refDirection } = surface;
-      const perp = cross(axis.direction, refDirection);
-      const cosT = Math.cos(u), sinT = Math.sin(u);
-      return {
-        x: radius * (cosT * refDirection.x + sinT * perp.x),
-        y: radius * (cosT * refDirection.y + sinT * perp.y),
-        z: radius * (cosT * refDirection.z + sinT * perp.z),
-      };
-    }
-    case 'cone': {
-      // ∂P/∂θ × ∂P/∂v = (R + v·sin(α))·(cos(α)·radialDir - sin(α)·axis)
-      const { radius, semiAngle, axis, refDirection } = surface;
-      const perp = cross(axis.direction, refDirection);
-      const cosT = Math.cos(u), sinT = Math.sin(u);
-      const cosA = Math.cos(semiAngle), sinA = Math.sin(semiAngle);
-      const r = radius + v * sinA;
-      return {
-        x: r * (cosA * (cosT * refDirection.x + sinT * perp.x) - sinA * axis.direction.x),
-        y: r * (cosA * (cosT * refDirection.y + sinT * perp.y) - sinA * axis.direction.y),
-        z: r * (cosA * (cosT * refDirection.z + sinT * perp.z) - sinA * axis.direction.z),
-      };
-    }
-    default:
-      return null;
-  }
+function jacobianNormal(surface: Surface, u: number, v: number): Pt {
+  const adapter = toAdapter(surface);
+  const eps = 1e-7;
+
+  // Central finite differences for ∂P/∂u
+  const pUp = adapter.evaluate(u + eps, v);
+  const pUm = adapter.evaluate(u - eps, v);
+  const dPdu = {
+    x: (pUp.x - pUm.x) / (2 * eps),
+    y: (pUp.y - pUm.y) / (2 * eps),
+    z: (pUp.z - pUm.z) / (2 * eps),
+  };
+
+  // Central finite differences for ∂P/∂v
+  const pVp = adapter.evaluate(u, v + eps);
+  const pVm = adapter.evaluate(u, v - eps);
+  const dPdv = {
+    x: (pVp.x - pVm.x) / (2 * eps),
+    y: (pVp.y - pVm.y) / (2 * eps),
+    z: (pVp.z - pVm.z) / (2 * eps),
+  };
+
+  // Cross product ∂P/∂u × ∂P/∂v
+  return {
+    x: dPdu.y * dPdv.z - dPdu.z * dPdv.y,
+    y: dPdu.z * dPdv.x - dPdu.x * dPdv.z,
+    z: dPdu.x * dPdv.y - dPdu.y * dPdv.x,
+  };
 }
 
 /**
  * Evaluate a surface at (u, v) parameters.
+ * Delegates to the SurfaceAdapter.
  */
-function evaluateSurface(surface: Surface, u: number, v: number): Pt | null {
-  switch (surface.type) {
-    case 'sphere':
-      return evaluateSphericalSurface(surface, u, v);
-    case 'cylinder':
-      return evaluateCylindricalSurface(surface, u, v);
-    case 'cone':
-      return evaluateConicalSurface(surface, u, v);
-    default:
-      return null;
-  }
+function evaluateSurface(surface: Surface, u: number, v: number): Pt {
+  return toAdapter(surface).evaluate(u, v);
 }
 
 /**
  * Project a 3D point to surface UV parameters.
+ * Delegates to the SurfaceAdapter.
  */
-function projectPointToSurface(surface: Surface, pt: Pt): { u: number; v: number } | null {
-  switch (surface.type) {
-    case 'sphere':
-      return projectToSphericalSurface(surface, pt as Point3D);
-    case 'cylinder':
-      return projectToCylindricalSurface(surface, pt as Point3D);
-    case 'cone':
-      return projectToConicalSurface(surface, pt as Point3D);
-    default:
-      return null;
-  }
+function projectPointToSurface(surface: Surface, pt: Pt): { u: number; v: number } {
+  return toAdapter(surface).projectPoint(pt as Point3D);
 }
 
 /**

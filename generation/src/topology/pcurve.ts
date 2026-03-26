@@ -8,15 +8,7 @@ import type { Line2D } from '../geometry/line2d';
 import type { Arc2D } from '../geometry/arc2d';
 import type { Circle2D } from '../geometry/circle2d';
 import { Surface } from './face';
-import {
-  evaluatePlaneSurface, projectToPlaneSurface,
-  evaluateCylindricalSurface, projectToCylindricalSurface,
-  evaluateSphericalSurface, projectToSphericalSurface,
-  evaluateConicalSurface, projectToConicalSurface,
-  evaluateToroidalSurface,
-  evaluateRevolutionSurface,
-  evaluateExtrusionSurface,
-} from '../surfaces';
+import { toAdapter } from '../surfaces/surface-adapter';
 
 /**
  * A parametric curve on a surface — the 2D representation of a 3D edge
@@ -70,24 +62,7 @@ function evaluateCurve2D(curve: Curve2D, t: number): { x: number; y: number } {
  */
 export function evaluatePCurve3D(pcurve: PCurve, t: number): Point3D {
   const uv = evaluateCurve2D(pcurve.curve2d, t);
-  const { surface } = pcurve;
-
-  switch (surface.type) {
-    case 'plane':
-      return evaluatePlaneSurface(surface, uv.x, uv.y);
-    case 'cylinder':
-      return evaluateCylindricalSurface(surface, uv.x, uv.y);
-    case 'sphere':
-      return evaluateSphericalSurface(surface, uv.x, uv.y);
-    case 'cone':
-      return evaluateConicalSurface(surface, uv.x, uv.y);
-    case 'torus':
-      return evaluateToroidalSurface(surface, uv.x, uv.y);
-    case 'revolution':
-      return evaluateRevolutionSurface(surface, uv.x, uv.y);
-    case 'extrusion':
-      return evaluateExtrusionSurface(surface, uv.x, uv.y);
-  }
+  return toAdapter(pcurve.surface).evaluate(uv.x, uv.y);
 }
 
 /**
@@ -98,19 +73,7 @@ export function evaluatePCurve3D(pcurve: PCurve, t: number): Point3D {
  * @returns UV parameters
  */
 function projectToSurface(surface: Surface, point: Point3D): { u: number; v: number } {
-  switch (surface.type) {
-    case 'plane':
-      return projectToPlaneSurface(surface, point);
-    case 'cylinder':
-      return projectToCylindricalSurface(surface, point);
-    case 'sphere':
-      return projectToSphericalSurface(surface, point);
-    case 'cone':
-      return projectToConicalSurface(surface, point);
-    default:
-      // For torus, revolution, extrusion — not yet needed for Phase 13 scope
-      throw new Error(`projectToSurface not implemented for surface type: ${surface.type}`);
-  }
+  return toAdapter(surface).projectPoint(point);
 }
 
 /**
@@ -156,18 +119,19 @@ function buildPCurveForCircle(circle: PlaneCircleIntersection, surface: Surface)
   // Sample the circle at θ=0 and θ=π to get two representative UV points
   // Then determine the curve type based on the surface
 
-  if (surface.type === 'plane') {
-    // Circle on plane → Circle2D in (u, v) space
-    const centerUV = projectToPlaneSurface(surface, circle.center);
+  const adapter = toAdapter(surface);
+  const centerUV = adapter.projectPoint(circle.center);
+
+  if (!adapter.isUPeriodic) {
+    // Non-periodic surface (plane): circle remains a Circle2D in UV space
     const circle2d = makeCircle2D({ x: centerUV.u, y: centerUV.v }, circle.radius);
     if (!circle2d.result) return null;
     return circle2d.result;
   }
 
-  // For curved surfaces (cylinder, sphere, cone): a circle of constant
+  // For periodic surfaces (cylinder, sphere, cone): a circle of constant
   // latitude/height maps to a horizontal line in (θ, v) parameter space.
   // The line goes from θ=0 to θ=2π at constant v.
-  const centerUV = projectToSurface(surface, circle.center);
 
   // The PCurve is a line in parameter space from (0, v) to (2π, v)
   // where v is the constant parameter (height for cylinder, latitude for sphere, etc.)

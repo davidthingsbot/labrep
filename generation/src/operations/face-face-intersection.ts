@@ -24,10 +24,7 @@ import {
   intersectPlanePlane, intersectPlaneSphere, intersectPlaneCylinder, intersectPlaneCone,
   PlaneCircleIntersection,
 } from '../geometry/intersections3d';
-import { evaluatePlaneSurface, projectToPlaneSurface } from '../surfaces/plane-surface';
-import { projectToSphericalSurface } from '../surfaces/spherical-surface';
-import { projectToCylindricalSurface } from '../surfaces/cylindrical-surface';
-import { projectToConicalSurface } from '../surfaces/conical-surface';
+import { toAdapter } from '../surfaces/surface-adapter';
 import type { SphericalSurface } from '../surfaces/spherical-surface';
 import type { CylindricalSurface } from '../surfaces/cylindrical-surface';
 import type { ConicalSurface } from '../surfaces/conical-surface';
@@ -79,13 +76,7 @@ function isNaturalRestriction(face: Face): boolean {
 type UVPoly = { u: number; v: number }[];
 
 function projectToSurface(surf: Surface, pt: Point3D): { u: number; v: number } | null {
-  switch (surf.type) {
-    case 'plane': return projectToPlaneSurface(surf, pt);
-    case 'sphere': return projectToSphericalSurface(surf, pt);
-    case 'cylinder': return projectToCylindricalSurface(surf, pt);
-    case 'cone': return projectToConicalSurface(surf, pt);
-    default: return null;
-  }
+  return toAdapter(surf).projectPoint(pt);
 }
 
 /**

@@ -29,9 +29,7 @@ import { Face, Surface, makeFace, makePlanarFace } from '../topology/face';
 import { Shell, makeShell, shellFaces } from '../topology/shell';
 import { Solid, makeSolid, solidVolume } from '../topology/solid';
 import { PlaneSurface, makePlaneSurface } from '../surfaces';
-import { evaluateSphericalSurface, projectToSphericalSurface } from '../surfaces/spherical-surface';
-import { evaluateCylindricalSurface, projectToCylindricalSurface } from '../surfaces/cylindrical-surface';
-import { evaluateConicalSurface, projectToConicalSurface } from '../surfaces/conical-surface';
+import { toAdapter } from '../surfaces/surface-adapter';
 import { pointInSolid } from './point-in-solid';
 import { intersectFaceFace } from './face-face-intersection';
 import { builderFace } from './builder-face';
@@ -395,22 +393,12 @@ function coplanarSameNormal(faceA: Face, faceB: Face): boolean {
 
 /** Evaluate a surface at (u,v). */
 function evalSurfaceLocal(s: Surface, u: number, v: number): Point3D | null {
-  switch (s.type) {
-    case 'sphere': return evaluateSphericalSurface(s, u, v);
-    case 'cylinder': return evaluateCylindricalSurface(s, u, v);
-    case 'cone': return evaluateConicalSurface(s, u, v);
-    default: return null;
-  }
+  return toAdapter(s).evaluate(u, v);
 }
 
 /** Project a 3D point to surface UV. */
 function projectToSurfaceLocal(s: Surface, pt: Point3D): { u: number; v: number } | null {
-  switch (s.type) {
-    case 'sphere': return projectToSphericalSurface(s, pt);
-    case 'cylinder': return projectToCylindricalSurface(s, pt);
-    case 'cone': return projectToConicalSurface(s, pt);
-    default: return null;
-  }
+  return toAdapter(s).projectPoint(pt);
 }
 
 /**
@@ -501,24 +489,10 @@ function classifySubFace(
       edgeDir = vec3d(wEnd.x - wStart.x, wEnd.y - wStart.y, wEnd.z - wStart.z);
     }
 
-    // Face normal
-    let faceNormal: { x: number; y: number; z: number } | null = null;
-    if (face.surface.type === 'plane') {
-      faceNormal = face.surface.plane.normal;
-    } else if (face.surface.type === 'sphere') {
-      const s = face.surface;
-      const dx = mid.x - s.center.x, dy = mid.y - s.center.y, dz = mid.z - s.center.z;
-      const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-      if (len > 1e-10) faceNormal = { x: dx / len, y: dy / len, z: dz / len };
-    } else if (face.surface.type === 'cylinder') {
-      const s = face.surface;
-      const rel = { x: mid.x - s.axis.origin.x, y: mid.y - s.axis.origin.y, z: mid.z - s.axis.origin.z };
-      const axComp = rel.x * s.axis.direction.x + rel.y * s.axis.direction.y + rel.z * s.axis.direction.z;
-      const radial = { x: rel.x - axComp * s.axis.direction.x, y: rel.y - axComp * s.axis.direction.y, z: rel.z - axComp * s.axis.direction.z };
-      const rLen = Math.sqrt(radial.x ** 2 + radial.y ** 2 + radial.z ** 2);
-      if (rLen > 1e-10) faceNormal = { x: radial.x / rLen, y: radial.y / rLen, z: radial.z / rLen };
-    }
-    if (!faceNormal) continue;
+    // Face normal via SurfaceAdapter — works for any surface type
+    const adapter = toAdapter(face.surface);
+    const uv = adapter.projectPoint(mid);
+    const faceNormal = adapter.normal(uv.u, uv.v);
 
     // Binormal = face_normal × edge_direction → perpendicular to edge, in face plane
     // This points to one side of the edge (into the sub-face or away from it).
@@ -730,32 +704,17 @@ function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on
   }
 
   // Nudge slightly along face normal to avoid "on" classification
-  let normal: { x: number; y: number; z: number } | null = null;
-  if (face.surface.type === 'plane') {
-    normal = face.surface.plane.normal;
-  } else if (face.surface.type === 'sphere') {
-    const s = face.surface;
-    const dx = centroid.x - s.center.x, dy = centroid.y - s.center.y, dz = centroid.z - s.center.z;
-    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (len > 1e-10) normal = { x: dx / len, y: dy / len, z: dz / len };
-  } else if (face.surface.type === 'cylinder') {
-    const s = face.surface;
-    const rel = { x: centroid.x - s.axis.origin.x, y: centroid.y - s.axis.origin.y, z: centroid.z - s.axis.origin.z };
-    const axComp = rel.x * s.axis.direction.x + rel.y * s.axis.direction.y + rel.z * s.axis.direction.z;
-    const radial = { x: rel.x - axComp * s.axis.direction.x, y: rel.y - axComp * s.axis.direction.y, z: rel.z - axComp * s.axis.direction.z };
-    const rLen = Math.sqrt(radial.x ** 2 + radial.y ** 2 + radial.z ** 2);
-    if (rLen > 1e-10) normal = { x: radial.x / rLen, y: radial.y / rLen, z: radial.z / rLen };
-  }
+  const classifyAdapter = toAdapter(face.surface);
+  const classifyUV = classifyAdapter.projectPoint(centroid);
+  const normal = classifyAdapter.normal(classifyUV.u, classifyUV.v);
 
-  if (normal) {
-    const nudged = point3d(
-      centroid.x + normal.x * 1e-6,
-      centroid.y + normal.y * 1e-6,
-      centroid.z + normal.z * 1e-6,
-    );
-    const result = pointInSolid(nudged, otherSolid);
-    if (result !== 'on') return result;
-  }
+  const nudged = point3d(
+    centroid.x + normal.x * 1e-6,
+    centroid.y + normal.y * 1e-6,
+    centroid.z + normal.z * 1e-6,
+  );
+  const result = pointInSolid(nudged, otherSolid);
+  if (result !== 'on') return result;
 
   return pointInSolid(centroid, otherSolid);
 }

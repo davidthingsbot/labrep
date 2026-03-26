@@ -17,10 +17,7 @@ import {
   Point3D, point3d, Vector3D, vec3d,
   dot, cross, normalize, distance, subtractPoints,
 } from '../core';
-import { evaluatePlaneSurface, normalPlaneSurface, projectToPlaneSurface, PlaneSurface } from '../surfaces/plane-surface';
-import { evaluateSphericalSurface, normalSphericalSurface, projectToSphericalSurface, SphericalSurface } from '../surfaces/spherical-surface';
-import { evaluateCylindricalSurface, normalCylindricalSurface, projectToCylindricalSurface, CylindricalSurface } from '../surfaces/cylindrical-surface';
-import { evaluateConicalSurface, normalConicalSurface, projectToConicalSurface, ConicalSurface } from '../surfaces/conical-surface';
+import { toAdapter } from '../surfaces/surface-adapter';
 import type { Surface } from '../topology/face';
 
 // ═══════════════════════════════════════════════
@@ -68,48 +65,34 @@ export interface SSIResult {
 // ═══════════════════════════════════════════════
 
 function evalSurface(s: Surface, u: number, v: number): Point3D | null {
-  switch (s.type) {
-    case 'plane': return evaluatePlaneSurface(s, u, v);
-    case 'sphere': return evaluateSphericalSurface(s, u, v);
-    case 'cylinder': return evaluateCylindricalSurface(s, u, v);
-    case 'cone': return evaluateConicalSurface(s, u, v);
-    default: return null;
-  }
+  const adapter = toAdapter(s);
+  return adapter.evaluate(u, v);
 }
 
 function normalSurface(s: Surface, u: number, v: number): Vector3D | null {
-  switch (s.type) {
-    case 'plane': return normalPlaneSurface(s, u, v);
-    case 'sphere': return normalSphericalSurface(s, u, v);
-    case 'cylinder': return normalCylindricalSurface(s, u, v);
-    case 'cone': return normalConicalSurface(s, u, v);
-    default: return null;
-  }
+  const adapter = toAdapter(s);
+  return adapter.normal(u, v);
 }
 
 function projectToSurface(s: Surface, pt: Point3D): { u: number; v: number } | null {
-  switch (s.type) {
-    case 'plane': return projectToPlaneSurface(s, pt);
-    case 'sphere': return projectToSphericalSurface(s, pt);
-    case 'cylinder': return projectToCylindricalSurface(s, pt);
-    case 'cone': return projectToConicalSurface(s, pt);
-    default: return null;
-  }
+  const adapter = toAdapter(s);
+  return adapter.projectPoint(pt);
 }
 
-/** Get the natural UV bounds for a surface. */
+/** Get the natural UV bounds for a surface, clamped to a practical search range for SSI. */
 function surfaceBounds(s: Surface): { uMin: number; uMax: number; vMin: number; vMax: number } {
-  switch (s.type) {
-    case 'plane':
-      return { uMin: -100, uMax: 100, vMin: -100, vMax: 100 };
-    case 'sphere':
-      return { uMin: -Math.PI, uMax: Math.PI, vMin: -Math.PI / 2, vMax: Math.PI / 2 };
-    case 'cylinder':
-    case 'cone':
-      return { uMin: -Math.PI, uMax: Math.PI, vMin: -20, vMax: 20 };
-    default:
-      return { uMin: -Math.PI, uMax: Math.PI, vMin: -Math.PI, vMax: Math.PI };
-  }
+  const adapter = toAdapter(s);
+  const b = adapter.uvBounds();
+  // The adapter returns mathematical bounds (e.g. ±1e6 for infinite surfaces).
+  // For SSI grid sampling we need a finite practical range so the SEED_GRID
+  // resolution produces cells small enough to detect intersections.
+  const MAX = 20;
+  return {
+    uMin: Math.max(b.uMin, -MAX),
+    uMax: Math.min(b.uMax, MAX),
+    vMin: Math.max(b.vMin, -MAX),
+    vMax: Math.min(b.vMax, MAX),
+  };
 }
 
 // ═══════════════════════════════════════════════

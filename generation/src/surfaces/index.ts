@@ -54,3 +54,5 @@ export {
   normalRevolutionSurface,
   canonicalizeRevolutionSurface,
 } from './revolution-surface';
+
+export { type SurfaceAdapter, toAdapter } from './surface-adapter';
