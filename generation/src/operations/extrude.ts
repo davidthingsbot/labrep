@@ -577,11 +577,13 @@ function generateSideFaceOriented(
     const botPC = buildPCurveForEdgeOnSurface(edge, surface, forward, 0);
     if (botPC) addPCurveToEdge(edge, botPC);
 
-    // Seam: two PCurves (right at U=uPeriod, left at U=0)
-    const seamFwdPC = makeLine2D({ x: uPeriod, y: v0 }, { x: uPeriod, y: v1 });
-    if (seamFwdPC.result) addPCurveToEdge(seamEdge, makePCurve(seamFwdPC.result, surface));
-    const seamRevPC = makeLine2D({ x: 0, y: v1 }, { x: 0, y: v0 });
-    if (seamRevPC.result) addPCurveToEdge(seamEdge, makePCurve(seamRevPC.result, surface));
+    // Seam: two PCurves (occurrence 0 at U=uPeriod, occurrence 1 at U=0)
+    // Both PCurves go in edge geometric direction (V=v0→v1), per convention.
+    // Wire traversal direction is handled by getEdgeUV's forward flag.
+    const seamPC0 = makeLine2D({ x: uPeriod, y: v0 }, { x: uPeriod, y: v1 });
+    if (seamPC0.result) addPCurveToEdge(seamEdge, makePCurve(seamPC0.result, surface));
+    const seamPC1 = makeLine2D({ x: 0, y: v0 }, { x: 0, y: v1 });
+    if (seamPC1.result) addPCurveToEdge(seamEdge, makePCurve(seamPC1.result, surface));
 
     // Top circle PCurve
     const topPC = buildPCurveForEdgeOnSurface(topEdge, surface, !forward, 0);

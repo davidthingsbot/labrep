@@ -229,7 +229,15 @@ function classifyCoplanarSubFace(
 function edgeLiesOnFaceBoundary(edge: Edge, face: Face): boolean {
   const eStart = edgeStartPoint(edge);
   const eEnd = edgeEndPoint(edge);
-  const eMid = point3d((eStart.x + eEnd.x) / 2, (eStart.y + eEnd.y) / 2, (eStart.z + eEnd.z) / 2);
+  // For closed curves (circles), start==end so their average is the start point,
+  // which often lies on a seam edge. Use the actual curve midpoint instead.
+  let eMid: Point3D;
+  if (edge.curve.isClosed) {
+    const midT = (edge.curve.startParam + edge.curve.endParam) / 2;
+    eMid = evaluateCurveAt(edge.curve, midT) || eStart;
+  } else {
+    eMid = point3d((eStart.x + eEnd.x) / 2, (eStart.y + eEnd.y) / 2, (eStart.z + eEnd.z) / 2);
+  }
   const tol = 1e-5;
 
   for (const oe of face.outerWire.edges) {

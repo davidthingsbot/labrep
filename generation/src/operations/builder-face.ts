@@ -244,6 +244,7 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   const boundaryHalfEdges: HalfEdge[] = [];
   const outerWire = faceOuterWire(face);
   const edgeSeen = new Map<Edge, number>();
+  let prevEndUV: Pt2 | null = null; // Track previous edge's UV end for continuity
 
   for (const oe of outerWire.edges) {
     const eStart = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
@@ -252,9 +253,23 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     const occurrence = edgeSeen.get(oe.edge) || 0;
     edgeSeen.set(oe.edge, occurrence + 1);
 
-    const { start: edgeStartUV, end: edgeEndUV } = getBoundaryEdgeUV(
+    let { start: edgeStartUV, end: edgeEndUV } = getBoundaryEdgeUV(
       oe.edge, surface, adapter, oe.forward, occurrence, eStart, eEnd,
     );
+
+    // On periodic surfaces, ensure UV continuity with the previous edge.
+    // The seam creates a UV discontinuity: one edge ends at u≈2π, the next
+    // starts at u≈0. Shift the current edge's UV to match the previous end.
+    if (periodic && prevEndUV) {
+      const period = adapter.uPeriod;
+      const du = edgeStartUV.x - prevEndUV.x;
+      if (Math.abs(du) > period / 2) {
+        const shift = du > 0 ? -period : period;
+        edgeStartUV = { x: edgeStartUV.x + shift, y: edgeStartUV.y };
+        edgeEndUV = { x: edgeEndUV.x + shift, y: edgeEndUV.y };
+      }
+    }
+    prevEndUV = edgeEndUV;
 
     // Find intersection endpoints on this boundary edge
     const hitsOnEdge: { pt3d: Point3D; t: number }[] = [];
