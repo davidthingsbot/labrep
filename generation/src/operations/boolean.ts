@@ -847,7 +847,10 @@ export function booleanOperation(
             // Partial overlap — register as coplanar and add edges for BuilderFace
             if (!coplanarA.has(faceA)) coplanarA.set(faceA, { partner: faceB, sameNormal: true });
             if (!coplanarB.has(faceB)) coplanarB.set(faceB, { partner: faceA, sameNormal: true });
-            if (edgesForA.length > 0) {
+            // For union: keep A's face whole (as 'on'), only split B's face
+            // to extract its L-shape. Splitting A would create internal edges
+            // with no matching partners (internal walls are discarded for union).
+            if (op !== 'union' && edgesForA.length > 0) {
               if (!edgesOnA.has(faceA)) edgesOnA.set(faceA, []);
               edgesOnA.get(faceA)!.push(...edgesForA);
             }
@@ -994,6 +997,7 @@ export function booleanOperation(
     }
   }
 
+  console.log(`[DBG] ${op}: selA=${facesFromA.length} selB=${facesFromB.length} clsA=[${allFacesA.map(f=>f.classification)}] clsB=[${allFacesB.map(f=>f.classification)}]`);
   if (selectedFaces.length < 2) {
     return failure(`Boolean ${op} produced only ${selectedFaces.length} faces (A:${allFacesA.length} [${allFacesA.map(f=>f.classification)}], B:${allFacesB.length} [${allFacesB.map(f=>f.classification)}]) — result is degenerate`);
   }
@@ -1032,6 +1036,39 @@ export function booleanOperation(
       if (dirs.length !== 2 || dirs[0] === dirs[1])
         bad.push(`${key} x${dirs.length} ${dirs.join(' / ')}`);
     }
+    // Quick edge diagnostic
+    const T = 1e-7;
+    const R = (n: number) => Math.round(n / T) * T;
+    const em = new Map<string, string[]>();
+    for (const f of stitched) {
+      for (const oe of f.outerWire.edges) {
+        const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+        const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+        const k1 = `${R(s.x)},${R(s.y)},${R(s.z)}`;
+        const k2 = `${R(e.x)},${R(e.y)},${R(e.z)}`;
+        const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+        const dir = `${k1}->${k2}`;
+        if (!em.has(key)) em.set(key, []);
+        em.get(key)!.push(dir);
+      }
+      for (const iw of f.innerWires) {
+        for (const oe of iw.edges) {
+          const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+          const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+          const k1 = `${R(s.x)},${R(s.y)},${R(s.z)}`;
+          const k2 = `${R(e.x)},${R(e.y)},${R(e.z)}`;
+          const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+          const dir = `${k1}->${k2}`;
+          if (!em.has(key)) em.set(key, []);
+          em.get(key)!.push(dir);
+        }
+      }
+    }
+    for (const [key, dirs] of em) {
+      if (dirs.length !== 2 || dirs[0] === dirs[1])
+        console.log(`[BAD] ${key} x${dirs.length} [${dirs.join(' | ')}]`);
+    }
+    console.log(`[STITCH] iw=${stitched.map(f=>f.innerWires.length)}`);
     return failure(`Solid creation failed (shell not closed): ${solidResult.error}`);
   }
 
