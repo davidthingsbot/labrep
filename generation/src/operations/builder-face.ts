@@ -401,17 +401,6 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     he.angleAtEnd = tangentAngle(he, false, surface, adapter);
   }
 
-  // DEBUG
-  console.log(`[BF] vertices: ${vertices.length}, halfEdges: ${allHalfEdges.length} (bnd=${boundaryHalfEdges.length} int=${intHalfEdges.length})`);
-  for (let i = 0; i < vertices.length; i++) {
-    const v = vertices[i];
-    const uv = vertices2D[i];
-    console.log(`  V${i}: (${v.x.toFixed(2)},${v.y.toFixed(2)},${v.z.toFixed(2)}) UV(${uv.x.toFixed(2)},${uv.y.toFixed(2)})`);
-  }
-  for (const he of allHalfEdges) {
-    console.log(`  HE: V${he.startVtx}→V${he.endVtx} ${he.edge.curve.type} fwd=${he.forward} bnd=${he.isBoundary} aS=${he.angleAtStart.toFixed(2)} aE=${he.angleAtEnd.toFixed(2)}`);
-  }
-
   // ── Build vertex → outgoing map ──
   const outgoing: Map<number, HalfEdge[]> = new Map();
   for (const he of allHalfEdges) {
