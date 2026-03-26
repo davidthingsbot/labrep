@@ -433,20 +433,20 @@ export function generateSideFace(
 
     // Bottom circle (fwd): horizontal line at V=v0, U goes 0..2π
     const botPC = buildPCurveForEdgeOnSurface(edge, surface, true, 0);
-    if (botPC) edge = addPCurveToEdge(edge, botPC);
+    if (botPC) addPCurveToEdge(edge, botPC);
 
     // Seam edge gets TWO PCurves (right side at U=2π, left side at U=0)
     // OCCT ref: BRep_Builder::UpdateEdge(E, C1, C2, S, tol) for seam edges
     // Right side (fwd traversal: bottom→top): U=uPeriod, V goes v0..v1
     const seamFwdPC = makeLine2D({ x: uPeriod, y: v0 }, { x: uPeriod, y: v1 });
-    if (seamFwdPC.result) seamEdge = addPCurveToEdge(seamEdge, makePCurve(seamFwdPC.result, surface));
+    if (seamFwdPC.result) addPCurveToEdge(seamEdge, makePCurve(seamFwdPC.result, surface));
     // Left side (rev traversal: top→bottom): U=0, V goes v1..v0
     const seamRevPC = makeLine2D({ x: 0, y: v1 }, { x: 0, y: v0 });
-    if (seamRevPC.result) seamEdge = addPCurveToEdge(seamEdge, makePCurve(seamRevPC.result, surface));
+    if (seamRevPC.result) addPCurveToEdge(seamEdge, makePCurve(seamRevPC.result, surface));
 
     // Top circle (rev): horizontal line at V=v1, U goes 2π..0
     const topPC = buildPCurveForEdgeOnSurface(topEdge, surface, false, 0);
-    if (topPC) topEdge = addPCurveToEdge(topEdge, topPC);
+    if (topPC) addPCurveToEdge(topEdge, topPC);
 
     const wireEdges: OrientedEdge[] = [
       orientEdge(edge, true),
@@ -489,19 +489,19 @@ export function generateSideFace(
 
   // Bottom edge (fwd): U=u0..u1 at V=v0
   const botPC = makeLine2D({ x: u0, y: v0 }, { x: u1, y: v0 });
-  if (botPC.result) edge = addPCurveToEdge(edge, makePCurve(botPC.result, surface));
+  if (botPC.result) addPCurveToEdge(edge, makePCurve(botPC.result, surface));
 
   // Right vertical (fwd): U=u1, V=v0..v1
   const rightPC = makeLine2D({ x: u1, y: v0 }, { x: u1, y: v1 });
-  if (rightPC.result) rightEdge = addPCurveToEdge(rightEdge, makePCurve(rightPC.result, surface));
+  if (rightPC.result) addPCurveToEdge(rightEdge, makePCurve(rightPC.result, surface));
 
   // Top edge (rev in wire): U=u1..u0 at V=v1
   const topPC = makeLine2D({ x: u1, y: v1 }, { x: u0, y: v1 });
-  if (topPC.result) topEdge = addPCurveToEdge(topEdge, makePCurve(topPC.result, surface));
+  if (topPC.result) addPCurveToEdge(topEdge, makePCurve(topPC.result, surface));
 
   // Left vertical (rev in wire): U=u0, V=v1..v0
   const leftPC = makeLine2D({ x: u0, y: v1 }, { x: u0, y: v0 });
-  if (leftPC.result) leftEdge = addPCurveToEdge(leftEdge, makePCurve(leftPC.result, surface));
+  if (leftPC.result) addPCurveToEdge(leftEdge, makePCurve(leftPC.result, surface));
 
   const wireEdges: OrientedEdge[] = [
     orientEdge(edge, true),
@@ -575,17 +575,17 @@ function generateSideFaceOriented(
 
     // Bottom circle PCurve
     const botPC = buildPCurveForEdgeOnSurface(edge, surface, forward, 0);
-    if (botPC) edge = addPCurveToEdge(edge, botPC);
+    if (botPC) addPCurveToEdge(edge, botPC);
 
     // Seam: two PCurves (right at U=uPeriod, left at U=0)
     const seamFwdPC = makeLine2D({ x: uPeriod, y: v0 }, { x: uPeriod, y: v1 });
-    if (seamFwdPC.result) seamEdge = addPCurveToEdge(seamEdge, makePCurve(seamFwdPC.result, surface));
+    if (seamFwdPC.result) addPCurveToEdge(seamEdge, makePCurve(seamFwdPC.result, surface));
     const seamRevPC = makeLine2D({ x: 0, y: v1 }, { x: 0, y: v0 });
-    if (seamRevPC.result) seamEdge = addPCurveToEdge(seamEdge, makePCurve(seamRevPC.result, surface));
+    if (seamRevPC.result) addPCurveToEdge(seamEdge, makePCurve(seamRevPC.result, surface));
 
     // Top circle PCurve
     const topPC = buildPCurveForEdgeOnSurface(topEdge, surface, !forward, 0);
-    if (topPC) topEdge = addPCurveToEdge(topEdge, topPC);
+    if (topPC) addPCurveToEdge(topEdge, topPC);
 
     const wireEdges: OrientedEdge[] = [
       orientEdge(edge, forward),
@@ -627,19 +627,19 @@ function generateSideFaceOriented(
 
   // Bottom edge PCurve
   const botPC = makeLine2D({ x: u0, y: v0 }, { x: u1, y: v0 });
-  if (botPC.result) edge = addPCurveToEdge(edge, makePCurve(botPC.result, surface));
+  if (botPC.result) addPCurveToEdge(edge, makePCurve(botPC.result, surface));
 
   // Right vertical PCurve
   const rightPC = makeLine2D({ x: u1, y: v0 }, { x: u1, y: v1 });
-  if (rightPC.result) rightEdge = addPCurveToEdge(rightEdge, makePCurve(rightPC.result, surface));
+  if (rightPC.result) addPCurveToEdge(rightEdge, makePCurve(rightPC.result, surface));
 
   // Top edge PCurve (reversed in wire)
   const topPC = makeLine2D({ x: u1, y: v1 }, { x: u0, y: v1 });
-  if (topPC.result) topEdge = addPCurveToEdge(topEdge, makePCurve(topPC.result, surface));
+  if (topPC.result) addPCurveToEdge(topEdge, makePCurve(topPC.result, surface));
 
   // Left vertical PCurve (reversed in wire)
   const leftPC = makeLine2D({ x: u0, y: v1 }, { x: u0, y: v0 });
-  if (leftPC.result) leftEdge = addPCurveToEdge(leftEdge, makePCurve(leftPC.result, surface));
+  if (leftPC.result) addPCurveToEdge(leftEdge, makePCurve(leftPC.result, surface));
 
   const wireEdges: OrientedEdge[] = [
     orientEdge(edge, forward),

@@ -603,7 +603,30 @@ Handle(Geom_Circle) circle = new Geom_Circle(...);
 - Doesn't integrate with modern C++ memory management
 - Requires special macros in class definitions
 
-**Our approach:** Use standard TypeScript memory management. Immutable data structures where practical.
+**Our approach:** Use standard TypeScript memory management (garbage collection, no custom handles).
+
+### Mutability: Following OCCT's Shared Graph Model
+
+BRep topology is inherently a **shared mutable graph**: an edge belongs to multiple faces, a vertex is shared between edges, and operations like adding PCurves must be visible from all faces that reference the edge.
+
+OCCT models this with shared pointers and in-place mutation (`BRep_Builder::UpdateEdge` adds a PCurve to an existing edge — all faces sharing that edge see the change).
+
+Early labrep design used TypeScript `readonly` interfaces with immutable spread-copy patterns (`{...edge, pcurves: [...edge.pcurves, newPCurve]}`). This was a default "modern TypeScript" style choice, not an OCCT-informed decision. **It actively fights the BRep graph model:**
+
+- Adding a PCurve to an edge creates a NEW edge object
+- Faces holding the OLD edge don't see the PCurve
+- Shell closure breaks because side faces and cap faces reference different Edge objects
+- Cascading rebuilds needed: Edge → Wire → Face → Shell → Solid
+
+**Decision (2026-03-26): Mutable topology, immutable math.**
+
+| Layer | Mutable? | Why |
+|-------|----------|-----|
+| Math primitives (Point3D, Vector3D, Plane, Transform) | **Immutable** | Value types. Sharing is safe. No graph relationships. |
+| 2D/3D Curves (Line3D, Circle3D, Arc3D) | **Immutable** | Value types. Parameterized geometry doesn't change. |
+| Topology (Edge, Wire, Face, Shell, Solid) | **Mutable** | Graph nodes. Shared references. PCurves/tolerances added incrementally. |
+
+This matches OCCT exactly: `gp_Pnt` (point) is a value type copied freely, while `TopoDS_Edge` is a handle to mutable shared state.
 
 ### Naming Conventions
 

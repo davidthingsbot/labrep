@@ -177,7 +177,7 @@ describe('Edge', () => {
       expect(edge.pcurves).toEqual([]);
     });
 
-    it('addPCurveToEdge appends a PCurve', () => {
+    it('addPCurveToEdge mutates edge in place', () => {
       const line3d = makeLine3D(point3d(0, 0, 0), point3d(1, 0, 0)).result!;
       const edge = makeEdgeFromCurve(line3d).result!;
 
@@ -185,11 +185,11 @@ describe('Edge', () => {
       const line2d = makeLine2D({ x: 0, y: 0 }, { x: 1, y: 0 }).result!;
       const pcurve = makePCurve(line2d, surface);
 
-      const edgeWithPC = addPCurveToEdge(edge, pcurve);
-      expect(edgeWithPC.pcurves).toHaveLength(1);
-      expect(edgeWithPC.pcurves[0]).toBe(pcurve);
-      // Original edge unchanged
       expect(edge.pcurves).toHaveLength(0);
+      addPCurveToEdge(edge, pcurve);
+      // Edge is mutated in place (OCCT BRep_Builder::UpdateEdge pattern)
+      expect(edge.pcurves).toHaveLength(1);
+      expect(edge.pcurves[0]).toBe(pcurve);
     });
 
     it('addPCurveToEdge can add multiple PCurves', () => {
@@ -201,27 +201,28 @@ describe('Edge', () => {
       const pc1 = makePCurve(line2d, surface);
       const pc2 = makePCurve(line2d, surface);
 
-      const edge1 = addPCurveToEdge(edge, pc1);
-      const edge2 = addPCurveToEdge(edge1, pc2);
-      expect(edge2.pcurves).toHaveLength(2);
-      expect(edge2.pcurves[0]).toBe(pc1);
-      expect(edge2.pcurves[1]).toBe(pc2);
+      addPCurveToEdge(edge, pc1);
+      addPCurveToEdge(edge, pc2);
+      expect(edge.pcurves).toHaveLength(2);
+      expect(edge.pcurves[0]).toBe(pc1);
+      expect(edge.pcurves[1]).toBe(pc2);
     });
 
     it('addPCurveToEdge preserves all other edge fields', () => {
       const line3d = makeLine3D(point3d(0, 0, 0), point3d(1, 0, 0)).result!;
       const edge = makeEdgeFromCurve(line3d).result!;
+      const origCurve = edge.curve;
+      const origStart = edge.startVertex;
+      const origEnd = edge.endVertex;
 
       const surface = makePlaneSurface(XY_PLANE);
       const line2d = makeLine2D({ x: 0, y: 0 }, { x: 1, y: 0 }).result!;
       const pcurve = makePCurve(line2d, surface);
 
-      const edgeWithPC = addPCurveToEdge(edge, pcurve);
-      expect(edgeWithPC.curve).toBe(edge.curve);
-      expect(edgeWithPC.startVertex).toBe(edge.startVertex);
-      expect(edgeWithPC.endVertex).toBe(edge.endVertex);
-      expect(edgeWithPC.startParam).toBe(edge.startParam);
-      expect(edgeWithPC.endParam).toBe(edge.endParam);
+      addPCurveToEdge(edge, pcurve);
+      expect(edge.curve).toBe(origCurve);
+      expect(edge.startVertex).toBe(origStart);
+      expect(edge.endVertex).toBe(origEnd);
     });
   });
 });

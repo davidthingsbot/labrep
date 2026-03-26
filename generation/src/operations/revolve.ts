@@ -431,27 +431,25 @@ function generateFullRevolveFace(
   const TWO_PI = 2 * Math.PI;
 
   // Helper: attach seam PCurves to edge (two PCurves: left at U=0, right at U=2π)
-  function addSeamPCurves(e: Edge): Edge {
+  function addSeamPCurves(e: Edge): void {
     const leftPC = makeLine2D({ x: 0, y: vStart }, { x: 0, y: vEnd });
-    if (leftPC.result) e = addPCurveToEdge(e, makePCurve(leftPC.result, surface));
+    if (leftPC.result) addPCurveToEdge(e, makePCurve(leftPC.result, surface));
     const rightPC = makeLine2D({ x: TWO_PI, y: vEnd }, { x: TWO_PI, y: vStart });
-    if (rightPC.result) e = addPCurveToEdge(e, makePCurve(rightPC.result, surface));
-    return e;
+    if (rightPC.result) addPCurveToEdge(e, makePCurve(rightPC.result, surface));
   }
 
   // Helper: attach circle PCurve to edge
-  function addCirclePCurve(e: Edge, v: number, forward: boolean): Edge {
+  function addCirclePCurve(e: Edge, v: number, forward: boolean): void {
     const pc = forward
       ? makeLine2D({ x: 0, y: v }, { x: TWO_PI, y: v })
       : makeLine2D({ x: TWO_PI, y: v }, { x: 0, y: v });
-    if (pc.result) e = addPCurveToEdge(e, makePCurve(pc.result, surface));
-    return e;
+    if (pc.result) addPCurveToEdge(e, makePCurve(pc.result, surface));
   }
 
   if (startOnAxis && endOnAxis) {
     // Both poles on axis: "lens" face (sphere).
     // Wire: seam (forward) → seam (reversed)
-    edge = addSeamPCurves(edge);
+    addSeamPCurves(edge);
     wireEdges.push(
       orientEdge(edge, true),
       orientEdge(edge, false),
@@ -466,9 +464,9 @@ function generateFullRevolveFace(
     let endCircle = endCircleResult.result!;
     let startCircle = startCircleResult.result!;
 
-    edge = addSeamPCurves(edge);
-    endCircle = addCirclePCurve(endCircle, vEnd, true);
-    startCircle = addCirclePCurve(startCircle, vStart, false);
+    addSeamPCurves(edge);
+    addCirclePCurve(endCircle, vEnd, true);
+    addCirclePCurve(startCircle, vStart, false);
 
     wireEdges.push(
       orientEdge(edge, true),
@@ -484,8 +482,8 @@ function generateFullRevolveFace(
     }
     let endCircle = endCircleResult.result!;
 
-    edge = addSeamPCurves(edge);
-    endCircle = addCirclePCurve(endCircle, vEnd, true);
+    addSeamPCurves(edge);
+    addCirclePCurve(endCircle, vEnd, true);
 
     wireEdges.push(
       orientEdge(edge, true),
@@ -500,8 +498,8 @@ function generateFullRevolveFace(
     }
     let startCircle = startCircleResult.result!;
 
-    edge = addSeamPCurves(edge);
-    startCircle = addCirclePCurve(startCircle, vStart, false);
+    addSeamPCurves(edge);
+    addCirclePCurve(startCircle, vStart, false);
 
     wireEdges.push(
       orientEdge(edge, true),

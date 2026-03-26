@@ -37,11 +37,13 @@ export interface Edge {
 
   /**
    * PCurves — 2D representations of this edge in adjacent faces' parameter spaces.
-   * One per adjacent face. Empty for edges not yet associated with surfaces.
+   * Mutable: PCurves are added incrementally as the edge is associated with faces.
+   * The same Edge object is shared by multiple faces, so mutation is visible everywhere.
    *
-   * OCCT reference: BRep_TEdge stores a list of BRep_CurveRepresentation
+   * OCCT reference: BRep_TEdge stores a list of BRep_CurveRepresentation,
+   * modified in-place by BRep_Builder::UpdateEdge.
    */
-  readonly pcurves: readonly PCurve[];
+  pcurves: PCurve[];
 }
 
 /**
@@ -122,17 +124,14 @@ export function makeEdgeFromCurve(curve: Curve3D): OperationResult<Edge> {
 /**
  * Create a new edge with an additional PCurve appended.
  *
- * Returns a new edge — the original is not mutated.
+ * Mutates the edge in place — all faces sharing this edge see the change.
+ * This follows OCCT's BRep_Builder::UpdateEdge pattern.
  *
- * @param edge - The original edge
+ * @param edge - The edge to modify
  * @param pcurve - The PCurve to add
- * @returns A new Edge with the PCurve appended to its pcurves list
  */
-export function addPCurveToEdge(edge: Edge, pcurve: PCurve): Edge {
-  return {
-    ...edge,
-    pcurves: [...edge.pcurves, pcurve],
-  };
+export function addPCurveToEdge(edge: Edge, pcurve: PCurve): void {
+  edge.pcurves.push(pcurve);
 }
 
 /**

@@ -400,9 +400,9 @@ export function intersectFaceFace(faceA: Face, faceB: Face): FFIResult | null {
       if (edge) {
         // Attach PCurves on both surfaces
         const pcA = buildPCurveForEdgeOnSurface(edge, faceA.surface, true);
-        if (pcA) edge = addPCurveToEdge(edge, pcA);
+        if (pcA) addPCurveToEdge(edge, pcA);
         const pcB = buildPCurveForEdgeOnSurface(edge, faceB.surface, true);
-        if (pcB) edge = addPCurveToEdge(edge, pcB);
+        if (pcB) addPCurveToEdge(edge, pcB);
 
         edges.push({
           edge,
@@ -505,9 +505,9 @@ function analyticPlanePlane(faceA: Face, faceB: Face): FFIResult | null {
   // Attach PCurves on both plane surfaces
   // OCCT ref: GeomInt_IntSS::BuildPCurves
   const pcA = buildPCurveForEdgeOnSurface(edge, faceA.surface, true);
-  if (pcA) edge = addPCurveToEdge(edge, pcA);
+  if (pcA) addPCurveToEdge(edge, pcA);
   const pcB = buildPCurveForEdgeOnSurface(edge, faceB.surface, true);
-  if (pcB) edge = addPCurveToEdge(edge, pcB);
+  if (pcB) addPCurveToEdge(edge, pcB);
 
   const dummySSI: SSICurve = { points: [], isClosed: false };
   return {
@@ -662,9 +662,9 @@ function analyticPlaneCurved(planeFace: Face, curvedFace: Face): FFIResult | nul
     // Attach PCurves on both surfaces
     // OCCT ref: GeomInt_IntSS::BuildPCurves
     const pcPlane = buildPCurveForEdgeOnSurface(edge, planeFace.surface, true);
-    if (pcPlane) edge = addPCurveToEdge(edge, pcPlane);
+    if (pcPlane) addPCurveToEdge(edge, pcPlane);
     const pcCurved = buildPCurveForEdgeOnSurface(edge, curvedFace.surface, true);
-    if (pcCurved) edge = addPCurveToEdge(edge, pcCurved);
+    if (pcCurved) addPCurveToEdge(edge, pcCurved);
 
     const dummySSI: SSICurve = { points: [], isClosed: true };
     return {
@@ -686,9 +686,9 @@ function analyticPlaneCurved(planeFace: Face, curvedFace: Face): FFIResult | nul
   for (let arc of arcs) {
     // Attach PCurves on both surfaces
     const pcPlane = buildPCurveForEdgeOnSurface(arc, planeFace.surface, true);
-    if (pcPlane) arc = addPCurveToEdge(arc, pcPlane);
+    if (pcPlane) addPCurveToEdge(arc, pcPlane);
     const pcCurved = buildPCurveForEdgeOnSurface(arc, curvedFace.surface, true);
-    if (pcCurved) arc = addPCurveToEdge(arc, pcCurved);
+    if (pcCurved) addPCurveToEdge(arc, pcCurved);
     ffiEdges.push({ edge: arc, startIdx: 0, endIdx: 0, ssiCurve: dummySSI });
   }
   return { edges: ffiEdges };
