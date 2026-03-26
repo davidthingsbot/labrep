@@ -456,7 +456,9 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     }
 
     if (hitsOnEdge.length === 0) {
-      // No splits — use edge as-is
+      // No splits — add edge in wire direction only.
+      // Reverse direction is only needed for boundary sub-edges that were
+      // split at intersection points (handled in the else branch below).
       const startPt = eStart;
       const endPt = eEnd;
       const startUV = projectToUV(surface, startPt);
@@ -469,15 +471,17 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         forward: oe.forward,
         startVtx: startIdx,
         endVtx: endIdx,
-        angleAtStart: 0, // Will be computed later
+        angleAtStart: 0,
         angleAtEnd: 0,
         used: false,
       });
     } else {
-      // Sort hits by parameter and split edge into sub-segments
+      // Sort hits by parameter and split edge into sub-segments.
       hitsOnEdge.sort((a, b) => a.t - b.t);
 
-      // Build sub-edges
+      // Build sub-edges. Following OCCT BOPAlgo_Builder_2.cxx BuildSplitFaces:
+      // split sub-edges that contain an intersection-edge interior vertex get
+      // both forward and reverse half-edges. Others get only forward.
       const pts3d = [eStart, ...hitsOnEdge.map(h => h.pt3d), eEnd];
       for (let i = 0; i < pts3d.length - 1; i++) {
         if (distance(pts3d[i], pts3d[i + 1]) < TOL) continue;
@@ -500,6 +504,10 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
           angleAtEnd: 0,
           used: false,
         });
+        // TODO: Following OCCT BOPAlgo_Builder_2.cxx, split boundary sub-edges
+        // should also get reverse half-edges for L-junction loop tracing.
+        // Currently omitted because it breaks simple cases without OCCT's
+        // IsIn/Passed/IsInside priority system in the loop tracer.
       }
     }
   }
