@@ -14,7 +14,7 @@
  */
 import { Point3D, point3d, Vector3D, vec3d, Plane, plane, distance, dot, cross, normalize, length, worldToSketch } from '../core';
 import { Face, Surface } from '../topology/face';
-import { Edge, makeEdgeFromCurve, edgeStartPoint, edgeEndPoint, Curve3D } from '../topology/edge';
+import { Edge, makeEdgeFromCurve, edgeStartPoint, edgeEndPoint, Curve3D, addPCurveToEdge } from '../topology/edge';
 import { makeLine3D, evaluateLine3D } from '../geometry/line3d';
 import { makeCircle3D, evaluateCircle3D } from '../geometry/circle3d';
 import { makeArc3D, evaluateArc3D } from '../geometry/arc3d';
@@ -25,6 +25,8 @@ import {
   PlaneCircleIntersection,
 } from '../geometry/intersections3d';
 import { toAdapter } from '../surfaces/surface-adapter';
+import { makeLine2D } from '../geometry/line2d';
+import { makePCurve, buildPCurveForEdgeOnSurface } from '../topology/pcurve';
 import type { SphericalSurface } from '../surfaces/spherical-surface';
 import type { CylindricalSurface } from '../surfaces/cylindrical-surface';
 import type { ConicalSurface } from '../surfaces/conical-surface';
@@ -392,10 +394,16 @@ export function intersectFaceFace(faceA: Face, faceB: Face): FFIResult | null {
     // Intersect: keep only portions inside BOTH faces
     const survivingSegs = intersectSegments(segsA, segsB);
 
-    // Step 4: Build edges from surviving segments
+    // Step 4: Build edges from surviving segments with PCurves
     for (const seg of survivingSegs) {
-      const edge = buildEdgeFromSSISegment(ssiCurve, seg.startIdx, seg.endIdx);
+      let edge = buildEdgeFromSSISegment(ssiCurve, seg.startIdx, seg.endIdx);
       if (edge) {
+        // Attach PCurves on both surfaces
+        const pcA = buildPCurveForEdgeOnSurface(edge, faceA.surface, true);
+        if (pcA) edge = addPCurveToEdge(edge, pcA);
+        const pcB = buildPCurveForEdgeOnSurface(edge, faceB.surface, true);
+        if (pcB) edge = addPCurveToEdge(edge, pcB);
+
         edges.push({
           edge,
           startIdx: seg.startIdx,
@@ -490,13 +498,21 @@ function analyticPlanePlane(faceA: Face, faceB: Face): FFIResult | null {
 
   const lineEdgeResult = makeLine3D(startPt, endPt);
   if (!lineEdgeResult.success) return null;
-  const edgeResult = makeEdgeFromCurve(lineEdgeResult.result!);
+  let edgeResult = makeEdgeFromCurve(lineEdgeResult.result!);
   if (!edgeResult.success) return null;
+  let edge = edgeResult.result!;
+
+  // Attach PCurves on both plane surfaces
+  // OCCT ref: GeomInt_IntSS::BuildPCurves
+  const pcA = buildPCurveForEdgeOnSurface(edge, faceA.surface, true);
+  if (pcA) edge = addPCurveToEdge(edge, pcA);
+  const pcB = buildPCurveForEdgeOnSurface(edge, faceB.surface, true);
+  if (pcB) edge = addPCurveToEdge(edge, pcB);
 
   const dummySSI: SSICurve = { points: [], isClosed: false };
   return {
     edges: [{
-      edge: edgeResult.result!,
+      edge,
       startIdx: 0,
       endIdx: 0,
       ssiCurve: dummySSI,
@@ -638,14 +654,22 @@ function analyticPlaneCurved(planeFace: Face, curvedFace: Face): FFIResult | nul
 
 
   if (isFullyInsidePlane && isFullyInsideCurved) {
-    // Full circle inside both faces → Circle3D edge
+    // Full circle inside both faces → Circle3D edge with PCurves
     const edgeResult = makeEdgeFromCurve(circle3dResult.result!);
     if (!edgeResult.success) return null;
+    let edge = edgeResult.result!;
+
+    // Attach PCurves on both surfaces
+    // OCCT ref: GeomInt_IntSS::BuildPCurves
+    const pcPlane = buildPCurveForEdgeOnSurface(edge, planeFace.surface, true);
+    if (pcPlane) edge = addPCurveToEdge(edge, pcPlane);
+    const pcCurved = buildPCurveForEdgeOnSurface(edge, curvedFace.surface, true);
+    if (pcCurved) edge = addPCurveToEdge(edge, pcCurved);
 
     const dummySSI: SSICurve = { points: [], isClosed: true };
     return {
       edges: [{
-        edge: edgeResult.result!,
+        edge,
         startIdx: 0,
         endIdx: 0,
         ssiCurve: dummySSI,
@@ -653,13 +677,18 @@ function analyticPlaneCurved(planeFace: Face, curvedFace: Face): FFIResult | nul
     };
   }
 
-  // Partial circle: clip to face boundaries and create Arc3D edges
+  // Partial circle: clip to face boundaries and create Arc3D edges with PCurves
   const arcs = clipCircleToFaces(circleInfo, circlePlane, planeFace, curvedFace, pl);
   if (arcs.length === 0) return null;
 
   const ffiEdges: FFIEdge[] = [];
   const dummySSI: SSICurve = { points: [], isClosed: false };
-  for (const arc of arcs) {
+  for (let arc of arcs) {
+    // Attach PCurves on both surfaces
+    const pcPlane = buildPCurveForEdgeOnSurface(arc, planeFace.surface, true);
+    if (pcPlane) arc = addPCurveToEdge(arc, pcPlane);
+    const pcCurved = buildPCurveForEdgeOnSurface(arc, curvedFace.surface, true);
+    if (pcCurved) arc = addPCurveToEdge(arc, pcCurved);
     ffiEdges.push({ edge: arc, startIdx: 0, endIdx: 0, ssiCurve: dummySSI });
   }
   return { edges: ffiEdges };

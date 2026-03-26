@@ -43,6 +43,10 @@ import {
 import { Line3D, makeLine3D, evaluateLine3D } from '../geometry/line3d';
 import { Circle3D, makeCircle3D, evaluateCircle3D } from '../geometry/circle3d';
 import { Arc3D, makeArc3D, evaluateArc3D } from '../geometry/arc3d';
+import { makeLine2D } from '../geometry/line2d';
+import { toAdapter } from '../surfaces/surface-adapter';
+import { makePCurve } from '../topology/pcurve';
+import { addPCurveToEdge } from '../topology/edge';
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -406,54 +410,103 @@ function generateFullRevolveFace(
 ): OperationResult<Face | null> {
   const wireEdges: OrientedEdge[] = [];
 
+  // ── Compute UV layout for PCurves on revolution surface ──
+  // OCCT ref: BRepSweep_Rotation::SetDirectingPCurve, SetGeneratingPCurve
+  //
+  // Revolution surface S(θ, v) = rotate(basisCurve(v), axis, θ)
+  //   U = θ ∈ [0, 2π)  (revolution angle)
+  //   V = basis curve parameter
+  //
+  // Seam edge (profile): vertical line in UV
+  //   fwd:  (0, V_start) → (0, V_end)    — left side
+  //   rev:  (2π, V_end) → (2π, V_start)  — right side
+  //
+  // Circle edge at constant V: horizontal line in UV
+  //   fwd:  (0, V_const) → (2π, V_const)
+  //   rev:  (2π, V_const) → (0, V_const)
+
+  const adapter = toAdapter(surface);
+  const vStart = adapter.projectPoint(startPt).v;
+  const vEnd = adapter.projectPoint(endPt).v;
+  const TWO_PI = 2 * Math.PI;
+
+  // Helper: attach seam PCurves to edge (two PCurves: left at U=0, right at U=2π)
+  function addSeamPCurves(e: Edge): Edge {
+    const leftPC = makeLine2D({ x: 0, y: vStart }, { x: 0, y: vEnd });
+    if (leftPC.result) e = addPCurveToEdge(e, makePCurve(leftPC.result, surface));
+    const rightPC = makeLine2D({ x: TWO_PI, y: vEnd }, { x: TWO_PI, y: vStart });
+    if (rightPC.result) e = addPCurveToEdge(e, makePCurve(rightPC.result, surface));
+    return e;
+  }
+
+  // Helper: attach circle PCurve to edge
+  function addCirclePCurve(e: Edge, v: number, forward: boolean): Edge {
+    const pc = forward
+      ? makeLine2D({ x: 0, y: v }, { x: TWO_PI, y: v })
+      : makeLine2D({ x: TWO_PI, y: v }, { x: 0, y: v });
+    if (pc.result) e = addPCurveToEdge(e, makePCurve(pc.result, surface));
+    return e;
+  }
+
   if (startOnAxis && endOnAxis) {
-    // Both poles on axis: the face is bounded by the seam edge traversed
-    // forward and backward. This produces a "lens" face like OCCT's single-face sphere.
+    // Both poles on axis: "lens" face (sphere).
     // Wire: seam (forward) → seam (reversed)
+    edge = addSeamPCurves(edge);
     wireEdges.push(
-      orientEdge(edge, true),   // seam: forward (pole to pole)
-      orientEdge(edge, false),  // seam: reversed (pole to pole, other way)
+      orientEdge(edge, true),
+      orientEdge(edge, false),
     );
   } else if (!startOnAxis && !endOnAxis) {
-    // Normal case: 4-edge face
-    // seam (forward) → circle@end → seam (reversed) → circle@start (reversed)
-    const endCircleResult = makeSweepEdge(endPt, ax, 0, 2 * Math.PI);
-    const startCircleResult = makeSweepEdge(startPt, ax, 0, 2 * Math.PI);
-
+    // Normal case: 4-edge face (cylinder-like)
+    const endCircleResult = makeSweepEdge(endPt, ax, 0, TWO_PI);
+    const startCircleResult = makeSweepEdge(startPt, ax, 0, TWO_PI);
     if (!endCircleResult.success || !startCircleResult.success) {
       return failure('Failed to create sweep circles');
     }
+    let endCircle = endCircleResult.result!;
+    let startCircle = startCircleResult.result!;
+
+    edge = addSeamPCurves(edge);
+    endCircle = addCirclePCurve(endCircle, vEnd, true);
+    startCircle = addCirclePCurve(startCircle, vStart, false);
 
     wireEdges.push(
-      orientEdge(edge, true),                     // seam: forward
-      orientEdge(endCircleResult.result!, true),   // circle at end vertex
-      orientEdge(edge, false),                     // seam: reversed
-      orientEdge(startCircleResult.result!, false), // circle at start vertex (reversed)
+      orientEdge(edge, true),
+      orientEdge(endCircle, true),
+      orientEdge(edge, false),
+      orientEdge(startCircle, false),
     );
   } else if (startOnAxis) {
-    // Start vertex is on axis (pole) — 3-edge face
-    // seam (forward) → circle@end → seam (reversed)
-    const endCircleResult = makeSweepEdge(endPt, ax, 0, 2 * Math.PI);
+    // Start vertex on axis (pole) — 3-edge face
+    const endCircleResult = makeSweepEdge(endPt, ax, 0, TWO_PI);
     if (!endCircleResult.success) {
       return failure('Failed to create sweep circle');
     }
+    let endCircle = endCircleResult.result!;
+
+    edge = addSeamPCurves(edge);
+    endCircle = addCirclePCurve(endCircle, vEnd, true);
 
     wireEdges.push(
-      orientEdge(edge, true),                    // seam from pole to circle
-      orientEdge(endCircleResult.result!, true), // circle at end vertex
-      orientEdge(edge, false),                   // seam from circle back to pole
+      orientEdge(edge, true),
+      orientEdge(endCircle, true),
+      orientEdge(edge, false),
     );
   } else {
-    // End vertex is on axis (pole) — 3-edge face
-    const startCircleResult = makeSweepEdge(startPt, ax, 0, 2 * Math.PI);
+    // End vertex on axis (pole) — 3-edge face
+    const startCircleResult = makeSweepEdge(startPt, ax, 0, TWO_PI);
     if (!startCircleResult.success) {
       return failure('Failed to create sweep circle');
     }
+    let startCircle = startCircleResult.result!;
+
+    edge = addSeamPCurves(edge);
+    startCircle = addCirclePCurve(startCircle, vStart, false);
 
     wireEdges.push(
-      orientEdge(edge, true),                      // seam from start to pole
-      orientEdge(edge, false),                     // seam from pole back to start
-      orientEdge(startCircleResult.result!, false), // circle at start vertex (reversed)
+      orientEdge(edge, true),
+      orientEdge(edge, false),
+      orientEdge(startCircle, false),
     );
   }
 
