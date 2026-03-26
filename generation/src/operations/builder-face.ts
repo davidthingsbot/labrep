@@ -34,9 +34,7 @@ import { evaluateCircle3D } from '../geometry/circle3d';
 import { evaluateArc3D } from '../geometry/arc3d';
 import { evaluateLine3D } from '../geometry/line3d';
 import { evaluateEllipse3D } from '../geometry/ellipse3d';
-import { projectToSphericalSurface } from '../surfaces/spherical-surface';
-import { projectToCylindricalSurface } from '../surfaces/cylindrical-surface';
-import { projectToConicalSurface } from '../surfaces/conical-surface';
+import { toAdapter } from '../surfaces/surface-adapter';
 
 const TOL = 1e-6;
 
@@ -86,39 +84,16 @@ function evaluateCurve(curve: Curve3D, t: number): Point3D {
 
 /**
  * Project a 3D point to 2D in the face's parameter space.
- * For planar faces, uses worldToSketch. For curved faces, dispatches to
- * the appropriate surface projection (OCCT ProjLib_*).
- *
- * Returns Pt2 where x = u (angular for curved surfaces) and y = v.
+ * Uses the SurfaceAdapter — works for any surface type.
  */
 function projectToUV(surface: Surface, pt: Point3D): Pt2 {
-  switch (surface.type) {
-    case 'plane':
-      return worldToSketch(surface.plane, pt);
-    case 'sphere': {
-      const { u, v } = projectToSphericalSurface(surface, pt);
-      return { x: u, y: v };
-    }
-    case 'cylinder': {
-      const { u, v } = projectToCylindricalSurface(surface, pt);
-      return { x: u, y: v };
-    }
-    case 'cone': {
-      const { u, v } = projectToConicalSurface(surface, pt);
-      return { x: u, y: v };
-    }
-    default:
-      // Fallback for unsupported surfaces (torus, revolution, extrusion)
-      return worldToSketch(
-        { origin: point3d(0, 0, 0), normal: vec3d(0, 0, 1), xAxis: vec3d(1, 0, 0) },
-        pt,
-      );
-  }
+  const { u, v } = toAdapter(surface).projectPoint(pt);
+  return { x: u, y: v };
 }
 
-/** Does this surface have a periodic angular U parameter (θ ∈ (-π, π])? */
+/** Does this surface have a periodic U parameter? */
 function isAngularSurface(surface: Surface): boolean {
-  return surface.type === 'sphere' || surface.type === 'cylinder' || surface.type === 'cone';
+  return toAdapter(surface).isUPeriodic;
 }
 
 /**

@@ -717,13 +717,24 @@ export function generateCapFaces(
     reversedInners.push(reversedResult.result!);
   }
 
+  // Attach PCurves to bottom cap edges (mutates in place — shared with side faces)
+  for (const oe of reversedOuterResult.result!.edges) {
+    const pc = buildPCurveForEdgeOnSurface(oe.edge, bottomSurface, oe.forward);
+    if (pc) addPCurveToEdge(oe.edge, pc);
+  }
+  for (const inner of reversedInners) {
+    for (const oe of inner.edges) {
+      const pc = buildPCurveForEdgeOnSurface(oe.edge, bottomSurface, oe.forward);
+      if (pc) addPCurveToEdge(oe.edge, pc);
+    }
+  }
+
   const bottomFaceResult = makeFace(bottomSurface, reversedOuterResult.result!, reversedInners);
   if (!bottomFaceResult.success) {
     return failure(`Failed to create bottom cap: ${bottomFaceResult.error}`);
   }
 
   // Top cap: translated profile
-  // The top face's outer wire should match the translated profile direction (CCW from above)
   const topPlane = translatePlane(p, offset);
   const topSurface = makePlaneSurface(topPlane);
 
@@ -739,6 +750,18 @@ export function generateCapFaces(
       return failure(`Failed to translate inner wire: ${translatedResult.error}`);
     }
     topInnerWires.push(translatedResult.result!);
+  }
+
+  // Attach PCurves to top cap edges
+  for (const oe of topWireResult.result!.edges) {
+    const pc = buildPCurveForEdgeOnSurface(oe.edge, topSurface, oe.forward);
+    if (pc) addPCurveToEdge(oe.edge, pc);
+  }
+  for (const inner of topInnerWires) {
+    for (const oe of inner.edges) {
+      const pc = buildPCurveForEdgeOnSurface(oe.edge, topSurface, oe.forward);
+      if (pc) addPCurveToEdge(oe.edge, pc);
+    }
   }
 
   const topFaceResult = makeFace(topSurface, topWireResult.result!, topInnerWires);

@@ -41,7 +41,7 @@ export function makePCurve(curve2d: Curve2D, surface: Surface): PCurve {
 /**
  * Evaluate a 2D curve at parameter t, returning the (u, v) point.
  */
-function evaluateCurve2D(curve: Curve2D, t: number): { x: number; y: number } {
+export function evaluateCurve2D(curve: Curve2D, t: number): { x: number; y: number } {
   switch (curve.type) {
     case 'line':
       return evaluateLine2D(curve as Line2D, t);
