@@ -15,6 +15,8 @@ import { makeWireFromEdges, orientEdge } from '../../src/topology/wire';
 import { makePlanarFace } from '../../src/topology/face';
 import type { Face } from '../../src/topology/face';
 import { builderFace } from '../../src/operations/builder-face';
+import { extrude } from '../../src/operations/extrude';
+import { shellFaces } from '../../src/topology/shell';
 
 // ═══════════════════════════════════════════════
 // HELPERS
@@ -214,7 +216,6 @@ describe('BuilderFace: meeting edges at interior vertex', () => {
 
   it('edges with opposite directions at meeting point produce rect + L-shape', () => {
     // Replicates FFI output: edge1 goes TO (2,2), edge2 goes FROM (2,2).
-    // This is the actual configuration from the non-coplanar box boolean.
     const face = makeRectFace(-1, -1, 3, 3);
     const edge1 = lineEdge(2, -1, 2, 2);   // → (2,2)
     const edge2 = lineEdge(2, 2, -1, 2);   // (2,2) →
@@ -224,6 +225,85 @@ describe('BuilderFace: meeting edges at interior vertex', () => {
 
     const areas = result.map(faceArea);
     expect(areas[0] + areas[1]).toBeCloseTo(16, 1);
+    expect(Math.min(...areas)).toBeCloseTo(7, 0);
+  });
+
+  it('meeting edges on extruded box bottom face', () => {
+    // Use the ACTUAL face from extrude to replicate the boolean pipeline scenario.
+    const hw = 2, hh = 2;
+    const corners = [
+      point3d(1-hw, 1-hh, 1), point3d(1+hw, 1-hh, 1),
+      point3d(1+hw, 1+hh, 1), point3d(1-hw, 1+hh, 1),
+    ];
+    const bEdges = corners.map((c, i) =>
+      makeEdgeFromCurve(makeLine3D(c, corners[(i + 1) % 4]).result!).result!,
+    );
+    const wire = makeWireFromEdges(bEdges).result!;
+    const extResult = extrude(wire, vec3d(0, 0, 1), 4);
+    expect(extResult.success).toBe(true);
+
+    // Find the z=1 bottom face
+    const faces = shellFaces(extResult.result!.solid.outerShell);
+    const bottomFace = faces.find(f => {
+      if (f.surface.type !== 'plane') return false;
+      const verts = f.outerWire.edges.map(oe => edgeStartPoint(oe.edge));
+      return verts.every(v => Math.abs(v.z - 1) < 0.01);
+    })!;
+    expect(bottomFace).toBeDefined();
+
+    // Surface plane info
+    const pl = (bottomFace.surface as any).plane;
+    console.log(`Bottom face plane: normal=(${pl.normal.x},${pl.normal.y},${pl.normal.z}), origin=(${pl.origin.x},${pl.origin.y},${pl.origin.z})`);
+    console.log(`Bottom face edges: ${bottomFace.outerWire.edges.length}`);
+    for (const oe of bottomFace.outerWire.edges) {
+      const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+      console.log(`  ${oe.forward?'F':'R'}: (${s.x},${s.y},${s.z})→(${e.x},${e.y},${e.z})`);
+    }
+
+    // Add meeting edges like FFI would produce
+    const edge1 = makeEdgeFromCurve(makeLine3D(
+      point3d(2, -1, 1), point3d(2, 2, 1),
+    ).result!).result!;
+    const edge2 = makeEdgeFromCurve(makeLine3D(
+      point3d(2, 2, 1), point3d(-1, 2, 1),
+    ).result!).result!;
+
+    const result = builderFace(bottomFace, [edge1, edge2]);
+    console.log(`Sub-faces: ${result.length}`);
+    for (let i = 0; i < result.length; i++) {
+      console.log(`  sub[${i}]: ${result[i].outerWire.edges.length} edges`);
+    }
+    expect(result.length).toBe(2);
+  });
+
+  it('meeting edges on z=1 face with down-facing normal', () => {
+    // Replicates B's z=1 face from extrude: face plane may have
+    // normal (0,0,-1), which flips 2D projection. BuilderFace must
+    // handle this correctly.
+    const p1 = point3d(-1, -1, 1), p2 = point3d(3, -1, 1);
+    const p3 = point3d(3, 3, 1), p4 = point3d(-1, 3, 1);
+    const edges = [
+      makeEdgeFromCurve(makeLine3D(p1, p2).result!).result!,
+      makeEdgeFromCurve(makeLine3D(p2, p3).result!).result!,
+      makeEdgeFromCurve(makeLine3D(p3, p4).result!).result!,
+      makeEdgeFromCurve(makeLine3D(p4, p1).result!).result!,
+    ];
+    // makePlanarFace infers plane from vertices — check what it gives
+    const face = makePlanarFace(makeWireFromEdges(edges).result!).result!;
+
+    const edge1 = makeEdgeFromCurve(makeLine3D(
+      point3d(2, -1, 1), point3d(2, 2, 1),
+    ).result!).result!;
+    const edge2 = makeEdgeFromCurve(makeLine3D(
+      point3d(2, 2, 1), point3d(-1, 2, 1),
+    ).result!).result!;
+
+    const result = builderFace(face, [edge1, edge2]);
+    expect(result.length).toBe(2);
+
+    const areas = result.map(faceArea);
+    expect(areas[0] + areas[1]).toBeCloseTo(16, 0);
     expect(Math.min(...areas)).toBeCloseTo(7, 0);
   });
 });
