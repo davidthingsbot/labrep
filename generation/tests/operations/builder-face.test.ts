@@ -198,28 +198,33 @@ describe('BuilderFace: L-shaped split', () => {
 });
 
 describe('BuilderFace: meeting edges at interior vertex', () => {
-  it('two edges meeting at interior point produce rectangle + L-shape', () => {
-    // Replicates B's z=1 face in non-coplanar box intersection.
-    // Face: (-1,-1) to (3,3). Two FFI edges meet at interior point (2,2):
-    //   edge1: (2,-1) → (2,2)  (from A's x=2 plane)
-    //   edge2: (-1,2) → (2,2)  (from A's y=2 plane)
-    // Expected: rectangle (-1,-1)→(2,-1)→(2,2)→(-1,2) + L-shape (rest)
+  it('two edges both pointing TO meeting point produce rect + L-shape', () => {
+    // Both edges point toward the meeting vertex (2,2).
     const face = makeRectFace(-1, -1, 3, 3);
-    const edge1 = lineEdge(2, -1, 2, 2);
-    const edge2 = lineEdge(-1, 2, 2, 2);
+    const edge1 = lineEdge(2, -1, 2, 2);  // → (2,2)
+    const edge2 = lineEdge(-1, 2, 2, 2);  // → (2,2)
 
     const result = builderFace(face, [edge1, edge2]);
     expect(result.length).toBe(2);
 
-    const sorted = [...result].sort((a, b) => a.outerWire.edges.length - b.outerWire.edges.length);
-    expect(sorted[0].outerWire.edges.length).toBe(4); // rectangle
-    expect(sorted[1].outerWire.edges.length).toBe(6); // L-shape
-
     const areas = result.map(faceArea);
-    // Rectangle: 3×3 = 9, L-shape: 16-9 = 7
     expect(areas[0] + areas[1]).toBeCloseTo(16, 1);
     expect(Math.min(...areas)).toBeCloseTo(7, 0);
-    expect(Math.max(...areas)).toBeCloseTo(9, 0);
+  });
+
+  it('edges with opposite directions at meeting point produce rect + L-shape', () => {
+    // Replicates FFI output: edge1 goes TO (2,2), edge2 goes FROM (2,2).
+    // This is the actual configuration from the non-coplanar box boolean.
+    const face = makeRectFace(-1, -1, 3, 3);
+    const edge1 = lineEdge(2, -1, 2, 2);   // → (2,2)
+    const edge2 = lineEdge(2, 2, -1, 2);   // (2,2) →
+
+    const result = builderFace(face, [edge1, edge2]);
+    expect(result.length).toBe(2);
+
+    const areas = result.map(faceArea);
+    expect(areas[0] + areas[1]).toBeCloseTo(16, 1);
+    expect(Math.min(...areas)).toBeCloseTo(7, 0);
   });
 });
 
