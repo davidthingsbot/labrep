@@ -2,7 +2,8 @@ import { point3d, vec3d, plane, Plane, cross, normalize, subtractPoints } from '
 import { PlaneSurface, CylindricalSurface, ExtrusionSurface, SphericalSurface, ConicalSurface, ToroidalSurface, RevolutionSurface, makePlaneSurface } from '../surfaces';
 import { OperationResult, success, failure } from '../mesh/mesh';
 import { Wire, wireStartPoint } from './wire';
-import { edgeStartPoint } from './edge';
+import { edgeStartPoint, addPCurveToEdge } from './edge';
+import { buildPCurveForEdgeOnSurface } from './pcurve';
 
 /**
  * Union type for surfaces that can bound a face.
@@ -60,6 +61,25 @@ export function makeFace(
   for (let i = 0; i < innerWires.length; i++) {
     if (!innerWires[i].isClosed) {
       return failure(`Inner wire ${i} must be closed`);
+    }
+  }
+
+  // Attach PCurves to all edges that don't already have one on this surface.
+  // OCCT: edges always carry PCurves for every face they belong to.
+  // This is the canonical place — any code that puts an edge on a face
+  // ensures the edge has a PCurve for that face's surface.
+  for (const oe of outerWire.edges) {
+    if (!oe.edge.pcurves.some(pc => pc.surface === surface)) {
+      const pc = buildPCurveForEdgeOnSurface(oe.edge, surface, oe.forward);
+      if (pc) addPCurveToEdge(oe.edge, pc);
+    }
+  }
+  for (const inner of innerWires) {
+    for (const oe of inner.edges) {
+      if (!oe.edge.pcurves.some(pc => pc.surface === surface)) {
+        const pc = buildPCurveForEdgeOnSurface(oe.edge, surface, oe.forward);
+        if (pc) addPCurveToEdge(oe.edge, pc);
+      }
     }
   }
 
@@ -137,12 +157,8 @@ export function makePlanarFace(
   const inferredPlane = plane(point3d(p1.x, p1.y, p1.z), normal, xAxis);
   const surface = makePlaneSurface(inferredPlane);
 
-  return success({
-    surface,
-    outerWire,
-    innerWires: [...innerWires],
-    forward: true,
-  });
+  // Delegate to makeFace which handles PCurve attachment
+  return makeFace(surface, outerWire, innerWires);
 }
 
 /**

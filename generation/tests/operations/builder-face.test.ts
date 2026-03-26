@@ -10,13 +10,14 @@ import { point3d, vec3d, plane, worldToSketch } from '../../src/core';
 import { makeLine3D } from '../../src/geometry/line3d';
 import { makeArc3D, evaluateArc3D } from '../../src/geometry/arc3d';
 import { makeCircle3D, evaluateCircle3D } from '../../src/geometry/circle3d';
-import { makeEdgeFromCurve, edgeStartPoint, edgeEndPoint } from '../../src/topology/edge';
+import { makeEdgeFromCurve, edgeStartPoint, edgeEndPoint, addPCurveToEdge } from '../../src/topology/edge';
 import { makeWireFromEdges, orientEdge } from '../../src/topology/wire';
 import { makePlanarFace } from '../../src/topology/face';
-import type { Face } from '../../src/topology/face';
+import type { Face, Surface } from '../../src/topology/face';
 import { builderFace } from '../../src/operations/builder-face';
 import { extrude } from '../../src/operations/extrude';
 import { shellFaces } from '../../src/topology/shell';
+import { buildPCurveForEdgeOnSurface } from '../../src/topology/pcurve';
 
 // ═══════════════════════════════════════════════
 // HELPERS
@@ -34,10 +35,15 @@ function makeRectFace(x0: number, y0: number, x1: number, y1: number) {
   return makePlanarFace(makeWireFromEdges(edges).result!).result!;
 }
 
-function lineEdge(x1: number, y1: number, x2: number, y2: number) {
-  return makeEdgeFromCurve(makeLine3D(
+function lineEdge(x1: number, y1: number, x2: number, y2: number, surface?: Surface, face.surface) {
+  const edge = makeEdgeFromCurve(makeLine3D(
     point3d(x1, y1, 0), point3d(x2, y2, 0),
   ).result!).result!;
+  if (surface) {
+    const pc = buildPCurveForEdgeOnSurface(edge, surface, true);
+    if (pc) addPCurveToEdge(edge, pc);
+  }
+  return edge;
 }
 
 /** Compute approximate area of a face by sampling edges in 2D (XY plane) */
@@ -90,7 +96,7 @@ function signedArea(pts: { x: number; y: number }[]): number {
 describe('BuilderFace: line splitting', () => {
   it('single line splits rectangle into 2 faces', () => {
     const face = makeRectFace(0, 0, 4, 4);
-    const splitEdge = lineEdge(2, 0, 2, 4);
+    const splitEdge = lineEdge(2, 0, 2, 4, face.surface);
 
     const result = builderFace(face, [splitEdge]);
     expect(result.length).toBe(2);
@@ -108,8 +114,8 @@ describe('BuilderFace: line splitting', () => {
   it('two crossing lines split rectangle into 4 faces', () => {
     const face = makeRectFace(0, 0, 4, 4);
     const result = builderFace(face, [
-      lineEdge(2, 0, 2, 4),
-      lineEdge(0, 2, 4, 2),
+      lineEdge(2, 0, 2, 4, face.surface),
+      lineEdge(0, 2, 4, 2, face.surface),
     ]);
     expect(result.length).toBe(4);
 
@@ -121,7 +127,7 @@ describe('BuilderFace: line splitting', () => {
 
   it('diagonal line splits rectangle into 2 triangles', () => {
     const face = makeRectFace(0, 0, 4, 4);
-    const result = builderFace(face, [lineEdge(0, 0, 4, 4)]);
+    const result = builderFace(face, [lineEdge(0, 0, 4, 4, face.surface)]);
     expect(result.length).toBe(2);
 
     const areas = result.map(faceArea);
@@ -139,6 +145,8 @@ describe('BuilderFace: circle splitting', () => {
     const face = makeRectFace(-3, -3, 3, 3);
     const circlePlane = plane(point3d(0, 0, 0), vec3d(0, 0, 1), vec3d(1, 0, 0));
     const circleEdge = makeEdgeFromCurve(makeCircle3D(circlePlane, 1).result!).result!;
+    const pc = buildPCurveForEdgeOnSurface(circleEdge, face.surface, true);
+    if (pc) addPCurveToEdge(circleEdge, pc);
 
     const result = builderFace(face, [circleEdge]);
     expect(result.length).toBe(2);
@@ -158,6 +166,8 @@ describe('BuilderFace: circle splitting', () => {
     const face = makeRectFace(0, 0, 4, 4);
     const arcPlane = plane(point3d(0, 0, 0), vec3d(0, 0, 1), vec3d(1, 0, 0));
     const arcEdge = makeEdgeFromCurve(makeArc3D(arcPlane, 1.5, 0, Math.PI / 2).result!).result!;
+    const arcPC = buildPCurveForEdgeOnSurface(arcEdge, face.surface, true);
+    if (arcPC) addPCurveToEdge(arcEdge, arcPC);
 
     const result = builderFace(face, [arcEdge]);
     expect(result.length).toBe(2);
@@ -180,8 +190,8 @@ describe('BuilderFace: L-shaped split', () => {
     // - L-shape (6 edges): the region x<-1 OR y<-1
     // - Rectangle (4 edges): the region x>-1 AND y>-1
     const face = makeRectFace(-2, -2, 2, 2);
-    const edge1 = lineEdge(-1, -1, 2, -1);  // horizontal at y=-1
-    const edge2 = lineEdge(-1, 2, -1, -1);  // vertical at x=-1
+    const edge1 = lineEdge(-1, -1, 2, -1, face.surface);  // horizontal at y=-1
+    const edge2 = lineEdge(-1, 2, -1, -1, face.surface);  // vertical at x=-1
 
     const result = builderFace(face, [edge1, edge2]);
     expect(result.length).toBe(2);
@@ -203,8 +213,8 @@ describe('BuilderFace: meeting edges at interior vertex', () => {
   it('two edges both pointing TO meeting point produce rect + L-shape', () => {
     // Both edges point toward the meeting vertex (2,2).
     const face = makeRectFace(-1, -1, 3, 3);
-    const edge1 = lineEdge(2, -1, 2, 2);  // → (2,2)
-    const edge2 = lineEdge(-1, 2, 2, 2);  // → (2,2)
+    const edge1 = lineEdge(2, -1, 2, 2, face.surface);  // → (2,2)
+    const edge2 = lineEdge(-1, 2, 2, 2, face.surface);  // → (2,2)
 
     const result = builderFace(face, [edge1, edge2]);
     expect(result.length).toBe(2);
@@ -217,8 +227,8 @@ describe('BuilderFace: meeting edges at interior vertex', () => {
   it('edges with opposite directions at meeting point produce rect + L-shape', () => {
     // Replicates FFI output: edge1 goes TO (2,2), edge2 goes FROM (2,2).
     const face = makeRectFace(-1, -1, 3, 3);
-    const edge1 = lineEdge(2, -1, 2, 2);   // → (2,2)
-    const edge2 = lineEdge(2, 2, -1, 2);   // (2,2) →
+    const edge1 = lineEdge(2, -1, 2, 2, face.surface);   // → (2,2)
+    const edge2 = lineEdge(2, 2, -1, 2, face.surface);   // (2,2) →
 
     const result = builderFace(face, [edge1, edge2]);
     expect(result.length).toBe(2);
@@ -251,13 +261,17 @@ describe('BuilderFace: meeting edges at interior vertex', () => {
     })!;
     expect(bottomFace).toBeDefined();
 
-    // Add meeting edges like FFI would produce
+    // Add meeting edges like FFI would produce (with PCurves on the face surface)
     const edge1 = makeEdgeFromCurve(makeLine3D(
       point3d(2, -1, 1), point3d(2, 2, 1),
     ).result!).result!;
+    const pc1 = buildPCurveForEdgeOnSurface(edge1, bottomFace.surface, true);
+    if (pc1) addPCurveToEdge(edge1, pc1);
     const edge2 = makeEdgeFromCurve(makeLine3D(
       point3d(2, 2, 1), point3d(-1, 2, 1),
     ).result!).result!;
+    const pc2 = buildPCurveForEdgeOnSurface(edge2, bottomFace.surface, true);
+    if (pc2) addPCurveToEdge(edge2, pc2);
 
     const result = builderFace(bottomFace, [edge1, edge2]);
     expect(result.length).toBe(2);
@@ -284,9 +298,13 @@ describe('BuilderFace: meeting edges at interior vertex', () => {
     const edge1 = makeEdgeFromCurve(makeLine3D(
       point3d(2, -1, 1), point3d(2, 2, 1),
     ).result!).result!;
+    const epc1 = buildPCurveForEdgeOnSurface(edge1, face.surface, true);
+    if (epc1) addPCurveToEdge(edge1, epc1);
     const edge2 = makeEdgeFromCurve(makeLine3D(
       point3d(2, 2, 1), point3d(-1, 2, 1),
     ).result!).result!;
+    const epc2 = buildPCurveForEdgeOnSurface(edge2, face.surface, true);
+    if (epc2) addPCurveToEdge(edge2, epc2);
 
     const result = builderFace(face, [edge1, edge2]);
     expect(result.length).toBe(2);
