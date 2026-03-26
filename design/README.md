@@ -1083,7 +1083,7 @@ App Examples:
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Status (2026-03-25):** Aggressive pipeline cutover in progress. Old special-case pipeline deleted, FFI+BuilderFace wired in. 17/17 basic box-box boolean tests pass. Curved face and complex geometry tests in progress.
+**Status (2026-03-26):** All planar boolean operations working. 9 remaining failures are all curved-face cases (box-sphere, box-cylinder).
 
 **Architecture:**
 
@@ -1092,14 +1092,20 @@ The boolean pipeline follows OCCT's approach: one general pipeline for all surfa
 ```
 booleanOperation(A, B, op)
   ├─ Stage 1: AABB overlap check
-  ├─ Stage 2: Coplanar face handling (polygon clipping — kept separate)
-  ├─ Stage 3: FFI for all non-coplanar face pairs → intersection edges
+  ├─ Stage 2: FFI for all non-coplanar face pairs → intersection edges
   │   ├─ Analytic dispatch: plane-plane → Line3D, plane-sphere/cyl/cone → Circle3D/Arc3D
-  │   └─ General: SSI marcher → polyline segments (for future BSpline/NURBS)
-  ├─ Stage 4: BuilderFace for all face splitting (one general algorithm)
-  │   └─ UV-space angle-based wire tracing (OCCT BOPAlgo_BuilderFace)
-  ├─ Stage 5: Classify fragments (pointInSolid)
-  ├─ Stage 6: Select faces per operation rules
+  │   ├─ General: SSI marcher → polyline segments (for future BSpline/NURBS)
+  │   └─ Coplanar face detection (polygon clipping handled separately)
+  ├─ Stage 3: BuilderFace for all face splitting
+  │   ├─ UV-space angle-based wire tracing (OCCT BOPAlgo_BuilderFace)
+  │   ├─ Bidirectional split boundary sub-edges with interior-edge priority
+  │   └─ Orientation-aware area sign (handles CW and CCW face winding)
+  ├─ Stage 4: Classify sub-faces
+  │   ├─ IsInternalFace: intersection-edge binormal test
+  │   ├─ ComputeState fallback: farthest-from-intersection edge midpoint
+  │   └─ PointInFace fallback: edge-midpoint + inward offset
+  ├─ Stage 5: Select faces per operation rules
+  ├─ Stage 6: Orient faces on shell (BFS edge-winding consistency)
   └─ Stage 7: Stitch edges and assemble
 ```
 
@@ -1130,45 +1136,41 @@ booleanOperation(A, B, op)
 
 **H: Pipeline Cutover + OCCT Classification** 🔧 IN PROGRESS
 
-Deleted ~900 lines of special-case code. Wired FFI+BuilderFace as the single pipeline. 17/17 basic coplanar box-box boolean tests pass.
+Deleted ~900 lines of special-case code. Wired FFI+BuilderFace as the single pipeline. All planar boolean operations now work (coplanar, non-coplanar, L-junction). 9 remaining failures are all curved-face cases.
 
-Key OCCT patterns implemented this phase:
+Key OCCT patterns implemented:
 - `classifySubFace` following `BOPTools_AlgoTools::IsInternalFace` — uses intersection edge binormals to classify non-convex (L-shaped) sub-faces correctly
 - `ComputeState` fallback — when no intersection edges in sub-face boundary, uses farthest-from-intersection edge midpoint
 - `OrientFacesOnShell` following `BOPTools_AlgoTools::OrientFacesOnShell` — BFS-based face orientation to ensure consistent edge winding across faces from different source solids
 - `projectToUV` extended for sphere/cylinder/cone with angular seam unwrapping (`ShapeAnalysis_WireOrder`)
-- Vertex snapping in stitcher (canonical vertex pool)
+- Bidirectional split boundary sub-edges following `BOPAlgo_Builder_2.cxx` BuildSplitFaces
+- Interior-edge priority rule following `BOPAlgo_WireSplitter_1.cxx` Path()
+- Orientation-aware area sign — handles both CCW and CW face winding (see note below)
 
-**Current status:** Non-coplanar box intersect correctly classifies sub-faces (6 selected, was 11 before OCCT classification). Remaining: BuilderFace produces 1 sub-face instead of 2 when 2 FFI edges meet at a shared vertex on B's z=1 face.
+**Key fix — face winding convention:**
+
+BRep faces can have either CCW or CW outer wire winding depending on the face's orientation relative to its surface normal. The standard convention is: the outer wire is CCW when viewed from the outward normal direction. For a box's bottom face (outward normal pointing down), the wire is CW when viewed from above — this is correct because it's CCW when viewed from below (the outward direction).
+
+`extrude` correctly reverses the bottom cap wire so that it's CCW from the outward (downward) normal direction. `BuilderFace` must handle both windings: it determines the convention by computing the original face boundary's signed area. If the original boundary area is negative (CW in the 2D projection), then negative area = outer loop and positive area = hole. This follows OCCT's `BOPAlgo_BuilderFace::PerformAreas` which accounts for face orientation.
+
+Without this, BuilderFace would classify all loops as "holes" for CW faces and return the face unsplit — the bug that caused the non-coplanar box intersection to fail.
 
 ---
 
 #### Remaining Work
 
-##### BuilderFace: L-meeting edge handling
-- Two FFI edges that share a vertex (meeting at a corner, not crossing) should produce 2 sub-faces
-- Current: B's z=1 face with 2 meeting edges produces only 1 sub-face
-- **Root cause**: BuilderFace's loop tracing may treat meeting-at-vertex as a single path instead of a junction
-- **OCCT ref**: `BOPAlgo_WireSplitter_1.cxx` Path() function handles vertex fan-out
-- **Guard**: "boxes with different Z bases" intersect/union/subtract tests
-
-##### Shell edge matching
-- After classification is correct, adjacent faces' edges must match at coordinate level
-- `orientFacesOnShell` ensures consistent winding
-- Vertex snapping ensures coordinate consistency
-- **Guard**: shell closure check passes for all operations
-
-##### Curved Face Splitting
+##### Curved Face Splitting (9 failures)
 - FFI produces Circle3D/Arc3D edges between planar and curved faces
 - BuilderFace `projectToUV` dispatches to sphere/cylinder/cone projectors with seam unwrapping
+- Need to verify end-to-end: FFI edge → BuilderFace split → classification → shell assembly
 - **Guard**: F1 (box−sphere), F2 (sphere partially outside), F3 (box−cylinder through-hole)
 
 ##### Exit Criteria Tests
-- **F1: Box − sphere** — volume, shell closure, tessellation
-- **F2: Box − cylinder (through-hole)** — volume, shell closure, tessellation
+- **F1: Box − sphere** — volume, shell closure, tessellation (partially failing)
+- **F2: Box − cylinder (through-hole)** — volume, shell closure, tessellation (failing)
 - **F3: Box − cone** — new test needed
 - **F4: L-bracket − sphere** — multi-arc splitting via BuilderFace
-- **F5: Volume invariant** — `V(A) + V(B) = V(union) + V(intersect)`
+- **F5: Volume invariant** — `V(A) + V(B) = V(union) + V(intersect)` ✅ passes for planar cases
 - **F6: Adversarial edge cases** — tangent, on-edge, small/large ratio
 
 ---
@@ -1205,7 +1207,7 @@ OCCT source in `library/opencascade/src/`:
 | File | Status |
 |------|--------|
 | `src/operations/boolean.ts` | ✅ **Rewritten** — FFI + BuilderFace pipeline with OCCT classification + orientation |
-| `src/operations/builder-face.ts` | ✅ — General face splitter with curved UV support (7 tests) |
+| `src/operations/builder-face.ts` | ✅ — General face splitter with curved UV, bidirectional edges, area-sign fix (10 tests) |
 | `src/operations/face-face-intersection.ts` | ✅ — Analytic dispatch for plane-plane/sphere/cylinder/cone |
 | `src/operations/split-face-by-circle.ts` | **Dead code** — no longer used by pipeline, kept for unit tests |
 | `src/operations/trim-curved-face.ts` | **Dead code** — no longer used by pipeline, kept for unit tests |
