@@ -62,6 +62,9 @@ interface HalfEdge {
   angleAtEnd: number;
   /** Has this half-edge been used in a loop? */
   used: boolean;
+  /** True if this is a face boundary edge, false if intersection edge.
+   *  OCCT ref: BOPAlgo_WireSplitter_1.cxx IsInside() flag */
+  isBoundary: boolean;
 }
 
 // ═══════════════════════════════════════════════
@@ -474,6 +477,7 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         angleAtStart: 0,
         angleAtEnd: 0,
         used: false,
+        isBoundary: true,
       });
     } else {
       // Sort hits by parameter and split edge into sub-segments.
@@ -496,18 +500,9 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         const endIdx = findOrAddVertex(vertices, vertices2D, pts3d[i + 1], endUV);
 
         boundaryHalfEdges.push({
-          edge: edgeRes.result!,
-          forward: true,
-          startVtx: startIdx,
-          endVtx: endIdx,
-          angleAtStart: 0,
-          angleAtEnd: 0,
-          used: false,
+          edge: edgeRes.result!, forward: true, startVtx: startIdx, endVtx: endIdx,
+          angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
         });
-        // TODO: Following OCCT BOPAlgo_Builder_2.cxx, split boundary sub-edges
-        // should also get reverse half-edges for L-junction loop tracing.
-        // Currently omitted because it breaks simple cases without OCCT's
-        // IsIn/Passed/IsInside priority system in the loop tracer.
       }
     }
   }
@@ -528,21 +523,21 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       // Add both forward and reverse half-edges with same start/end vertex
       intHalfEdges.push({
         edge: e, forward: true, startVtx: startIdx, endVtx: startIdx,
-        angleAtStart: 0, angleAtEnd: 0, used: false,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false,
       });
       intHalfEdges.push({
         edge: e, forward: false, startVtx: startIdx, endVtx: startIdx,
-        angleAtStart: 0, angleAtEnd: 0, used: false,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false,
       });
     } else {
       // Open curve — add both forward and reverse half-edges
       intHalfEdges.push({
         edge: e, forward: true, startVtx: startIdx, endVtx: endIdx,
-        angleAtStart: 0, angleAtEnd: 0, used: false,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false,
       });
       intHalfEdges.push({
         edge: e, forward: false, startVtx: endIdx, endVtx: startIdx,
-        angleAtStart: 0, angleAtEnd: 0, used: false,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false,
       });
     }
   }

@@ -854,7 +854,17 @@ export function booleanOperation(
 
     const intEdges = edgesOnA.get(faceA);
     if (intEdges && intEdges.length > 0) {
-      const subFaces = builderFace(faceA, intEdges);
+      // Pre-split boundary edges at FFI intersection vertices.
+      // Following OCCT BOPAlgo_PaveFiller::MakeSplitEdges: boundary edges are
+      // split BEFORE face reconstruction so BuilderFace can trace all loops
+      // including those that need boundary sub-edges at junction points.
+      const ffiVerts: Point3D[] = [];
+      for (const ie of intEdges) {
+        pushUnique(ffiVerts, edgeStartPoint(ie));
+        pushUnique(ffiVerts, edgeEndPoint(ie));
+      }
+      const preSplit = preSplitFaceAtVertices(faceA, ffiVerts);
+      const subFaces = builderFace(preSplit, intEdges);
       for (const sf of subFaces) {
         allFacesA.push({ face: sf, classification: classifySubFace(sf, b, intEdges) });
       }
@@ -872,7 +882,13 @@ export function booleanOperation(
 
     const intEdges = edgesOnB.get(faceB);
     if (intEdges && intEdges.length > 0) {
-      const subFaces = builderFace(faceB, intEdges);
+      const ffiVerts: Point3D[] = [];
+      for (const ie of intEdges) {
+        pushUnique(ffiVerts, edgeStartPoint(ie));
+        pushUnique(ffiVerts, edgeEndPoint(ie));
+      }
+      const preSplit = preSplitFaceAtVertices(faceB, ffiVerts);
+      const subFaces = builderFace(preSplit, intEdges);
       for (const sf of subFaces) {
         allFacesB.push({ face: sf, classification: classifySubFace(sf, a, intEdges) });
       }
