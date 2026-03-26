@@ -889,36 +889,6 @@ export function booleanOperation(
 
   const stitched = stitchEdges(selectedFaces);
 
-  // DEBUG: dump edge analysis before shell creation
-  if (typeof process !== 'undefined' && process.env.BOOLEAN_DEBUG) {
-    const round = (n: number) => Math.round(n / TOLERANCE) * TOLERANCE;
-    const edgeUsage = new Map<string, string[]>();
-    for (const face of stitched) {
-      for (const oe of face.outerWire.edges) {
-        const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-        const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
-        const k1 = `${round(s.x)},${round(s.y)},${round(s.z)}`;
-        const k2 = `${round(e.x)},${round(e.y)},${round(e.z)}`;
-        const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
-        const dir = oe.edge.curve.isClosed ? `${k1}|${oe.forward?'F':'R'}` : `${k1}->${k2}`;
-        if (!edgeUsage.has(key)) edgeUsage.set(key, []);
-        edgeUsage.get(key)!.push(dir);
-      }
-    }
-    let issues = 0;
-    for (const [key, dirs] of edgeUsage) {
-      if (dirs.length !== 2 || dirs[0] === dirs[1]) {
-        console.log(`  EDGE_ISSUE: ${key} (${dirs.length}): ${dirs.join(' | ')}`);
-        issues++;
-      }
-    }
-    console.log(`  [debug] ${stitched.length} faces, ${edgeUsage.size} unique edges, ${issues} issues`);
-    // Check inner wires
-    let innerCount = 0;
-    for (const f of stitched) innerCount += f.innerWires.length;
-    console.log(`  [debug] inner wires: ${innerCount}`);
-  }
-
   const shellResult = makeShell(stitched);
   if (!shellResult.success) return failure(`Shell creation failed: ${shellResult.error}`);
 
@@ -1112,6 +1082,22 @@ function preSplitFaceAtVertices(face: Face, vertices: Point3D[]): Face {
     }
 
     if (intermediates.length === 0) {
+      // Snap endpoints to canonical vertices (OCCT BRepBuilderAPI_Sewing).
+      // Different faces may create edges for the same geometric line via
+      // different FFI computations, producing tiny coordinate differences.
+      const snapStart = snapToCanonical(start, vertices);
+      const snapEnd = snapToCanonical(end, vertices);
+      if (snapStart !== start || snapEnd !== end) {
+        const lr = makeLine3D(snapStart, snapEnd);
+        if (lr.success) {
+          const er = makeEdgeFromCurve(lr.result!);
+          if (er.success) {
+            splitOEs.push(orientEdge(er.result!, true));
+            anySplit = true;
+            continue;
+          }
+        }
+      }
       splitOEs.push(oe);
       continue;
     }
@@ -1120,7 +1106,7 @@ function preSplitFaceAtVertices(face: Face, vertices: Point3D[]): Face {
     intermediates.sort((a, b) => a.t - b.t);
 
     // Create sub-edges using canonical vertex coordinates
-    let current = start;
+    let current = snapToCanonical(start, vertices);
     for (const inter of intermediates) {
       const lineRes = makeLine3D(current, inter.pt);
       if (lineRes.success) {
@@ -1129,7 +1115,7 @@ function preSplitFaceAtVertices(face: Face, vertices: Point3D[]): Face {
       }
       current = inter.pt;
     }
-    const lineRes = makeLine3D(current, end);
+    const lineRes = makeLine3D(current, snapToCanonical(end, vertices));
     if (lineRes.success) {
       const edgeRes = makeEdgeFromCurve(lineRes.result!);
       if (edgeRes.success) splitOEs.push(orientEdge(edgeRes.result!, true));
@@ -1175,6 +1161,14 @@ function stitchEdges(faces: Face[]): Face[] {
   }
 
   return result;
+}
+
+/** Snap a point to the nearest canonical vertex within tolerance. */
+function snapToCanonical(pt: Point3D, canonicalVerts: Point3D[]): Point3D {
+  for (const v of canonicalVerts) {
+    if (distance(pt, v) < STITCH_TOL) return v;
+  }
+  return pt;
 }
 
 function pushUnique(arr: Point3D[], pt: Point3D): void {
