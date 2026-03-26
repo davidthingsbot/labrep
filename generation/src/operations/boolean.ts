@@ -635,46 +635,101 @@ export function booleanOperation(
     }
   }
 
+  // ── Stage 2.5: Pre-split edges at FFI vertices (OCCT MakeSplitEdges) ──
+  // Following OCCT BOPAlgo_PaveFiller::MakeSplitEdges: split boundary edges
+  // in a shared vertex pool BEFORE face reconstruction. This ensures adjacent
+  // faces of the same solid share identical split edge objects, eliminating
+  // the need for post-hoc stitching.
+
+  const ffiVertices: Point3D[] = [];
+  for (const edges of edgesOnA.values()) {
+    for (const e of edges) {
+      pushUnique(ffiVertices, edgeStartPoint(e));
+      pushUnique(ffiVertices, edgeEndPoint(e));
+    }
+  }
+  for (const edges of edgesOnB.values()) {
+    for (const e of edges) {
+      pushUnique(ffiVertices, edgeStartPoint(e));
+      pushUnique(ffiVertices, edgeEndPoint(e));
+    }
+  }
+
+  // Snap FFI edge endpoints to canonical vertices. Different FFI calls may
+  // compute the same geometric point via different arithmetic paths, producing
+  // slightly different coordinates. Snapping ensures consistency.
+  function snapVertex(pt: Point3D): Point3D {
+    for (const v of ffiVertices) {
+      if (distance(pt, v) < STITCH_TOL) return v;
+    }
+    return pt;
+  }
+
+  function snapEdge(edge: Edge): Edge {
+    if (edge.curve.type !== 'line3d') return edge;
+    const s = snapVertex(edgeStartPoint(edge));
+    const e = snapVertex(edgeEndPoint(edge));
+    if (s === edgeStartPoint(edge) && e === edgeEndPoint(edge)) return edge;
+    const lineRes = makeLine3D(s, e);
+    if (!lineRes.success) return edge;
+    const edgeRes = makeEdgeFromCurve(lineRes.result!);
+    return edgeRes.success ? edgeRes.result! : edge;
+  }
+
+  // Snap all FFI edges to canonical vertices
+  for (const [face, edges] of edgesOnA) {
+    edgesOnA.set(face, edges.map(snapEdge));
+  }
+  for (const [face, edges] of edgesOnB) {
+    edgesOnB.set(face, edges.map(snapEdge));
+  }
+
+  // Pre-split faces: rebuild each face's wire with boundary edges split at FFI vertices
+  const preSplitFacesOfA = facesOfA.map(f => preSplitFaceAtVertices(f, ffiVertices));
+  const preSplitFacesOfB = facesOfB.map(f => preSplitFaceAtVertices(f, ffiVertices));
+
   // ── Stage 3: Split faces and classify ──
 
   const allFacesA: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
   const allFacesB: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
 
   // Process faces of A
-  for (const faceA of facesOfA) {
-    if (coplanarA.has(faceA)) {
-      handleCoplanarFace(faceA, coplanarA.get(faceA)!, op, a, b, allFacesA);
+  for (let i = 0; i < facesOfA.length; i++) {
+    const origFace = facesOfA[i];
+    const face = preSplitFacesOfA[i];
+    if (coplanarA.has(origFace)) {
+      handleCoplanarFace(face, coplanarA.get(origFace)!, op, a, b, allFacesA);
       continue;
     }
 
-    const intEdges = edgesOnA.get(faceA);
+    const intEdges = edgesOnA.get(origFace);
     if (intEdges && intEdges.length > 0) {
-      // Split face by intersection edges using BuilderFace
-      const subFaces = builderFace(faceA, intEdges);
+      const subFaces = builderFace(face, intEdges);
       for (const sf of subFaces) {
         allFacesA.push({ face: sf, classification: classifyFace(sf, b) });
       }
     } else {
-      // No intersections — classify whole face
-      allFacesA.push({ face: faceA, classification: classifyFace(faceA, b) });
+      allFacesA.push({ face: face, classification: classifyFace(face, b) });
     }
   }
 
   // Process faces of B
-  for (const faceB of facesOfB) {
-    if (coplanarB.has(faceB)) {
-      handleCoplanarFaceSideB(faceB, coplanarB.get(faceB)!, op, a, b, allFacesB);
+  for (let i = 0; i < facesOfB.length; i++) {
+    const origFace = facesOfB[i];
+    const face = preSplitFacesOfB[i];
+    if (coplanarB.has(origFace)) {
+      handleCoplanarFaceSideB(face, coplanarB.get(origFace)!, op, a, b, allFacesB);
       continue;
     }
 
-    const intEdges = edgesOnB.get(faceB);
+    const intEdges = edgesOnB.get(origFace);
     if (intEdges && intEdges.length > 0) {
-      const subFaces = builderFace(faceB, intEdges);
+      const subFaces = builderFace(face, intEdges);
       for (const sf of subFaces) {
         allFacesB.push({ face: sf, classification: classifyFace(sf, a) });
       }
     } else {
-      allFacesB.push({ face: faceB, classification: classifyFace(faceB, a) });
+      allFacesB.push({ face: face, classification: classifyFace(face, a) });
     }
   }
 
@@ -867,7 +922,96 @@ function handleCoplanarFaceSideB(
 
 const STITCH_TOL = 1e-6;
 
+/**
+ * Pre-split a face's boundary edges at a set of global vertices.
+ *
+ * Following OCCT BOPAlgo_PaveFiller::MakeSplitEdges: boundary edges are split
+ * in a shared vertex pool BEFORE face reconstruction. Adjacent faces of the
+ * same solid automatically share the same split edges because they use the
+ * same canonical vertex objects from the pool.
+ *
+ * This replaces the old post-hoc "stitcher" approach.
+ */
+function preSplitFaceAtVertices(face: Face, vertices: Point3D[]): Face {
+  if (vertices.length === 0) return face;
+
+  const splitOEs: OrientedEdge[] = [];
+  let anySplit = false;
+
+  for (const oe of face.outerWire.edges) {
+    // Only split line edges at vertices
+    if (oe.edge.curve.type !== 'line3d') {
+      splitOEs.push(oe);
+      continue;
+    }
+
+    const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+    const dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z;
+    const lenSq = dx * dx + dy * dy + dz * dz;
+    if (lenSq < STITCH_TOL * STITCH_TOL) {
+      splitOEs.push(oe);
+      continue;
+    }
+
+    // Find vertices that lie strictly between start and end on this edge
+    const intermediates: { t: number; pt: Point3D }[] = [];
+    for (const v of vertices) {
+      if (distance(v, start) < STITCH_TOL || distance(v, end) < STITCH_TOL) continue;
+
+      const vx = v.x - start.x, vy = v.y - start.y, vz = v.z - start.z;
+      const t = (vx * dx + vy * dy + vz * dz) / lenSq;
+      if (t < STITCH_TOL || t > 1 - STITCH_TOL) continue;
+
+      const px = start.x + t * dx - v.x;
+      const py = start.y + t * dy - v.y;
+      const pz = start.z + t * dz - v.z;
+      if (Math.sqrt(px * px + py * py + pz * pz) > STITCH_TOL) continue;
+
+      intermediates.push({ t, pt: v });
+    }
+
+    if (intermediates.length === 0) {
+      splitOEs.push(oe);
+      continue;
+    }
+
+    anySplit = true;
+    intermediates.sort((a, b) => a.t - b.t);
+
+    // Create sub-edges using canonical vertex coordinates
+    let current = start;
+    for (const inter of intermediates) {
+      const lineRes = makeLine3D(current, inter.pt);
+      if (lineRes.success) {
+        const edgeRes = makeEdgeFromCurve(lineRes.result!);
+        if (edgeRes.success) splitOEs.push(orientEdge(edgeRes.result!, true));
+      }
+      current = inter.pt;
+    }
+    const lineRes = makeLine3D(current, end);
+    if (lineRes.success) {
+      const edgeRes = makeEdgeFromCurve(lineRes.result!);
+      if (edgeRes.success) splitOEs.push(orientEdge(edgeRes.result!, true));
+    }
+  }
+
+  if (!anySplit) return face;
+
+  const wireRes = makeWire(splitOEs);
+  if (!wireRes.success) return face;
+
+  const faceRes = makeFace(face.surface, wireRes.result!, [...face.innerWires], face.forward);
+  return faceRes.success ? faceRes.result! : face;
+}
+
+/**
+ * Minimal edge stitching pass. After OCCT-style pre-splitting, most edges
+ * already match. This handles any remaining cases (e.g., coplanar handler
+ * output faces whose edges need to match adjacent split faces).
+ */
 function stitchEdges(faces: Face[]): Face[] {
+  // Collect canonical vertex pool from all faces
   const allVerts: Point3D[] = [];
   for (const face of faces) {
     for (const oe of face.outerWire.edges) {
@@ -882,89 +1026,12 @@ function stitchEdges(faces: Face[]): Face[] {
     }
   }
 
+  // Re-use the pre-split logic: collect all vertices from all selected faces,
+  // then split any remaining unsplit edges at those vertices.
   const result: Face[] = [];
   for (const face of faces) {
-    // Track oriented edges: for unsplit edges, keep original orientation;
-    // for split sub-edges, they follow the wire direction (always forward).
-    const splitOEs: OrientedEdge[] = [];
-    let anySplit = false;
-
-    for (const oe of face.outerWire.edges) {
-      const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-      const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
-
-      const dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z;
-      const lenSq = dx * dx + dy * dy + dz * dz;
-      if (lenSq < STITCH_TOL * STITCH_TOL) {
-        splitOEs.push(oe);
-        continue;
-      }
-
-      // Only stitch line edges — curved edges (circles, arcs) shouldn't be split
-      if (oe.edge.curve.type !== 'line3d') {
-        splitOEs.push(oe);
-        continue;
-      }
-
-      const intermediates: { t: number; pt: Point3D }[] = [];
-      for (const v of allVerts) {
-        if (distance(v, start) < STITCH_TOL || distance(v, end) < STITCH_TOL) continue;
-
-        const vx = v.x - start.x, vy = v.y - start.y, vz = v.z - start.z;
-        const t = (vx * dx + vy * dy + vz * dz) / lenSq;
-        if (t < STITCH_TOL || t > 1 - STITCH_TOL) continue;
-
-        const px = start.x + t * dx - v.x;
-        const py = start.y + t * dy - v.y;
-        const pz = start.z + t * dz - v.z;
-        if (Math.sqrt(px * px + py * py + pz * pz) > STITCH_TOL) continue;
-
-        intermediates.push({ t, pt: v });
-      }
-
-      if (intermediates.length === 0) {
-        splitOEs.push(oe);
-        continue;
-      }
-
-      anySplit = true;
-      intermediates.sort((a, b) => a.t - b.t);
-
-      let current = start;
-      for (const inter of intermediates) {
-        const lineRes = makeLine3D(current, inter.pt);
-        if (lineRes.success) {
-          const edgeRes = makeEdgeFromCurve(lineRes.result!);
-          if (edgeRes.success) splitOEs.push(orientEdge(edgeRes.result!, true));
-        }
-        current = inter.pt;
-      }
-      const lineRes = makeLine3D(current, end);
-      if (lineRes.success) {
-        const edgeRes = makeEdgeFromCurve(lineRes.result!);
-        if (edgeRes.success) splitOEs.push(orientEdge(edgeRes.result!, true));
-      }
-    }
-
-    if (!anySplit) {
-      result.push(face);
-      continue;
-    }
-
-    const wireRes = makeWire(splitOEs);
-    if (!wireRes.success) {
-      result.push(face);
-      continue;
-    }
-
-    const faceRes = face.surface.type === 'plane'
-      ? makeFace(face.surface as PlaneSurface, wireRes.result!, [...face.innerWires], face.forward)
-      : makeFace(face.surface, wireRes.result!, [...face.innerWires], face.forward);
-    if (faceRes.success) {
-      result.push(faceRes.result!);
-    } else {
-      result.push(face);
-    }
+    const rebuilt = preSplitFaceAtVertices(face, allVerts);
+    result.push(rebuilt);
   }
 
   return result;
