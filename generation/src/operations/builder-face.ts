@@ -460,8 +460,6 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
 
     if (hitsOnEdge.length === 0) {
       // No splits — add edge in wire direction only.
-      // Reverse direction is only needed for boundary sub-edges that were
-      // split at intersection points (handled in the else branch below).
       const startPt = eStart;
       const endPt = eEnd;
       const startUV = projectToUV(surface, startPt);
@@ -562,7 +560,6 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   // ── Step 6: Trace wire loops ──
 
   const loops: HalfEdge[][] = [];
-
   for (const he of allHalfEdges) {
     if (he.used) continue;
 
@@ -732,14 +729,35 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   if (loopInfos.length === 0) return [face];
 
   // ── Step 8: Classify loops as outer boundaries or holes ──
-  // Positive signed area = CCW = outer boundary
-  // Negative signed area = CW = hole
+  // The face's original boundary winding determines the sign convention.
+  // If the original boundary is CCW (positive area), positive = outer.
+  // If the original boundary is CW (negative area, e.g., extrude bottom
+  // face with reversed wire), negative = outer.
+  // OCCT ref: BOPAlgo_BuilderFace handles face orientation in PerformAreas.
+
+  // Compute original boundary signed area to determine convention
+  const origPts2D: Pt2[] = [];
+  for (const oe of faceOuterWire(face).edges) {
+    const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    origPts2D.push(projectToUV(surface, pt));
+  }
+  const origAreaPts = isAngularSurface(surface) ? unwrapAngularCoords(origPts2D) : origPts2D;
+  let origArea = 0;
+  for (let i = 0; i < origAreaPts.length; i++) {
+    const j = (i + 1) % origAreaPts.length;
+    origArea += origAreaPts[i].x * origAreaPts[j].y - origAreaPts[j].x * origAreaPts[i].y;
+  }
+  origArea /= 2;
+
+  // If original boundary is CW (negative), flip the convention
+  const outerIsPositive = origArea > 0;
 
   const outers: LoopInfo[] = [];
   const holes: LoopInfo[] = [];
 
   for (const li of loopInfos) {
-    if (li.area > 0) {
+    const isOuter = outerIsPositive ? li.area > 0 : li.area < 0;
+    if (isOuter) {
       outers.push(li);
     } else {
       holes.push(li);

@@ -251,16 +251,6 @@ describe('BuilderFace: meeting edges at interior vertex', () => {
     })!;
     expect(bottomFace).toBeDefined();
 
-    // Surface plane info
-    const pl = (bottomFace.surface as any).plane;
-    console.log(`Bottom face plane: normal=(${pl.normal.x},${pl.normal.y},${pl.normal.z}), origin=(${pl.origin.x},${pl.origin.y},${pl.origin.z})`);
-    console.log(`Bottom face edges: ${bottomFace.outerWire.edges.length}`);
-    for (const oe of bottomFace.outerWire.edges) {
-      const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-      const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
-      console.log(`  ${oe.forward?'F':'R'}: (${s.x},${s.y},${s.z})→(${e.x},${e.y},${e.z})`);
-    }
-
     // Add meeting edges like FFI would produce
     const edge1 = makeEdgeFromCurve(makeLine3D(
       point3d(2, -1, 1), point3d(2, 2, 1),
@@ -270,11 +260,10 @@ describe('BuilderFace: meeting edges at interior vertex', () => {
     ).result!).result!;
 
     const result = builderFace(bottomFace, [edge1, edge2]);
-    console.log(`Sub-faces: ${result.length}`);
-    for (let i = 0; i < result.length; i++) {
-      console.log(`  sub[${i}]: ${result[i].outerWire.edges.length} edges`);
-    }
     expect(result.length).toBe(2);
+    const areas = result.map(faceArea);
+    expect(areas[0] + areas[1]).toBeCloseTo(16, 0);
+    expect(Math.min(...areas)).toBeCloseTo(7, 0);
   });
 
   it('meeting edges on z=1 face with down-facing normal', () => {
