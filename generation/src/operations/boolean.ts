@@ -481,13 +481,70 @@ function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on
       centroid = bboxCenter;
     }
   } else {
-    let cx = 0, cy = 0, cz = 0, n = 0;
+    // Following OCCT BOPTools_AlgoTools3D::PointInFace:
+    // For planar faces, find a point guaranteed to be in the face interior
+    // by taking an edge midpoint and offsetting inward along the in-plane
+    // perpendicular. This is robust for non-convex (L-shaped etc.) sub-faces
+    // where the vertex centroid may be misleading.
+    const pl = face.surface.plane;
+    const faceNormal = pl.normal;
+
+    // Try each edge's midpoint offset inward; use the first one that's
+    // inside the face polygon (via 2D point-in-polygon test).
+    const poly2d = faceToPolygon2DRaw(face, pl);
+    let found = false;
+
     for (const oe of wire.edges) {
-      const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-      cx += pt.x; cy += pt.y; cz += pt.z; n++;
+      const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+      const mid = point3d((s.x + e.x) / 2, (s.y + e.y) / 2, (s.z + e.z) / 2);
+
+      // Compute inward perpendicular: edge direction × face normal → inward direction
+      const edgeDir = vec3d(e.x - s.x, e.y - s.y, e.z - s.z);
+      const inward = cross(faceNormal, edgeDir);
+      const inLen = length(inward);
+      if (inLen < 1e-10) continue;
+
+      // Nudge inward by a small amount
+      const nudge = 1e-4;
+      const candidate = point3d(
+        mid.x + (inward.x / inLen) * nudge,
+        mid.y + (inward.y / inLen) * nudge,
+        mid.z + (inward.z / inLen) * nudge,
+      );
+
+      // Check if candidate is inside the face polygon
+      const cand2d = worldToSketch(pl, candidate);
+      if (pointInPolygon2DSimple(cand2d, poly2d)) {
+        centroid = candidate;
+        found = true;
+        break;
+      }
+
+      // Try opposite direction
+      const candidate2 = point3d(
+        mid.x - (inward.x / inLen) * nudge,
+        mid.y - (inward.y / inLen) * nudge,
+        mid.z - (inward.z / inLen) * nudge,
+      );
+      const cand2d2 = worldToSketch(pl, candidate2);
+      if (pointInPolygon2DSimple(cand2d2, poly2d)) {
+        centroid = candidate2;
+        found = true;
+        break;
+      }
     }
-    if (n === 0) return 'outside';
-    centroid = point3d(cx / n, cy / n, cz / n);
+
+    if (!found) {
+      // Fallback: vertex centroid
+      let cx = 0, cy = 0, cz = 0, n = 0;
+      for (const oe of wire.edges) {
+        const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+        cx += pt.x; cy += pt.y; cz += pt.z; n++;
+      }
+      if (n === 0) return 'outside';
+      centroid = point3d(cx / n, cy / n, cz / n);
+    }
   }
 
   // Nudge slightly along face normal to avoid "on" classification
