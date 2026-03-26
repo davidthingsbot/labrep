@@ -18,7 +18,7 @@ import {
   negate,
 } from '../core';
 import { OperationResult, success, failure } from '../mesh/mesh';
-import { Curve3D, Edge, makeEdge, makeEdgeFromCurve, edgeStartPoint, edgeEndPoint } from '../topology/edge';
+import { Curve3D, Edge, makeEdge, makeEdgeFromCurve, edgeStartPoint, edgeEndPoint, addPCurveToEdge } from '../topology/edge';
 import { makeVertex, Vertex } from '../topology/vertex';
 import {
   Wire,
@@ -45,6 +45,9 @@ import {
 import { Line3D, makeLine3D, makeLine3DFromPointDir } from '../geometry/line3d';
 import { Circle3D, makeCircle3D } from '../geometry/circle3d';
 import { Arc3D, makeArc3D } from '../geometry/arc3d';
+import { makeLine2D } from '../geometry/line2d';
+import { toAdapter } from '../surfaces/surface-adapter';
+import { makePCurve, buildPCurveForEdgeOnSurface } from '../topology/pcurve';
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -377,43 +380,79 @@ export function generateSideFace(
   if (!topEdgeResult.success) {
     return failure(`Failed to create top edge: ${topEdgeResult.error}`);
   }
-  const topEdge = topEdgeResult.result!;
+  let topEdge = topEdgeResult.result!;
 
   // Create surface for the side face
   let surface: Surface;
-
-  // Create an extrusion surface from the bottom curve
   const extSurfResult = makeExtrusionSurface(curve, direction);
   if (!extSurfResult.success) {
     return failure(`Failed to create extrusion surface: ${extSurfResult.error}`);
   }
+  surface = canonicalize
+    ? canonicalizeExtrusionSurface(extSurfResult.result!)
+    : extSurfResult.result!;
 
-  if (canonicalize) {
-    surface = canonicalizeExtrusionSurface(extSurfResult.result!);
-  } else {
-    surface = extSurfResult.result!;
-  }
+  // ── Compute UV layout for PCurves ──
+  // OCCT ref: BRepSweep_Translation::SetDirectingPCurve, SetGeneratingPCurve
+  //
+  // For a cylinder (extruded circle):
+  //   U = θ (angle), V = height along axis
+  //   Bottom circle: horizontal line at V=0 from U=0 to U=2π
+  //   Top circle: horizontal line at V=dist from U=2π to U=0 (reversed)
+  //   Seam fwd (right side): vertical line at U=2π from V=0 to V=dist
+  //   Seam rev (left side): vertical line at U=0 from V=dist to V=0
+  //
+  // For a plane side face (extruded line):
+  //   U = parameter along profile curve, V = height along axis
+  //   Bottom: U=u_start..u_end at V=0
+  //   Top (reversed): U=u_end..u_start at V=dist
+  //   Right vertical: U=u_end, V=0..dist
+  //   Left vertical (reversed): U=u_start, V=dist..0
 
-  // Handle closed curves (circles) differently
-  // For closed curves, we need a seam edge that acts as both "left" and "right"
+  const adapter = toAdapter(surface);
+
+  // Project bottom edge endpoints to UV
+  const botStartUV = adapter.projectPoint(edgeStartPoint(edge));
+  const botEndUV = adapter.projectPoint(edgeEndPoint(edge));
+
   if (curve.isClosed) {
+    // ── Closed curve (circle → cylinder side face) ──
     const bottomStart = edgeStartPoint(edge);
     const topStart = edgeStartPoint(topEdge);
 
-    // Create a single seam edge connecting bottom to top
     const seamEdgeResult = makeVerticalEdge(bottomStart, topStart);
     if (!seamEdgeResult.success) {
       return failure(`Failed to create seam edge: ${seamEdgeResult.error}`);
     }
-    const seamEdge = seamEdgeResult.result!;
+    let seamEdge = seamEdgeResult.result!;
 
-    // The wire goes: bottom circle → seam up → top circle (reversed) → seam down
-    // But we use the SAME seam edge twice with different orientations
+    // PCurves for the 4 edges on the cylinder surface:
+    const v0 = botStartUV.v;               // bottom V
+    const v1 = v0 + dist;                  // top V
+    const uPeriod = adapter.isUPeriodic ? adapter.uPeriod : 2 * Math.PI;
+
+    // Bottom circle (fwd): horizontal line at V=v0, U goes 0..2π
+    const botPC = buildPCurveForEdgeOnSurface(edge, surface, true, 0);
+    if (botPC) edge = addPCurveToEdge(edge, botPC);
+
+    // Seam edge gets TWO PCurves (right side at U=2π, left side at U=0)
+    // OCCT ref: BRep_Builder::UpdateEdge(E, C1, C2, S, tol) for seam edges
+    // Right side (fwd traversal: bottom→top): U=uPeriod, V goes v0..v1
+    const seamFwdPC = makeLine2D({ x: uPeriod, y: v0 }, { x: uPeriod, y: v1 });
+    if (seamFwdPC.result) seamEdge = addPCurveToEdge(seamEdge, makePCurve(seamFwdPC.result, surface));
+    // Left side (rev traversal: top→bottom): U=0, V goes v1..v0
+    const seamRevPC = makeLine2D({ x: 0, y: v1 }, { x: 0, y: v0 });
+    if (seamRevPC.result) seamEdge = addPCurveToEdge(seamEdge, makePCurve(seamRevPC.result, surface));
+
+    // Top circle (rev): horizontal line at V=v1, U goes 2π..0
+    const topPC = buildPCurveForEdgeOnSurface(topEdge, surface, false, 0);
+    if (topPC) topEdge = addPCurveToEdge(topEdge, topPC);
+
     const wireEdges: OrientedEdge[] = [
-      orientEdge(edge, true),        // bottom circle: forward
-      orientEdge(seamEdge, true),    // seam: up
-      orientEdge(topEdge, false),    // top circle: reversed
-      orientEdge(seamEdge, false),   // seam: down (back to start)
+      orientEdge(edge, true),
+      orientEdge(seamEdge, true),
+      orientEdge(topEdge, false),
+      orientEdge(seamEdge, false),
     ];
 
     const wireResult = makeWire(wireEdges);
@@ -424,30 +463,51 @@ export function generateSideFace(
     return makeFace(surface, wireResult.result!);
   }
 
-  // For open curves, create quadrilateral with vertical edges
+  // ── Open curve (line/arc → quad side face) ──
   const bottomStart = edgeStartPoint(edge);
   const bottomEnd = edgeEndPoint(edge);
   const topStart = edgeStartPoint(topEdge);
   const topEnd = edgeEndPoint(topEdge);
 
-  // Create vertical edges
   const leftEdgeResult = makeVerticalEdge(bottomStart, topStart);
   const rightEdgeResult = makeVerticalEdge(bottomEnd, topEnd);
-
   if (!leftEdgeResult.success || !rightEdgeResult.success) {
     return failure('Failed to create vertical edges');
   }
+  let leftEdge = leftEdgeResult.result!;
+  let rightEdge = rightEdgeResult.result!;
 
-  const leftEdge = leftEdgeResult.result!;
-  const rightEdge = rightEdgeResult.result!;
+  // UV coordinates for the quad corners
+  let u0 = botStartUV.u, u1 = botEndUV.u;
+  const v0 = botStartUV.v, v1 = v0 + dist;
 
-  // Build the wire: bottom → right → top(reversed) → left(reversed)
-  // This gives CCW orientation when viewed from outside
+  // Unwrap U for periodic surfaces
+  if (adapter.isUPeriodic) {
+    while (u1 - u0 > Math.PI) u1 -= adapter.uPeriod;
+    while (u0 - u1 > Math.PI) u1 += adapter.uPeriod;
+  }
+
+  // Bottom edge (fwd): U=u0..u1 at V=v0
+  const botPC = makeLine2D({ x: u0, y: v0 }, { x: u1, y: v0 });
+  if (botPC.result) edge = addPCurveToEdge(edge, makePCurve(botPC.result, surface));
+
+  // Right vertical (fwd): U=u1, V=v0..v1
+  const rightPC = makeLine2D({ x: u1, y: v0 }, { x: u1, y: v1 });
+  if (rightPC.result) rightEdge = addPCurveToEdge(rightEdge, makePCurve(rightPC.result, surface));
+
+  // Top edge (rev in wire): U=u1..u0 at V=v1
+  const topPC = makeLine2D({ x: u1, y: v1 }, { x: u0, y: v1 });
+  if (topPC.result) topEdge = addPCurveToEdge(topEdge, makePCurve(topPC.result, surface));
+
+  // Left vertical (rev in wire): U=u0, V=v1..v0
+  const leftPC = makeLine2D({ x: u0, y: v1 }, { x: u0, y: v0 });
+  if (leftPC.result) leftEdge = addPCurveToEdge(leftEdge, makePCurve(leftPC.result, surface));
+
   const wireEdges: OrientedEdge[] = [
-    orientEdge(edge, true),            // bottom: forward
-    orientEdge(rightEdge, true),       // right: forward (bottom→top)
-    orientEdge(topEdge, false),        // top: reversed
-    orientEdge(leftEdge, false),       // left: reversed (top→bottom)
+    orientEdge(edge, true),
+    orientEdge(rightEdge, true),
+    orientEdge(topEdge, false),
+    orientEdge(leftEdge, false),
   ];
 
   const wireResult = makeWire(wireEdges);
@@ -478,49 +538,60 @@ function generateSideFaceOriented(
   const offset = scale(direction, dist);
   const curve = edge.curve;
 
-  // Translate the edge to get the top edge
-  const topEdgeResult = translateEdge(edge, offset);
+  let topEdgeResult = translateEdge(edge, offset);
   if (!topEdgeResult.success) {
     return failure(`Failed to create top edge: ${topEdgeResult.error}`);
   }
-  const topEdge = topEdgeResult.result!;
+  let topEdge = topEdgeResult.result!;
 
-  // Create surface for the side face
   let surface: Surface;
-
-  // Create an extrusion surface from the bottom curve
   const extSurfResult = makeExtrusionSurface(curve, direction);
   if (!extSurfResult.success) {
     return failure(`Failed to create extrusion surface: ${extSurfResult.error}`);
   }
+  surface = canonicalize
+    ? canonicalizeExtrusionSurface(extSurfResult.result!)
+    : extSurfResult.result!;
 
-  if (canonicalize) {
-    surface = canonicalizeExtrusionSurface(extSurfResult.result!);
-  } else {
-    surface = extSurfResult.result!;
-  }
+  // ── Compute UV layout and PCurves ──
+  // OCCT ref: BRepSweep_Translation::SetDirectingPCurve, SetGeneratingPCurve
+  const adapter = toAdapter(surface);
+  const botStartUV = adapter.projectPoint(edgeStartPoint(edge));
 
-  // Handle closed curves (circles) differently
   if (curve.isClosed) {
-    // For closed curves, use the wire's edge orientation
-    // The bottom edge orientation must match how the cap face references this edge
     const bottomStart = forward ? edgeStartPoint(edge) : edgeEndPoint(edge);
     const topStart = forward ? edgeStartPoint(topEdge) : edgeEndPoint(topEdge);
 
-    // Create a single seam edge connecting bottom to top
     const seamEdgeResult = makeVerticalEdge(bottomStart, topStart);
     if (!seamEdgeResult.success) {
       return failure(`Failed to create seam edge: ${seamEdgeResult.error}`);
     }
-    const seamEdge = seamEdgeResult.result!;
+    let seamEdge = seamEdgeResult.result!;
 
-    // The wire goes: bottom circle → seam up → top circle (reversed) → seam down
-    // Use the same forward orientation as the wire edge for the bottom circle
+    // PCurves on cylinder surface
+    const v0 = botStartUV.v;
+    const v1 = v0 + dist;
+    const uPeriod = adapter.isUPeriodic ? adapter.uPeriod : 2 * Math.PI;
+
+    // Bottom circle PCurve
+    const botPC = buildPCurveForEdgeOnSurface(edge, surface, forward, 0);
+    if (botPC) edge = addPCurveToEdge(edge, botPC);
+
+    // Seam: two PCurves (right at U=uPeriod, left at U=0)
+    const seamFwdPC = makeLine2D({ x: uPeriod, y: v0 }, { x: uPeriod, y: v1 });
+    if (seamFwdPC.result) seamEdge = addPCurveToEdge(seamEdge, makePCurve(seamFwdPC.result, surface));
+    const seamRevPC = makeLine2D({ x: 0, y: v1 }, { x: 0, y: v0 });
+    if (seamRevPC.result) seamEdge = addPCurveToEdge(seamEdge, makePCurve(seamRevPC.result, surface));
+
+    // Top circle PCurve
+    const topPC = buildPCurveForEdgeOnSurface(topEdge, surface, !forward, 0);
+    if (topPC) topEdge = addPCurveToEdge(topEdge, topPC);
+
     const wireEdges: OrientedEdge[] = [
-      orientEdge(edge, forward),       // bottom circle: same as wire orientation
-      orientEdge(seamEdge, true),      // seam: up
-      orientEdge(topEdge, !forward),   // top circle: opposite orientation
-      orientEdge(seamEdge, false),     // seam: down (back to start)
+      orientEdge(edge, forward),
+      orientEdge(seamEdge, true),
+      orientEdge(topEdge, !forward),
+      orientEdge(seamEdge, false),
     ];
 
     const wireResult = makeWire(wireEdges);
@@ -531,31 +602,50 @@ function generateSideFaceOriented(
     return makeFace(surface, wireResult.result!);
   }
 
-  // For open curves, create quadrilateral with vertical edges
-  // Respect the forward flag for edge orientation
+  // ── Open curve (quad side face) ──
   const bottomStart = forward ? edgeStartPoint(edge) : edgeEndPoint(edge);
   const bottomEnd = forward ? edgeEndPoint(edge) : edgeStartPoint(edge);
   const topStart = forward ? edgeStartPoint(topEdge) : edgeEndPoint(topEdge);
   const topEnd = forward ? edgeEndPoint(topEdge) : edgeStartPoint(topEdge);
 
-  // Create vertical edges
   const leftEdgeResult = makeVerticalEdge(bottomStart, topStart);
   const rightEdgeResult = makeVerticalEdge(bottomEnd, topEnd);
-
   if (!leftEdgeResult.success || !rightEdgeResult.success) {
     return failure('Failed to create vertical edges');
   }
+  let leftEdge = leftEdgeResult.result!;
+  let rightEdge = rightEdgeResult.result!;
 
-  const leftEdge = leftEdgeResult.result!;
-  const rightEdge = rightEdgeResult.result!;
+  // UV coordinates
+  let u0 = adapter.projectPoint(bottomStart).u;
+  let u1 = adapter.projectPoint(bottomEnd).u;
+  const v0 = botStartUV.v, v1 = v0 + dist;
+  if (adapter.isUPeriodic) {
+    while (u1 - u0 > Math.PI) u1 -= adapter.uPeriod;
+    while (u0 - u1 > Math.PI) u1 += adapter.uPeriod;
+  }
 
-  // Build the wire: bottom → right → top(reversed) → left(reversed)
-  // Use the wire orientation for bottom/top edges
+  // Bottom edge PCurve
+  const botPC = makeLine2D({ x: u0, y: v0 }, { x: u1, y: v0 });
+  if (botPC.result) edge = addPCurveToEdge(edge, makePCurve(botPC.result, surface));
+
+  // Right vertical PCurve
+  const rightPC = makeLine2D({ x: u1, y: v0 }, { x: u1, y: v1 });
+  if (rightPC.result) rightEdge = addPCurveToEdge(rightEdge, makePCurve(rightPC.result, surface));
+
+  // Top edge PCurve (reversed in wire)
+  const topPC = makeLine2D({ x: u1, y: v1 }, { x: u0, y: v1 });
+  if (topPC.result) topEdge = addPCurveToEdge(topEdge, makePCurve(topPC.result, surface));
+
+  // Left vertical PCurve (reversed in wire)
+  const leftPC = makeLine2D({ x: u0, y: v1 }, { x: u0, y: v0 });
+  if (leftPC.result) leftEdge = addPCurveToEdge(leftEdge, makePCurve(leftPC.result, surface));
+
   const wireEdges: OrientedEdge[] = [
-    orientEdge(edge, forward),         // bottom: same as wire orientation
-    orientEdge(rightEdge, true),       // right: forward (bottom→top)
-    orientEdge(topEdge, !forward),     // top: opposite orientation
-    orientEdge(leftEdge, false),       // left: reversed (top→bottom)
+    orientEdge(edge, forward),
+    orientEdge(rightEdge, true),
+    orientEdge(topEdge, !forward),
+    orientEdge(leftEdge, false),
   ];
 
   const wireResult = makeWire(wireEdges);

@@ -8,7 +8,8 @@ import type { Line2D } from '../geometry/line2d';
 import type { Arc2D } from '../geometry/arc2d';
 import type { Circle2D } from '../geometry/circle2d';
 import { Surface } from './face';
-import { toAdapter } from '../surfaces/surface-adapter';
+import { type SurfaceAdapter, toAdapter } from '../surfaces/surface-adapter';
+import type { Edge } from './edge';
 
 /**
  * A parametric curve on a surface — the 2D representation of a 3D edge
@@ -140,3 +141,82 @@ function buildPCurveForCircle(circle: PlaneCircleIntersection, surface: Surface)
   if (!line2d.result) return null;
   return line2d.result;
 }
+
+// ═══════════════════════════════════════════════
+// PCURVE BUILDING FOR EDGES
+// ═══════════════════════════════════════════════
+
+/**
+ * Build a PCurve for an edge on a given surface by projecting endpoints to UV
+ * and creating a Line2D between them.
+ *
+ * For closed curves on periodic surfaces, the PCurve spans the full U period
+ * (e.g., a horizontal line from u=0 to u=2π at constant v for a circle on
+ * a cylinder).
+ *
+ * For seam edges (same 3D edge appearing twice on a face), the second
+ * occurrence needs `seamOccurrence=1` to get a shifted PCurve at u+2π.
+ *
+ * OCCT reference: BRepLib::BuildPCurveForEdgeOnPlane, GeomProjLib::Curve2d
+ *
+ * @param edge - The 3D edge
+ * @param surface - The surface the edge lies on
+ * @param forward - Wire traversal direction for this edge
+ * @param seamOccurrence - 0 for first occurrence, 1 for second (shifted by period)
+ * @returns PCurve, or null if construction fails
+ */
+export function buildPCurveForEdgeOnSurface(
+  edge: Edge,
+  surface: Surface,
+  forward: boolean,
+  seamOccurrence: number = 0,
+): PCurve | null {
+  const adapter = toAdapter(surface);
+  const startPt = edge.startVertex.point;
+  const endPt = edge.endVertex.point;
+
+  // Project endpoints to UV
+  let startUV = adapter.projectPoint(startPt);
+  let endUV = adapter.projectPoint(endPt);
+
+  if (adapter.isUPeriodic && edge.curve.isClosed) {
+    // Closed curve on periodic surface (e.g., circle on cylinder):
+    // PCurve is a horizontal line spanning the full U period.
+    // The V coordinate is constant (same for start and end since the curve
+    // lies at a constant height/latitude).
+    const v = startUV.v;
+    const uStart = seamOccurrence === 0 ? 0 : adapter.uPeriod;
+    const uEnd = uStart + adapter.uPeriod;
+    // Wire direction: forward traverses the period normally;
+    // reversed traverses it backwards.
+    const u0 = forward ? uStart : uEnd;
+    const u1 = forward ? uEnd : uStart;
+    const line2d = makeLine2D({ x: u0, y: v }, { x: u1, y: v });
+    if (!line2d.result) return null;
+    return makePCurve(line2d.result, surface);
+  }
+
+  if (adapter.isUPeriodic) {
+    // Open edge on periodic surface: unwrap U for continuity
+    // Ensure endUV.u is within π of startUV.u
+    while (endUV.u - startUV.u > Math.PI) endUV = { u: endUV.u - adapter.uPeriod, v: endUV.v };
+    while (startUV.u - endUV.u > Math.PI) endUV = { u: endUV.u + adapter.uPeriod, v: endUV.v };
+
+    // For seam edges (second occurrence), shift by one period
+    if (seamOccurrence > 0) {
+      startUV = { u: startUV.u + adapter.uPeriod, v: startUV.v };
+      endUV = { u: endUV.u + adapter.uPeriod, v: endUV.v };
+    }
+  }
+
+  // Wire traversal direction determines which UV is "start" and "end"
+  const u0 = forward ? startUV.u : endUV.u;
+  const v0 = forward ? startUV.v : endUV.v;
+  const u1 = forward ? endUV.u : startUV.u;
+  const v1 = forward ? endUV.v : startUV.v;
+
+  const line2d = makeLine2D({ x: u0, y: v0 }, { x: u1, y: v1 });
+  if (!line2d.result) return null;
+  return makePCurve(line2d.result, surface);
+}
+
