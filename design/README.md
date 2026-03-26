@@ -1106,7 +1106,7 @@ App Examples:
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Status (2026-03-26):** Major architectural refactor complete. Surface-agnostic pipeline with PCurves, mutable topology, SurfaceAdapter. BuilderFace rewritten as pure 2D (PCurve-based, no surface-type branching). 1258 tests passing. 2 subtract/union regressions (coplanar stitching), 10 pre-existing curved-face failures.
+**Status (2026-03-26):** OCCT-aligned boolean pipeline. All planar booleans pass. Cylinder through-hole working. 1321 tests passing, 10 remaining (sphere trimming, nested cylinders).
 
 **Architecture:**
 
@@ -1115,18 +1115,24 @@ The boolean pipeline follows OCCT's approach: one general pipeline for all surfa
 ```
 booleanOperation(A, B, op)
   ├─ Stage 1: AABB overlap check
-  ├─ Stage 2: FFI for all non-coplanar face pairs → intersection edges
-  │   ├─ Analytic dispatch: plane-plane → Line3D, plane-sphere/cyl/cone → Circle3D/Arc3D
-  │   ├─ General: SSI marcher → polyline segments (for future BSpline/NURBS)
-  │   └─ Coplanar face detection (polygon clipping handled separately)
-  ├─ Stage 3: BuilderFace for all face splitting
-  │   ├─ UV-space angle-based wire tracing (OCCT BOPAlgo_BuilderFace)
-  │   ├─ Bidirectional split boundary sub-edges with interior-edge priority
-  │   └─ Orientation-aware area sign (handles CW and CCW face winding)
-  ├─ Stage 4: Classify sub-faces
-  │   ├─ IsInternalFace: intersection-edge binormal test
-  │   ├─ ComputeState fallback: farthest-from-intersection edge midpoint
-  │   └─ PointInFace fallback: edge-midpoint + inward offset
+  ├─ Stage 2: FFI + coplanar detection (OCCT BOPAlgo_PaveFiller)
+  │   ├─ Coplanar pairs: skip FFI (no intersection curve for coincident planes)
+  │   │   ├─ Same-normal + overlap: register for overlap classification
+  │   │   └─ Opposite-normal: register for special handling (internal faces)
+  │   ├─ Non-coplanar pairs: FFI → intersection edges added to ALL faces
+  │   │   ├─ Analytic: plane-plane → Line3D, plane-sphere/cyl/cone → Circle3D/Arc3D
+  │   │   └─ General: SSI marcher → polyline (future BSpline/NURBS)
+  │   └─ Key: coplanar faces get splitting edges FROM non-coplanar FFI
+  ├─ Stage 3: BuilderFace splits all faces with intersection edges
+  │   ├─ UV-space wire tracing (OCCT BOPAlgo_WireSplitter)
+  │   ├─ Containment-based loop classification + winding correction
+  │   ├─ Periodic surface UV continuity (seam tracking)
+  │   └─ Coplanar sub-faces: expanded-polygon overlap detection
+  ├─ Stage 4: Classify sub-faces (OCCT BOPTools_AlgoTools)
+  │   ├─ Coplanar overlap: operation-specific (A keeps 'on', B discards)
+  │   ├─ Opposite-normal coplanar: discard for union, keep A for subtract
+  │   ├─ IsInternalFace: intersection-edge binormal + nudge test
+  │   └─ Fallback: farthest-edge midpoint, then centroid + normal nudge
   ├─ Stage 5: Select faces per operation rules
   ├─ Stage 6: Orient faces on shell (BFS edge-winding consistency)
   └─ Stage 7: Stitch edges and assemble
@@ -1157,51 +1163,46 @@ booleanOperation(A, B, op)
 
 **G: FFI Analytic Edge Dispatch** ✅ — `intersectFaceFace` dispatches to analytic intersection for plane-plane (→Line3D), plane-sphere/cylinder/cone (→Circle3D/Arc3D). Falls back to SSI marcher for other pairs. 3 analytic dispatch tests.
 
-**H: Pipeline Cutover — PCurves + Surface-Agnostic** 🔧 IN PROGRESS
+**H: Pipeline Cutover — PCurves + Surface-Agnostic + OCCT Coplanar** 🔧 IN PROGRESS
 
 Major architectural refactor (2026-03-26):
 
 **Completed:**
-- **SurfaceAdapter** (`surfaces/surface-adapter.ts`): Polymorphic interface with `evaluate`, `normal`, `projectPoint`, `isUPeriodic`, `uvBounds`. Replaces 15 switch-dispatch functions. All 7 surface types wrapped.
-- **PCurves on all edges**: Extrude, revolve, and FFI attach PCurves (2D curves in surface parameter space) to every edge at creation time. `makeFace()` auto-attaches PCurves for edges missing them. Follows OCCT `BRep_Builder::UpdateEdge`.
-- **Mutable Edge topology**: `Edge.pcurves` is mutable (push, not spread-copy). `addPCurveToEdge()` mutates in place. Shared graph model like OCCT. Math primitives (Point3D, Vector3D) remain immutable.
-- **BuilderFace rewritten as pure 2D**: All UV from PCurves or SurfaceAdapter fallback. No `isAngularSurface`, no `projectToUV` dispatch, no seam detection hacks. 1115 → 590 lines (-525 lines). PCurves always in edge geometric direction; wire direction handled by consumer.
-- **PCurve direction fix**: `buildPCurveForEdgeOnSurface` always stores UV in edge geometric direction (startVertex → endVertex). `getEdgeUV` swaps for reversed wire traversal. Fixes double-reversal bug that corrupted UV on reversed boundary edges.
-- **flipFace preserves surface identity**: Uses `forward` flag instead of creating new surface object. Prevents PCurve surface reference breakage.
+- **SurfaceAdapter**: Polymorphic interface (`evaluate`, `normal`, `projectPoint`, `isUPeriodic`). Replaces 15 switch-dispatch functions. All 7 surface types.
+- **PCurves on all edges**: Extrude, revolve, FFI attach PCurves at creation. `makeFace()` auto-attaches. PCurves always in edge geometric direction.
+- **Mutable Edge topology**: `Edge.pcurves` mutated in place. Shared graph model like OCCT.
+- **BuilderFace pure 2D**: All UV from PCurves or SurfaceAdapter fallback. No surface-type branching. 525 lines deleted.
+- **Coplanar handling (OCCT-aligned)**: Removed old polygon clipping (Sutherland-Hodgman). Coplanar faces get splitting edges from non-coplanar FFI — no separate boundary clipping. `classifyCoplanarSubFace` for same-domain overlap detection. `handleOppositeNormalCoplanar` for opposite-normal pairs. Full-overlap detection for identical faces.
+- **BuilderFace loop classification**: Containment-based (not area-sign-only) with winding correction for reversed outers from face splitting.
+- **Periodic surface UV continuity**: Seam tracking in BuilderFace boundary processing ensures consecutive edges have continuous UV across periodic seams.
+- **Cylinder through-hole**: Fixed `edgeLiesOnFaceBoundary` for closed curves, extrude seam PCurve direction, BuilderFace UV continuity.
 
 **Key OCCT patterns adopted:**
-- `BOPAlgo_BuilderFace` / `BOPAlgo_WireSplitter`: wire tracing via smallest-clockwise-angle in 2D parameter space
+- `BOPAlgo_PaveFiller::PerformFF`: coplanar detection + FFI-based splitting (no separate coplanar edge computation)
+- `BOPAlgo_Builder::FillSameDomainFaces`: same-domain face classification via expanded-polygon overlap test
+- `BOPAlgo_BuilderFace` / `BOPAlgo_WireSplitter`: wire tracing in 2D parameter space
 - `BRep_CurveOnSurface`: PCurves stored per edge per surface, in edge geometric direction
 - `BRep_Builder::UpdateEdge`: in-place mutation of edge PCurves (mutable topology)
-- `GeomAdaptor_Surface`: polymorphic surface evaluation/projection
-- `IntTools_FClass2d::IsHole`: signed area classification
-- `BOPAlgo_WireSplitter_1.cxx Path()`: edge selection with interior-edge priority, sub-loop extraction
 
 ---
 
-#### Remaining Work
+#### Remaining Work (10 failures)
 
-##### Subtract/Union Stitching Regression (2 failures + ~14 cascading)
+##### Curved Face Failures
 
-Box-box intersect works. Box-box subtract/union fail with "shell not closed". The coplanar face handler (`handleCoplanarFace`) creates polygon fragments with new Edge objects that don't stitch with BuilderFace's split sub-edges. Root cause: edge identity mismatch between coplanar fragments and non-coplanar sub-faces at shared boundaries.
-
-**Approach:** The coplanar handler needs to share Edge objects with BuilderFace output at boundary intersection points. OCCT handles this via the shared PaveFiller vertex/edge pool. Our stitcher tries to match by 3D proximity but fails for the subtract/union case.
-
-##### Curved Face Failures (10 pre-existing)
-
-- Sphere partially outside box (4 tests) — sphere face splitting
-- Box−sphere at corner/edge (2 tests) — partial circle arcs
-- Nested coaxial cylinders (2 tests) — coplanar circular caps
-- Multiple bores (2 tests) — sequential boolean on curved results
-
-These require the PCurve-based BuilderFace to correctly handle sphere seam arcs and coplanar circular boundaries.
+- Sphere partially outside box (6 tests) — 1-face sphere sticking out bottom: intersection circle crosses box boundary, needs sphere face trimming at partial arc
+- Box−sphere at corner/edge (2 tests) — partial circle arcs crossing multiple face edges
+- Nested coaxial cylinders (1 test) — coplanar circular caps
+- Box with multiple bores (1 test) — sequential subtract with offset cylinders
 
 ##### Exit Criteria Tests
-- **F1: Box − sphere (fully inside)** ✅ — all 5 tests passing
-- **F3: Box − cylinder (through-hole)** — was passing, now regressed due to subtract stitching issue
-- **F4: L-bracket − sphere (fully inside)** — was passing, regressed
-- **F5: Volume invariant** — regressed for subtract/union
-- **F6: Edge cases** ✅ — sphere outside, sphere fully inside
+- **F1: Box − sphere (fully inside)** ✅ — all 5 tests
+- **F2: Sphere partially outside** ❌ — sphere trimming needed (4 of 5 tests fail)
+- **F3: Box − cylinder (through-hole)** ✅ — all 10 tests
+- **F4: L-bracket − sphere** ✅ — all 4 tests
+- **F5: Volume invariant** ✅ — all tests
+- **F6: Edge cases** ✅ — sphere outside, sphere inside
+- **F7: Known limitations** ✅ — documented (curved union mesh degenerate)
 
 ---
 
@@ -1236,7 +1237,7 @@ OCCT source in `library/opencascade/src/`:
 
 | File | Status |
 |------|--------|
-| `src/operations/boolean.ts` | ✅ **Rewritten** — FFI + BuilderFace pipeline with OCCT classification + orientation |
+| `src/operations/boolean.ts` | ✅ **Rewritten** — OCCT-aligned: FFI splits all faces (including coplanar via non-coplanar FFI), BuilderFace + classification + orientation |
 | `src/operations/builder-face.ts` | ✅ — General face splitter with curved UV, bidirectional edges, area-sign fix (10 tests) |
 | `src/operations/face-face-intersection.ts` | ✅ — Analytic dispatch for plane-plane/sphere/cylinder/cone |
 | `src/operations/split-face-by-circle.ts` | **Dead code** — no longer used by pipeline, kept for unit tests |
