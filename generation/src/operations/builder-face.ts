@@ -469,17 +469,12 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       const startIdx = findOrAddVertex(vertices, vertices2D, startPt, startUV);
       const endIdx = findOrAddVertex(vertices, vertices2D, endPt, endUV);
 
-      // Add both forward and reverse half-edges for all boundary edges.
-      // Following OCCT BOPAlgo_Builder_2.cxx BuildSplitFaces: all edges
-      // get both orientations when the face is being split.
+      // Unsplit boundary edge — forward direction only.
+      // Reverse direction is only added for SPLIT boundary sub-edges (below),
+      // where L-junction loop tracing requires bidirectional traversal.
       boundaryHalfEdges.push({
         edge: oe.edge, forward: oe.forward,
         startVtx: startIdx, endVtx: endIdx,
-        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
-      });
-      boundaryHalfEdges.push({
-        edge: oe.edge, forward: !oe.forward,
-        startVtx: endIdx, endVtx: startIdx,
         angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
       });
     } else {
