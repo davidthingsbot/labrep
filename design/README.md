@@ -1083,7 +1083,7 @@ App Examples:
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Status (2026-03-26):** All planar boolean operations working. 9 remaining failures are all curved-face cases (box-sphere, box-cylinder).
+**Status (2026-03-26):** Box-cylinder through-hole and box-sphere (fully inside) now work. BuilderFace splits curved faces on periodic surfaces using OCCT-style UV unrolling. 5 of 9 original curved-face failures fixed. Remaining: sphere face splitting (partial sphere), nested/coaxial cylinders.
 
 **Architecture:**
 
@@ -1139,11 +1139,12 @@ booleanOperation(A, B, op)
 Deleted ~900 lines of special-case code. Wired FFI+BuilderFace as the single pipeline. All planar boolean operations now work (coplanar, non-coplanar, L-junction). 9 remaining failures are all curved-face cases.
 
 Key OCCT patterns implemented:
-- `classifySubFace` following `BOPTools_AlgoTools::IsInternalFace` — uses intersection edge binormals to classify non-convex (L-shaped) sub-faces correctly
+- `classifySubFace` following `BOPTools_AlgoTools::IsInternalFace` — uses intersection edge binormals to classify non-convex (L-shaped) sub-faces correctly. Extended for curved edges: mid-parameter evaluation + curve tangent for circles/arcs
 - `ComputeState` fallback — when no intersection edges in sub-face boundary, uses farthest-from-intersection edge midpoint
 - `OrientFacesOnShell` following `BOPTools_AlgoTools::OrientFacesOnShell` — BFS-based face orientation to ensure consistent edge winding across faces from different source solids
 - `projectToUV` extended for sphere/cylinder/cone with angular seam unwrapping (`ShapeAnalysis_WireOrder`)
-- Bidirectional split boundary sub-edges following `BOPAlgo_Builder_2.cxx` BuildSplitFaces
+- **UV-space unrolling for periodic surfaces** following `BOPAlgo_Builder_2.cxx DoSplitSEAMOnFace`: closed boundary edges (circles) are "opened" at the seam with distinct UV start/end vertices (±2π). Seam edges detected and shifted for natural restriction faces (sphere). UV-based vertex merging (`findOrAddVertexByUV`) prevents 3D-coincident seam vertices from collapsing
+- **Arc boundary edge splitting** for sphere seam arcs: analytic angle projection finds intersection points on arcs, sub-arcs created via `makeArc3D` with computed parameter ranges
 - Interior-edge priority rule following `BOPAlgo_WireSplitter_1.cxx` Path()
 - Orientation-aware area sign — handles both CCW and CW face winding (see note below)
 
@@ -1159,11 +1160,10 @@ Without this, BuilderFace would classify all loops as "holes" for CW faces and r
 
 #### Remaining Work
 
-##### Curved Face Splitting (9 failures)
-- FFI produces Circle3D/Arc3D edges between planar and curved faces
-- BuilderFace `projectToUV` dispatches to sphere/cylinder/cone projectors with seam unwrapping
-- Need to verify end-to-end: FFI edge → BuilderFace split → classification → shell assembly
-- **Guard**: F1 (box−sphere), F2 (sphere partially outside), F3 (box−cylinder through-hole)
+##### Curved Face Splitting (5 of 9 fixed, 4 remaining)
+- ✅ Box−cylinder through-hole: closed shell, correct volume, cylindrical face, STEP round-trip
+- ✅ Box−sphere (fully inside): all 5 tests passing
+- Remaining: sphere partially outside box (sphere face needs UV loop tracing fix for seam arc + latitude circle topology), nested coaxial cylinders (coplanar circular cap handling), box with multiple bores (sequential boolean on curved results)
 
 ##### Exit Criteria Tests
 - **F1: Box − sphere** — volume, shell closure, tessellation (partially failing)

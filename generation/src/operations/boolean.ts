@@ -442,12 +442,29 @@ function classifySubFace(
     const eEnd = edgeEndPoint(oe.edge);
     const eMid = point3d((eStart.x + eEnd.x) / 2, (eStart.y + eEnd.y) / 2, (eStart.z + eEnd.z) / 2);
     const isIntEdge = intersectionEdges.some(ie => {
+      // Direct edge identity check (BuilderFace may reuse the same Edge object)
+      if (oe.edge === ie) return true;
+
       const iStart = edgeStartPoint(ie);
       const iEnd = edgeEndPoint(ie);
-      // Check if eMid lies on segment iStart→iEnd
       const dx = iEnd.x - iStart.x, dy = iEnd.y - iStart.y, dz = iEnd.z - iStart.z;
       const lenSq = dx * dx + dy * dy + dz * dz;
-      if (lenSq < 1e-12) return false;
+
+      if (lenSq < 1e-12) {
+        // Closed intersection edge (circle): check if sub-face edge midpoint
+        // lies on the circle by sampling. Check proximity to several points.
+        if (ie.curve.type === 'circle3d' || ie.curve.type === 'arc3d') {
+          const nSamples = 16;
+          for (let si = 0; si < nSamples; si++) {
+            const t = ie.curve.startParam + (si / nSamples) * (ie.curve.endParam - ie.curve.startParam);
+            const pt = evaluateCurveAt(ie.curve, t);
+            if (pt && distance(eMid, pt) < STITCH_TOL * 10) return true;
+          }
+        }
+        return false;
+      }
+
+      // Open intersection edge: check if eMid lies on segment iStart→iEnd
       const vx = eMid.x - iStart.x, vy = eMid.y - iStart.y, vz = eMid.z - iStart.z;
       const t = (vx * dx + vy * dy + vz * dz) / lenSq;
       if (t < -0.01 || t > 1.01) return false;
@@ -460,12 +477,29 @@ function classifySubFace(
 
     // Found an intersection edge in this sub-face.
     // Compute midpoint and binormal (OCCT GetFaceDir).
-    const wStart = oe.forward ? eStart : eEnd;
-    const wEnd = oe.forward ? eEnd : eStart;
-    const mid = point3d((wStart.x + wEnd.x) / 2, (wStart.y + wEnd.y) / 2, (wStart.z + wEnd.z) / 2);
+    // For curved/closed edges, use curve evaluation at mid-parameter.
+    const curve = oe.edge.curve;
+    const midParam = (curve.startParam + curve.endParam) / 2;
+    const mid = evaluateCurveAt(curve, midParam) || eMid;
 
-    // Edge direction in wire traversal order
-    const edgeDir = vec3d(wEnd.x - wStart.x, wEnd.y - wStart.y, wEnd.z - wStart.z);
+    // Edge direction in wire traversal order.
+    // For curved edges, compute tangent from nearby curve samples.
+    let edgeDir: { x: number; y: number; z: number };
+    if (curve.type === 'circle3d' || curve.type === 'arc3d' || curve.type === 'ellipse3d') {
+      const dt = (curve.endParam - curve.startParam) * 0.01;
+      const pBefore = evaluateCurveAt(curve, midParam - dt);
+      const pAfter = evaluateCurveAt(curve, midParam + dt);
+      if (pBefore && pAfter) {
+        const dir = vec3d(pAfter.x - pBefore.x, pAfter.y - pBefore.y, pAfter.z - pBefore.z);
+        edgeDir = oe.forward ? dir : vec3d(-dir.x, -dir.y, -dir.z);
+      } else {
+        edgeDir = vec3d(0, 0, 0);
+      }
+    } else {
+      const wStart = oe.forward ? eStart : eEnd;
+      const wEnd = oe.forward ? eEnd : eStart;
+      edgeDir = vec3d(wEnd.x - wStart.x, wEnd.y - wStart.y, wEnd.z - wStart.z);
+    }
 
     // Face normal
     let faceNormal: { x: number; y: number; z: number } | null = null;

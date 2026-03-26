@@ -167,6 +167,83 @@ function findOrAddVertex(
   return vertices.length - 1;
 }
 
+/**
+ * Find or create a vertex index using UV coordinates for matching.
+ *
+ * On periodic surfaces (cylinder, sphere, cone), the same 3D point can
+ * appear at different UV positions (e.g., at the seam: u=-π and u=+π).
+ * OCCT tracks these as distinct vertices via PCurves. We emulate this
+ * by merging based on UV proximity rather than 3D proximity.
+ *
+ * OCCT ref: BOPAlgo_WireSplitter_1.cxx uses 2D tolerance for vertex
+ * matching on periodic surfaces (UTolerance2D, VTolerance2D).
+ */
+function findOrAddVertexByUV(
+  vertices: Point3D[],
+  vertices2D: Pt2[],
+  pt3d: Point3D,
+  pt2d: Pt2,
+): number {
+  for (let i = 0; i < vertices2D.length; i++) {
+    const dx = vertices2D[i].x - pt2d.x;
+    const dy = vertices2D[i].y - pt2d.y;
+    if (Math.sqrt(dx * dx + dy * dy) < TOL * 10) return i;
+  }
+  vertices.push(pt3d);
+  vertices2D.push(pt2d);
+  return vertices.length - 1;
+}
+
+/**
+ * Unwrap a UV point relative to a reference U coordinate.
+ * Ensures the result is within π of the reference.
+ */
+function unwrapU(uv: Pt2, refU: number): Pt2 {
+  let u = uv.x;
+  while (u - refU > Math.PI) u -= 2 * Math.PI;
+  while (refU - u > Math.PI) u += 2 * Math.PI;
+  return { x: u, y: uv.y };
+}
+
+/**
+ * For a closed edge on an angular surface, compute distinct UV start/end.
+ *
+ * A closed circle has startPt == endPt in 3D, but traverses the full 2π
+ * angular range. In UV space, start and end differ by 2π. This "opens"
+ * the circle at the seam, creating a horizontal line in the UV rectangle.
+ *
+ * OCCT ref: BOPAlgo_Builder_2.cxx DoSplitSEAMOnFace — seam edges get
+ * two PCurves at u_min and u_max. We achieve the same by computing
+ * the UV traversal direction from a small sample along the curve.
+ */
+function openClosedEdgeUV(
+  edge: Edge,
+  forward: boolean,
+  surface: Surface,
+  refU?: number,
+): { startUV: Pt2; endUV: Pt2 } {
+  const curve = edge.curve;
+  const startPt = forward ? edgeStartPoint(edge) : edgeEndPoint(edge);
+  let startUV = projectToUV(surface, startPt);
+
+  // Unwrap start relative to reference if provided
+  if (refU !== undefined) {
+    startUV = unwrapU(startUV, refU);
+  }
+
+  // Sample slightly along curve to determine UV traversal direction
+  const dt = (curve.endParam - curve.startParam) * 0.01;
+  const nearT = forward ? curve.startParam + dt : curve.endParam - dt;
+  const nearPt = evaluateCurve(curve, nearT);
+  const nearUV = unwrapU(projectToUV(surface, nearPt), startUV.x);
+
+  // Full circle: end = start + full period in same direction
+  const duSign = nearUV.x >= startUV.x ? 1 : -1;
+  const endUV = { x: startUV.x + duSign * 2 * Math.PI, y: startUV.y };
+
+  return { startUV, endUV };
+}
+
 // ═══════════════════════════════════════════════
 // EDGE SPLITTING AT INTERSECTION POINTS
 // ═══════════════════════════════════════════════
@@ -356,7 +433,13 @@ function tangentAngle2D(
   const p0 = evaluateCurve(curve, t0);
   const p1 = evaluateCurve(curve, t1);
   const uv0 = projectToUV(surface, p0);
-  const uv1 = projectToUV(surface, p1);
+  let uv1 = projectToUV(surface, p1);
+
+  // On angular surfaces, unwrap uv1 relative to uv0 to handle ±π seam.
+  // Without this, circles near the seam produce wild angle jumps.
+  if (isAngularSurface(surface)) {
+    uv1 = unwrapU(uv1, uv0.x);
+  }
 
   const dx = uv1.x - uv0.x;
   const dy = uv1.y - uv0.y;
@@ -419,6 +502,16 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   const vertices2D: Pt2[] = [];
 
   // ── Step 2: Build half-edges from face boundary ──
+  //
+  // On angular surfaces (cylinder, sphere, cone), boundary processing must
+  // "unroll" the periodic UV domain into a rectangle. Closed boundary edges
+  // (circles) get "opened" at the seam — their start and end become distinct
+  // UV vertices separated by 2π. Seam lines connect these vertices along
+  // the left and right sides of the UV rectangle.
+  //
+  // OCCT ref: BOPAlgo_Builder_2.cxx DoSplitSEAMOnFace — seam edges get
+  // two PCurves (at u_min and u_max). We achieve the same by tracking
+  // continuous UV coordinates along the boundary wire.
 
   // Collect all intersection edge endpoints for boundary splitting
   const intEndpoints: Point3D[] = [];
@@ -429,14 +522,84 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
 
   const boundaryHalfEdges: HalfEdge[] = [];
   const outerWire = faceOuterWire(face);
+  const angular = isAngularSurface(surface);
+
+  // For angular surfaces: detect seam edges (same Edge appearing twice with
+  // opposite orientations in the boundary wire). The second occurrence needs
+  // its U shifted by 2π to form the "other side" of the UV rectangle.
+  // OCCT ref: BRep_Tool::IsClosed(edge, face), BOPAlgo_Builder_2.cxx DoSplitSEAMOnFace
+  const seamEdges = new Set<Edge>();
+  if (angular) {
+    const edgeCounts = new Map<Edge, number>();
+    for (const oe of outerWire.edges) {
+      edgeCounts.set(oe.edge, (edgeCounts.get(oe.edge) || 0) + 1);
+    }
+    for (const [edge, count] of edgeCounts) {
+      if (count >= 2) seamEdges.add(edge);
+    }
+  }
+
+  // For angular surfaces: maintain continuous UV along the wire.
+  // Each boundary edge's UV endpoints are unwrapped relative to the
+  // previous edge's end UV, so the boundary forms a rectangle in UV.
+  let prevEndUV: Pt2 | null = null;
+  const seamSeen = new Set<Edge>(); // Track first vs second occurrence
 
   for (const oe of outerWire.edges) {
     const eStart = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
     const eEnd = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
 
+    // ── Compute UV endpoints for this boundary edge ──
+    let edgeStartUV: Pt2;
+    let edgeEndUV: Pt2;
+
+    if (angular && oe.edge.curve.isClosed) {
+      // Closed boundary edge on angular surface (e.g., circle on cylinder cap):
+      // "Open" it at the seam by computing distinct UV start/end.
+      // OCCT ref: BOPAlgo_Builder_2.cxx seam edge handling with DoSplitSEAMOnFace
+      const refU = prevEndUV ? prevEndUV.x : undefined;
+      const { startUV, endUV } = openClosedEdgeUV(oe.edge, oe.forward, surface, refU);
+      edgeStartUV = startUV;
+      edgeEndUV = endUV;
+    } else if (angular && seamEdges.has(oe.edge) && seamSeen.has(oe.edge)) {
+      // Second occurrence of a seam edge on an angular surface.
+      // OCCT ref: DoSplitSEAMOnFace — seam edges get two distinct PCurves
+      // at u_min and u_max (u_max = u_min + 2π).
+      edgeStartUV = projectToUV(surface, eStart);
+      edgeEndUV = projectToUV(surface, eEnd);
+      if (prevEndUV) {
+        edgeStartUV = unwrapU(edgeStartUV, prevEndUV.x);
+        edgeEndUV = unwrapU(edgeEndUV, edgeStartUV.x);
+      }
+      // Natural restriction check: if the boundary has only this seam edge
+      // (same edge fwd+rev, no other edges between), both occurrences project
+      // to the same UV line. Force +2π shift on the second occurrence.
+      // This handles sphere seams. Cylinder seams are separated by opened
+      // circles, so they don't need this.
+      if (outerWire.edges.length === 2 && seamEdges.size === 1) {
+        edgeStartUV = { x: edgeStartUV.x + 2 * Math.PI, y: edgeStartUV.y };
+        edgeEndUV = { x: edgeEndUV.x + 2 * Math.PI, y: edgeEndUV.y };
+      }
+    } else {
+      edgeStartUV = projectToUV(surface, eStart);
+      edgeEndUV = projectToUV(surface, eEnd);
+      if (angular && prevEndUV) {
+        edgeStartUV = unwrapU(edgeStartUV, prevEndUV.x);
+        edgeEndUV = unwrapU(edgeEndUV, edgeStartUV.x);
+      }
+    }
+
+    if (angular) seamSeen.add(oe.edge);
+
+    prevEndUV = edgeEndUV;
+
+    // Choose vertex-finding function based on surface type
+    const findVtx = angular ? findOrAddVertexByUV : findOrAddVertex;
+
     // Find intersection endpoints that lie on this boundary edge
     const hitsOnEdge: { pt3d: Point3D; t: number }[] = [];
-    if (oe.edge.curve.type === 'line3d') {
+    const curve = oe.edge.curve;
+    if (curve.type === 'line3d') {
       const dx = eEnd.x - eStart.x, dy = eEnd.y - eStart.y, dz = eEnd.z - eStart.z;
       const lenSq = dx * dx + dy * dy + dz * dz;
       if (lenSq > TOL * TOL) {
@@ -452,20 +615,56 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
           if (Math.sqrt(px * px + py * py + pz * pz) > TOL) continue;
           hitsOnEdge.push({
             pt3d: pt,
-            t: oe.forward ? t : 1 - t, // Parameter on the EDGE (not oriented edge)
+            // For angular surfaces, use wire-direction parameter so split
+            // points are ordered correctly along the oriented boundary.
+            // For non-angular (planar) surfaces, use edge parameter (original behavior).
+            t: angular ? t : (oe.forward ? t : 1 - t),
           });
         }
+      }
+    } else if ((curve.type === 'arc3d' || curve.type === 'circle3d') && 'plane' in curve) {
+      // For arc/circle boundary edges (e.g., sphere seam arcs):
+      // Analytically project each intersection endpoint onto the arc's plane
+      // and compute the angle parameter.
+      const arcCurve = curve as any; // { plane, radius, startParam, endParam }
+      const arcPlane = arcCurve.plane;
+      const arcRadius = arcCurve.radius;
+      const tRange = curve.endParam - curve.startParam;
+      // Compute yDir = normal × xAxis
+      const yDir = cross(arcPlane.normal, arcPlane.xAxis);
+
+      for (const pt of intEndpoints) {
+        // Project pt onto arc plane and find angle
+        const rel = vec3d(pt.x - arcPlane.origin.x, pt.y - arcPlane.origin.y, pt.z - arcPlane.origin.z);
+        const xComp = rel.x * arcPlane.xAxis.x + rel.y * arcPlane.xAxis.y + rel.z * arcPlane.xAxis.z;
+        const yComp = rel.x * yDir.x + rel.y * yDir.y + rel.z * yDir.z;
+        const nComp = rel.x * arcPlane.normal.x + rel.y * arcPlane.normal.y + rel.z * arcPlane.normal.z;
+
+        // Check point is close to the arc plane
+        if (Math.abs(nComp) > 0.05) continue;
+
+        // Check radius matches
+        const rDist = Math.sqrt(xComp * xComp + yComp * yComp);
+        if (Math.abs(rDist - arcRadius) > 0.05) continue;
+
+        // Compute angle parameter
+        const angle = Math.atan2(yComp, xComp);
+
+        // Check angle is within arc range (with tolerance)
+        if (angle < curve.startParam - 0.01 || angle > curve.endParam + 0.01) continue;
+
+        // Convert to wire-direction parameter [0,1]
+        const edgeT = (angle - curve.startParam) / tRange;
+        const wireT = oe.forward ? edgeT : 1 - edgeT;
+        if (wireT < TOL || wireT > 1 - TOL) continue;
+        hitsOnEdge.push({ pt3d: pt, t: angular ? wireT : (oe.forward ? wireT : 1 - wireT) });
       }
     }
 
     if (hitsOnEdge.length === 0) {
       // No splits — add edge in wire direction only.
-      const startPt = eStart;
-      const endPt = eEnd;
-      const startUV = projectToUV(surface, startPt);
-      const endUV = projectToUV(surface, endPt);
-      const startIdx = findOrAddVertex(vertices, vertices2D, startPt, startUV);
-      const endIdx = findOrAddVertex(vertices, vertices2D, endPt, endUV);
+      const startIdx = findVtx(vertices, vertices2D, eStart, edgeStartUV);
+      const endIdx = findVtx(vertices, vertices2D, eEnd, edgeEndUV);
 
       // Unsplit boundary edge — forward direction only.
       // Reverse direction is only added for SPLIT boundary sub-edges (below),
@@ -482,21 +681,62 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       // Build sub-edges. Following OCCT BOPAlgo_Builder_2.cxx BuildSplitFaces:
       // split sub-edges that contain an intersection-edge interior vertex get
       // both forward and reverse half-edges. Others get only forward.
+      // Build the wire-direction parameter values for split points
+      const hitTs = hitsOnEdge.map(h => h.t);
       const pts3d = [eStart, ...hitsOnEdge.map(h => h.pt3d), eEnd];
+      const segTs = [0, ...hitTs, 1]; // Wire-direction parameters for each point
+
       for (let i = 0; i < pts3d.length - 1; i++) {
         if (distance(pts3d[i], pts3d[i + 1]) < TOL) continue;
-        const lineRes = makeLine3D(pts3d[i], pts3d[i + 1]);
-        if (!lineRes.success) continue;
-        const edgeRes = makeEdgeFromCurve(lineRes.result!);
-        if (!edgeRes.success) continue;
 
-        const startUV = projectToUV(surface, pts3d[i]);
-        const endUV = projectToUV(surface, pts3d[i + 1]);
-        const startIdx = findOrAddVertex(vertices, vertices2D, pts3d[i], startUV);
-        const endIdx = findOrAddVertex(vertices, vertices2D, pts3d[i + 1], endUV);
+        // Create sub-edge matching the original curve type.
+        // For arc boundary edges (sphere seams), create sub-arcs.
+        // For line boundary edges, create sub-lines.
+        let subEdge: Edge | null = null;
+        if (curve.type === 'arc3d' && 'plane' in curve) {
+          const tRange = curve.endParam - curve.startParam;
+          const subT0 = oe.forward
+            ? curve.startParam + segTs[i] * tRange
+            : curve.endParam - segTs[i] * tRange;
+          const subT1 = oe.forward
+            ? curve.startParam + segTs[i + 1] * tRange
+            : curve.endParam - segTs[i + 1] * tRange;
+          const startAngle = Math.min(subT0, subT1);
+          const endAngle = Math.max(subT0, subT1);
+          const arcRes = makeArc3D((curve as any).plane, (curve as any).radius, startAngle, endAngle);
+          if (arcRes.success && arcRes.result) {
+            const er = makeEdgeFromCurve(arcRes.result);
+            if (er.success) subEdge = er.result!;
+          }
+        }
+        if (!subEdge) {
+          // Default: create a line sub-edge
+          const lineRes = makeLine3D(pts3d[i], pts3d[i + 1]);
+          if (!lineRes.success) continue;
+          const er = makeEdgeFromCurve(lineRes.result!);
+          if (!er.success) continue;
+          subEdge = er.result!;
+        }
+
+        // Interpolate UV linearly between edge endpoints for split points.
+        // This ensures seam sub-edges stay on the correct side of the UV
+        // rectangle (e.g., u=3π/2 rather than raw projected u=-π/2).
+        const tStart = segTs[i];
+        const tEnd = segTs[i + 1];
+        const sUV = angular
+          ? { x: edgeStartUV.x + tStart * (edgeEndUV.x - edgeStartUV.x),
+              y: edgeStartUV.y + tStart * (edgeEndUV.y - edgeStartUV.y) }
+          : projectToUV(surface, pts3d[i]);
+        const eUV = angular
+          ? { x: edgeStartUV.x + tEnd * (edgeEndUV.x - edgeStartUV.x),
+              y: edgeStartUV.y + tEnd * (edgeEndUV.y - edgeStartUV.y) }
+          : projectToUV(surface, pts3d[i + 1]);
+
+        const startIdx = findVtx(vertices, vertices2D, pts3d[i], sUV);
+        const endIdx = findVtx(vertices, vertices2D, pts3d[i + 1], eUV);
 
         boundaryHalfEdges.push({
-          edge: edgeRes.result!, forward: true, startVtx: startIdx, endVtx: endIdx,
+          edge: subEdge, forward: true, startVtx: startIdx, endVtx: endIdx,
           angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
         });
       }
@@ -509,14 +749,38 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   for (const e of splitEdges) {
     const startPt = edgeStartPoint(e);
     const endPt = edgeEndPoint(e);
-    const startUV = projectToUV(surface, startPt);
-    const endUV = projectToUV(surface, endPt);
-    const startIdx = findOrAddVertex(vertices, vertices2D, startPt, startUV);
-    const endIdx = findOrAddVertex(vertices, vertices2D, endPt, endUV);
 
-    if (e.curve.isClosed) {
-      // Closed curve (full circle) — handle as hole-maker
-      // Add both forward and reverse half-edges with same start/end vertex
+    if (angular && e.curve.isClosed) {
+      // Closed intersection edge on angular surface:
+      // "Open" at the seam, same as boundary circles.
+      // The opened edge spans the full UV width (left to right seam).
+      //
+      // OCCT ref: BOPAlgo_Builder_2.cxx adds section edges with BOTH
+      // orientations for closed edges on periodic surfaces.
+      //
+      // Determine the UV rectangle's left edge U from existing boundary vertices.
+      // The first boundary vertex's U is the left side of the rectangle.
+      const refU = vertices2D.length > 0 ? vertices2D[0].x : undefined;
+      const { startUV, endUV } = openClosedEdgeUV(e, true, surface, refU);
+
+      const startIdx = findOrAddVertexByUV(vertices, vertices2D, startPt, startUV);
+      const endIdx = findOrAddVertexByUV(vertices, vertices2D, startPt, endUV);
+
+      // Forward: left → right
+      intHalfEdges.push({
+        edge: e, forward: true, startVtx: startIdx, endVtx: endIdx,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false,
+      });
+      // Reverse: right → left
+      intHalfEdges.push({
+        edge: e, forward: false, startVtx: endIdx, endVtx: startIdx,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false,
+      });
+    } else if (e.curve.isClosed) {
+      // Closed curve on non-angular surface (e.g., circle on plane):
+      // Handle as hole-maker with same start/end vertex.
+      const startUV = projectToUV(surface, startPt);
+      const startIdx = findOrAddVertex(vertices, vertices2D, startPt, startUV);
       intHalfEdges.push({
         edge: e, forward: true, startVtx: startIdx, endVtx: startIdx,
         angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false,
@@ -527,6 +791,18 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       });
     } else {
       // Open curve — add both forward and reverse half-edges
+      let startUV = projectToUV(surface, startPt);
+      let endUV = projectToUV(surface, endPt);
+      if (angular) {
+        // Unwrap relative to boundary UV rectangle
+        const refU = vertices2D.length > 0 ? vertices2D[0].x : 0;
+        startUV = unwrapU(startUV, refU);
+        endUV = unwrapU(endUV, startUV.x);
+      }
+      const findVtx = angular ? findOrAddVertexByUV : findOrAddVertex;
+      const startIdx = findVtx(vertices, vertices2D, startPt, startUV);
+      const endIdx = findVtx(vertices, vertices2D, endPt, endUV);
+
       intHalfEdges.push({
         edge: e, forward: true, startVtx: startIdx, endVtx: endIdx,
         angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false,
@@ -568,6 +844,8 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     let current = he;
 
     // Special case: closed curve (full circle) — forms a single-edge loop
+    // Only applies when startVtx == endVtx (non-angular surfaces).
+    // On angular surfaces, closed curves are "opened" with distinct vertices.
     if (current.startVtx === current.endVtx) {
       current.used = true;
       loop.push(current);
@@ -663,9 +941,6 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     }
   }
 
-  // No loops found — return original face
-
-
   if (loops.length === 0) return [face];
 
   // ── Step 7: Build wires from loops and classify ──
@@ -678,7 +953,8 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
 
   const loopInfos: LoopInfo[] = [];
 
-  for (const loop of loops) {
+  for (let loopIdx = 0; loopIdx < loops.length; loopIdx++) {
+    const loop = loops[loopIdx];
     const orientedEdges: OrientedEdge[] = loop.map(he => orientEdge(he.edge, he.forward));
     const wireResult = makeWire(orientedEdges);
     if (!wireResult.success) continue;
@@ -735,19 +1011,37 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   // face with reversed wire), negative = outer.
   // OCCT ref: BOPAlgo_BuilderFace handles face orientation in PerformAreas.
 
-  // Compute original boundary signed area to determine convention
-  const origPts2D: Pt2[] = [];
-  for (const oe of faceOuterWire(face).edges) {
-    const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-    origPts2D.push(projectToUV(surface, pt));
+  // Compute original boundary signed area to determine convention.
+  // For angular surfaces, use the boundary half-edge UV vertices (which have
+  // circles opened and seams unwrapped) instead of raw wire projections.
+  // Raw projections give degenerate zero-area polygons for cylinder boundaries
+  // because closed circles project to a single point.
+  let origArea: number;
+  if (angular) {
+    // Use the boundary half-edge vertex UVs (already unwrapped and opened)
+    const origPts: Pt2[] = boundaryHalfEdges
+      .filter(he => he.isBoundary)
+      .map(he => vertices2D[he.startVtx]);
+    let a = 0;
+    for (let i = 0; i < origPts.length; i++) {
+      const j = (i + 1) % origPts.length;
+      a += origPts[i].x * origPts[j].y - origPts[j].x * origPts[i].y;
+    }
+    origArea = a / 2;
+  } else {
+    const origPts2D: Pt2[] = [];
+    for (const oe of faceOuterWire(face).edges) {
+      const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      origPts2D.push(projectToUV(surface, pt));
+    }
+    const origAreaPts = origPts2D;
+    origArea = 0;
+    for (let i = 0; i < origAreaPts.length; i++) {
+      const j = (i + 1) % origAreaPts.length;
+      origArea += origAreaPts[i].x * origAreaPts[j].y - origAreaPts[j].x * origAreaPts[i].y;
+    }
+    origArea /= 2;
   }
-  const origAreaPts = isAngularSurface(surface) ? unwrapAngularCoords(origPts2D) : origPts2D;
-  let origArea = 0;
-  for (let i = 0; i < origAreaPts.length; i++) {
-    const j = (i + 1) % origAreaPts.length;
-    origArea += origAreaPts[i].x * origAreaPts[j].y - origAreaPts[j].x * origAreaPts[i].y;
-  }
-  origArea /= 2;
 
   // If original boundary is CW (negative), flip the convention
   const outerIsPositive = origArea > 0;
