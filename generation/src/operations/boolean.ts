@@ -519,7 +519,45 @@ function classifySubFace(
     if (result !== 'on') return result;
   }
 
-  // Phase 2: Fallback to standard classifyFace
+  // Phase 2: OCCT ComputeState fallback (line 662-673):
+  // Find an edge NOT adjacent to intersection edges and use its midpoint.
+  // The key insight: edges far from the intersection boundary give the
+  // most representative classification of the sub-face's region.
+  //
+  // Collect intersection edge endpoints for proximity check.
+  const intEndpoints: Point3D[] = [];
+  for (const ie of intersectionEdges) {
+    intEndpoints.push(edgeStartPoint(ie));
+    intEndpoints.push(edgeEndPoint(ie));
+  }
+
+  // Score edges by distance from intersection endpoints.
+  // Use the edge whose midpoint is farthest from any intersection endpoint.
+  let bestDist = -1;
+  let bestMid: Point3D | null = null;
+  for (const oe of face.outerWire.edges) {
+    const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+    const mid = point3d((s.x + e.x) / 2, (s.y + e.y) / 2, (s.z + e.z) / 2);
+
+    let minDist = Infinity;
+    for (const ip of intEndpoints) {
+      const d = distance(mid, ip);
+      if (d < minDist) minDist = d;
+    }
+
+    if (minDist > bestDist) {
+      bestDist = minDist;
+      bestMid = mid;
+    }
+  }
+
+  if (bestMid) {
+    const result = pointInSolid(bestMid, otherSolid);
+    if (result !== 'on') return result;
+  }
+
+  // Phase 3: Last resort — standard classifyFace
   return classifyFace(face, otherSolid);
 }
 
@@ -885,15 +923,40 @@ export function booleanOperation(
     return failure(`Boolean ${op} produced only ${selectedFaces.length} faces (A:${allFacesA.length} [${allFacesA.map(f=>f.classification)}], B:${allFacesB.length} [${allFacesB.map(f=>f.classification)}]) — result is degenerate`);
   }
 
-  // ── Stage 5: Stitch edges and assemble ──
+  // ── Stage 5: Orient faces, stitch edges, and assemble ──
 
-  const stitched = stitchEdges(selectedFaces);
+  // Following OCCT BOPTools_AlgoTools::OrientFacesOnShell + ShapeFix_Shell::GetShells:
+  // Ensure all faces have consistent edge winding. Faces from different source solids
+  // may have inconsistent orientations at shared intersection edges.
+  const oriented = orientFacesOnShell(selectedFaces);
+  const stitched = stitchEdges(oriented);
 
   const shellResult = makeShell(stitched);
   if (!shellResult.success) return failure(`Shell creation failed: ${shellResult.error}`);
 
   const solidResult = makeSolid(shellResult.result!);
   if (!solidResult.success) {
+    // Diagnose boundary edges
+    const TOL7 = 1e-7;
+    const rr = (n: number) => Math.round(n / TOL7) * TOL7;
+    const eu = new Map<string, string[]>();
+    for (const f of stitched) {
+      for (const oe of f.outerWire.edges) {
+        const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+        const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+        const k1 = `${rr(s.x)},${rr(s.y)},${rr(s.z)}`;
+        const k2 = `${rr(e.x)},${rr(e.y)},${rr(e.z)}`;
+        const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+        const dir = oe.edge.curve.isClosed ? `${k1}|${oe.forward?'F':'R'}` : `${k1}->${k2}`;
+        if (!eu.has(key)) eu.set(key, []);
+        eu.get(key)!.push(dir);
+      }
+    }
+    const bad: string[] = [];
+    for (const [key, dirs] of eu) {
+      if (dirs.length !== 2 || dirs[0] === dirs[1])
+        bad.push(`${key}[${dirs.length}]`);
+    }
     return failure(`Solid creation failed (shell not closed): ${solidResult.error}`);
   }
 
@@ -1158,6 +1221,101 @@ function stitchEdges(faces: Face[]): Face[] {
   for (const face of faces) {
     const rebuilt = preSplitFaceAtVertices(face, allVerts);
     result.push(rebuilt);
+  }
+
+  return result;
+}
+
+// ═══════════════════════════════════════════════════════
+// SHELL ORIENTATION (OCCT OrientFacesOnShell)
+// ═══════════════════════════════════════════════════════
+
+/**
+ * Orient faces so shared edges are traversed in opposite directions.
+ *
+ * Following OCCT BOPTools_AlgoTools::OrientFacesOnShell (line 353-480)
+ * and ShapeFix_Shell::GetShells (line 301-610):
+ *
+ * For each edge shared by 2 faces, if the edge has the SAME orientation
+ * in both faces (both forward or both reversed), one face is flipped.
+ * This greedy algorithm processes faces one at a time, flipping each
+ * to maintain consistent edge winding with already-processed neighbors.
+ */
+/**
+ * Orient faces so shared edges are traversed in opposite directions.
+ *
+ * Following OCCT BOPTools_AlgoTools::OrientFacesOnShell (line 353-480)
+ * and ShapeFix_Shell::GetShells (line 301-610):
+ *
+ * BFS from face 0: for each unprocessed neighbor, check if the shared
+ * edge has the same directed key in both faces. If so, flip the neighbor.
+ */
+function orientFacesOnShell(faces: Face[]): Face[] {
+  if (faces.length <= 1) return faces;
+
+  const TOL7 = 1e-7;
+  const round = (n: number) => Math.round(n / TOL7) * TOL7;
+
+  // Helper: compute edge keys for a face
+  function faceEdgeKeys(face: Face): { key: string; directed: string }[] {
+    const result: { key: string; directed: string }[] = [];
+    for (const oe of face.outerWire.edges) {
+      const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+      const k1 = `${round(s.x)},${round(s.y)},${round(s.z)}`;
+      const k2 = `${round(e.x)},${round(e.y)},${round(e.z)}`;
+      const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+      const directed = oe.edge.curve.isClosed
+        ? `${k1}|${oe.forward ? 'F' : 'R'}`
+        : `${k1}->${k2}`;
+      result.push({ key, directed });
+    }
+    return result;
+  }
+
+  // Build initial undirected edge → face index map
+  const edgeToFaces = new Map<string, number[]>();
+  for (let fi = 0; fi < faces.length; fi++) {
+    for (const { key } of faceEdgeKeys(faces[fi])) {
+      if (!edgeToFaces.has(key)) edgeToFaces.set(key, []);
+      const list = edgeToFaces.get(key)!;
+      if (!list.includes(fi)) list.push(fi);
+    }
+  }
+
+  const result = [...faces];
+  const processed = new Set<number>();
+  const queue: number[] = [0];
+  processed.add(0);
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const currentKeys = faceEdgeKeys(result[current]);
+
+    for (const { key, directed } of currentKeys) {
+      const neighbors = edgeToFaces.get(key);
+      if (!neighbors) continue;
+
+      for (const ni of neighbors) {
+        if (ni === current || processed.has(ni)) continue;
+
+        // Find the directed key for this edge in the neighbor face
+        const neighborKeys = faceEdgeKeys(result[ni]);
+        const neighborEdge = neighborKeys.find(nk => nk.key === key);
+        if (!neighborEdge) continue;
+
+        // If same directed key → same winding → flip neighbor
+        if (directed === neighborEdge.directed) {
+          const flippedFace = flipFace(result[ni]);
+          if (flippedFace.success) {
+            result[ni] = flippedFace.result!;
+          }
+        }
+
+        processed.add(ni);
+        queue.push(ni);
+      }
+    }
   }
 
   return result;
