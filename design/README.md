@@ -1106,7 +1106,7 @@ App Examples:
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Status (2026-03-26):** Box-cylinder through-hole and box-sphere (fully inside) now work. BuilderFace splits curved faces on periodic surfaces using OCCT-style UV unrolling. 5 of 9 original curved-face failures fixed. Remaining: sphere face splitting (partial sphere), nested/coaxial cylinders.
+**Status (2026-03-26):** Major architectural refactor complete. Surface-agnostic pipeline with PCurves, mutable topology, SurfaceAdapter. BuilderFace rewritten as pure 2D (PCurve-based, no surface-type branching). 1258 tests passing. 2 subtract/union regressions (coplanar stitching), 10 pre-existing curved-face failures.
 
 **Architecture:**
 
@@ -1157,47 +1157,50 @@ booleanOperation(A, B, op)
 
 **G: FFI Analytic Edge Dispatch** ✅ — `intersectFaceFace` dispatches to analytic intersection for plane-plane (→Line3D), plane-sphere/cylinder/cone (→Circle3D/Arc3D). Falls back to SSI marcher for other pairs. 3 analytic dispatch tests.
 
-**H: Pipeline Cutover + OCCT Classification** 🔧 IN PROGRESS
+**H: Pipeline Cutover — PCurves + Surface-Agnostic** 🔧 IN PROGRESS
 
-Deleted ~900 lines of special-case code. Wired FFI+BuilderFace as the single pipeline. All planar boolean operations work. Curved face splitting works for cylinder faces. 1300 tests passing, no regressions.
+Major architectural refactor (2026-03-26):
 
-Key OCCT patterns implemented:
-- `classifySubFace` following `BOPTools_AlgoTools::IsInternalFace` — intersection-edge binormal test for non-convex sub-faces. Extended for curved edges: mid-parameter evaluation + curve tangent for circles/arcs (handles closed circle intersection edges where line-segment projection degenerates)
-- `ComputeState` fallback — farthest-from-intersection edge midpoint
-- `OrientFacesOnShell` following `BOPTools_AlgoTools::OrientFacesOnShell` — BFS-based face orientation for consistent edge winding
-- **UV-space unrolling for periodic surfaces** following `BOPAlgo_Builder_2.cxx DoSplitSEAMOnFace`: closed boundary edges (circles) "opened" at seam with distinct UV vertices (±2π). UV-based vertex merging (`findOrAddVertexByUV`) prevents 3D-coincident seam vertices from collapsing. Seam edge detection for natural restriction faces (sphere: same edge fwd+rev with +2π shift)
-- **Arc boundary edge splitting** for sphere seam arcs: analytic angle projection onto arc plane, sub-arcs via `makeArc3D`
-- Interior-edge priority rule following `BOPAlgo_WireSplitter_1.cxx` Path()
-- Orientation-aware area sign — original boundary UV area determines positive=outer vs negative=outer convention (`BOPAlgo_BuilderFace::PerformAreas`)
+**Completed:**
+- **SurfaceAdapter** (`surfaces/surface-adapter.ts`): Polymorphic interface with `evaluate`, `normal`, `projectPoint`, `isUPeriodic`, `uvBounds`. Replaces 15 switch-dispatch functions. All 7 surface types wrapped.
+- **PCurves on all edges**: Extrude, revolve, and FFI attach PCurves (2D curves in surface parameter space) to every edge at creation time. `makeFace()` auto-attaches PCurves for edges missing them. Follows OCCT `BRep_Builder::UpdateEdge`.
+- **Mutable Edge topology**: `Edge.pcurves` is mutable (push, not spread-copy). `addPCurveToEdge()` mutates in place. Shared graph model like OCCT. Math primitives (Point3D, Vector3D) remain immutable.
+- **BuilderFace rewritten as pure 2D**: All UV from PCurves or SurfaceAdapter fallback. No `isAngularSurface`, no `projectToUV` dispatch, no seam detection hacks. 1115 → 590 lines (-525 lines). PCurves always in edge geometric direction; wire direction handled by consumer.
+- **PCurve direction fix**: `buildPCurveForEdgeOnSurface` always stores UV in edge geometric direction (startVertex → endVertex). `getEdgeUV` swaps for reversed wire traversal. Fixes double-reversal bug that corrupted UV on reversed boundary edges.
+- **flipFace preserves surface identity**: Uses `forward` flag instead of creating new surface object. Prevents PCurve surface reference breakage.
+
+**Key OCCT patterns adopted:**
+- `BOPAlgo_BuilderFace` / `BOPAlgo_WireSplitter`: wire tracing via smallest-clockwise-angle in 2D parameter space
+- `BRep_CurveOnSurface`: PCurves stored per edge per surface, in edge geometric direction
+- `BRep_Builder::UpdateEdge`: in-place mutation of edge PCurves (mutable topology)
+- `GeomAdaptor_Surface`: polymorphic surface evaluation/projection
+- `IntTools_FClass2d::IsHole`: signed area classification
+- `BOPAlgo_WireSplitter_1.cxx Path()`: edge selection with interior-edge priority, sub-loop extraction
 
 ---
 
 #### Remaining Work
 
-##### Sphere Face Splitting (4 failures)
+##### Subtract/Union Stitching Regression (2 failures + ~14 cascading)
 
-Sphere faces have a "natural restriction" wire (same arc fwd+rev = seam meridian). The UV rectangle is bounded by the seam at U=u₀ and U=u₀+2π, with poles at V=±π/2 (degenerate vertices where all U converge).
+Box-box intersect works. Box-box subtract/union fail with "shell not closed". The coplanar face handler (`handleCoplanarFace`) creates polygon fragments with new Edge objects that don't stitch with BuilderFace's split sub-edges. Root cause: edge identity mismatch between coplanar fragments and non-coplanar sub-faces at shared boundaries.
 
-A latitude circle (from plane-sphere FFI) creates a horizontal line in UV at V=arcsin(z/r). BuilderFace must split the UV rectangle into two strips (cap + remainder). The infrastructure is in place:
-- Arc hit detection works (analytic angle projection finds wireT=0.333)
-- Seam +2π shift creates the UV rectangle
-- Sub-arc creation via `makeArc3D`
+**Approach:** The coplanar handler needs to share Edge objects with BuilderFace output at boundary intersection points. OCCT handles this via the shared PaveFiller vertex/edge pool. Our stitcher tries to match by 3D proximity but fails for the subtract/union case.
 
-**Blocking issue:** The loop tracing produces 1 sub-face instead of 2. Root cause under investigation — likely the UV vertex topology at the split point where the latitude circle meets the seam arcs. OCCT handles this via degenerate edges at poles (`BRep_Tool::Degenerated`) and 2D tolerance matching in `BOPAlgo_WireSplitter_1.cxx Path()`.
+##### Curved Face Failures (10 pre-existing)
 
-**Approach:** Follow OCCT's sphere pole handling — add degenerate edges at V=±π/2, ensure the opened circle + split seam arcs form proper closed loops in UV space.
+- Sphere partially outside box (4 tests) — sphere face splitting
+- Box−sphere at corner/edge (2 tests) — partial circle arcs
+- Nested coaxial cylinders (2 tests) — coplanar circular caps
+- Multiple bores (2 tests) — sequential boolean on curved results
 
-**Tests affected:**
-- F2: Sphere partially outside box (4 tests)
-- General: box−sphere at corner/edge (2 tests)
-- Nested coaxial cylinders, multiple bores (2 tests — coplanar circular cap issue, separate from sphere)
+These require the PCurve-based BuilderFace to correctly handle sphere seam arcs and coplanar circular boundaries.
 
 ##### Exit Criteria Tests
 - **F1: Box − sphere (fully inside)** ✅ — all 5 tests passing
-- **F2: Sphere partially outside** — 4 tests failing (sphere face splitting)
-- **F3: Box − cylinder (through-hole)** ✅ — all tests passing, STEP round-trip with CYLINDRICAL_SURFACE
-- **F4: L-bracket − sphere (fully inside)** ✅ — all 4 tests passing
-- **F5: Volume invariant** — `V(A) + V(B) = V(union) + V(intersect)` ✅ passes for planar cases
+- **F3: Box − cylinder (through-hole)** — was passing, now regressed due to subtract stitching issue
+- **F4: L-bracket − sphere (fully inside)** — was passing, regressed
+- **F5: Volume invariant** — regressed for subtract/union
 - **F6: Edge cases** ✅ — sphere outside, sphere fully inside
 
 ---
