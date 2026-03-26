@@ -168,6 +168,36 @@ describe('BuilderFace: circle splitting', () => {
 });
 
 // ═══════════════════════════════════════════════
+// L-SHAPED SPLIT (non-coplanar box intersection)
+// ═══════════════════════════════════════════════
+
+describe('BuilderFace: L-shaped split', () => {
+  it('two L-meeting edges produce L-shape + rectangle', () => {
+    // Simulates A's top face (-2,-2)→(2,2) split by B's boundaries at x=-1 and y=-1.
+    // The two FFI edges meet at (-1,-1) forming an L, producing:
+    // - L-shape (6 edges): the region x<-1 OR y<-1
+    // - Rectangle (4 edges): the region x>-1 AND y>-1
+    const face = makeRectFace(-2, -2, 2, 2);
+    const edge1 = lineEdge(-1, -1, 2, -1);  // horizontal at y=-1
+    const edge2 = lineEdge(-1, 2, -1, -1);  // vertical at x=-1
+
+    const result = builderFace(face, [edge1, edge2]);
+    expect(result.length).toBe(2);
+
+    // One should be the 4-edge rectangle, one the 6-edge L-shape
+    const sorted = [...result].sort((a, b) => a.outerWire.edges.length - b.outerWire.edges.length);
+    expect(sorted[0].outerWire.edges.length).toBe(4); // rectangle
+    expect(sorted[1].outerWire.edges.length).toBe(6); // L-shape
+
+    // Area check: rectangle = 3×3 = 9, L-shape = 16-9 = 7
+    const areas = result.map(faceArea);
+    expect(areas[0] + areas[1]).toBeCloseTo(16, 1);
+    expect(Math.min(...areas)).toBeCloseTo(7, 0);
+    expect(Math.max(...areas)).toBeCloseTo(9, 0);
+  });
+});
+
+// ═══════════════════════════════════════════════
 // EDGE CASE: NO SPLIT
 // ═══════════════════════════════════════════════
 

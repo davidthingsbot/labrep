@@ -85,11 +85,19 @@ describe('topology validation on existing box-box case', () => {
 // ═══════════════════════════════════════════════════════
 
 describe('boxes with different Z bases (non-coplanar top/bottom)', () => {
-  // A: z=0..4, B: z=1..5 → overlap region z=1..4 (height 3)
-  // XY overlap: same as before, 3×3
-  // Intersection volume: 3×3×3 = 27
+  // A: (-2,-2,0)→(2,2,4), B: (-1,-1,1)→(3,3,5)
+  // Overlap region: (-1,-1,1)→(2,2,4) = 3×3×3 = 27
+  // No coplanar faces — pure FFI+BuilderFace pipeline.
+  // Critical test: BuilderFace produces L-shaped sub-faces that straddle
+  // the other solid's boundary. Classification must use OCCT-style
+  // intersection-edge-based determination, not centroid.
   const boxA = makeBox(0, 0, 0, 4, 4, 4);
   const boxB = makeBox(1, 1, 1, 4, 4, 4);
+
+  it('intersect succeeds', () => {
+    const result = booleanIntersect(boxA.solid, boxB.solid);
+    expect(result.success).toBe(true);
+  });
 
   it('intersect volume should be 27', () => {
     const result = booleanIntersect(boxA.solid, boxB.solid);

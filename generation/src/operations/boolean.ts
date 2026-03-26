@@ -413,6 +413,116 @@ function projectToSurfaceLocal(s: Surface, pt: Point3D): { u: number; v: number 
   }
 }
 
+/**
+ * Classify a sub-face produced by BuilderFace using OCCT-style
+ * intersection-edge-based determination.
+ *
+ * Based on OCCT BOPTools_AlgoTools::IsInternalFace:
+ * 1. Find an intersection edge in the sub-face's boundary
+ * 2. At the edge midpoint, compute the binormal (perpendicular to edge,
+ *    pointing into the sub-face, in the face plane)
+ * 3. Nudge the midpoint along the binormal
+ * 4. Classify the nudged point with pointInSolid
+ *
+ * This is robust for non-convex sub-faces (L-shapes) where the vertex
+ * centroid may be misleading.
+ */
+function classifySubFace(
+  face: Face,
+  otherSolid: Solid,
+  intersectionEdges: Edge[],
+): 'inside' | 'outside' | 'on' {
+  // Phase 1: Try intersection-edge-based classification
+  // Find an intersection edge in this sub-face's boundary
+  for (const oe of face.outerWire.edges) {
+    // Check if this edge lies on an intersection edge. BuilderFace may have
+    // split the intersection edge, so we check if the edge MIDPOINT lies on
+    // any intersection edge (not just endpoint matching).
+    const eStart = edgeStartPoint(oe.edge);
+    const eEnd = edgeEndPoint(oe.edge);
+    const eMid = point3d((eStart.x + eEnd.x) / 2, (eStart.y + eEnd.y) / 2, (eStart.z + eEnd.z) / 2);
+    const isIntEdge = intersectionEdges.some(ie => {
+      const iStart = edgeStartPoint(ie);
+      const iEnd = edgeEndPoint(ie);
+      // Check if eMid lies on segment iStart→iEnd
+      const dx = iEnd.x - iStart.x, dy = iEnd.y - iStart.y, dz = iEnd.z - iStart.z;
+      const lenSq = dx * dx + dy * dy + dz * dz;
+      if (lenSq < 1e-12) return false;
+      const vx = eMid.x - iStart.x, vy = eMid.y - iStart.y, vz = eMid.z - iStart.z;
+      const t = (vx * dx + vy * dy + vz * dz) / lenSq;
+      if (t < -0.01 || t > 1.01) return false;
+      const px = iStart.x + t * dx - eMid.x;
+      const py = iStart.y + t * dy - eMid.y;
+      const pz = iStart.z + t * dz - eMid.z;
+      return Math.sqrt(px * px + py * py + pz * pz) < STITCH_TOL * 10;
+    });
+    if (!isIntEdge) continue;
+
+    // Found an intersection edge in this sub-face.
+    // Compute midpoint and binormal (OCCT GetFaceDir).
+    const wStart = oe.forward ? eStart : eEnd;
+    const wEnd = oe.forward ? eEnd : eStart;
+    const mid = point3d((wStart.x + wEnd.x) / 2, (wStart.y + wEnd.y) / 2, (wStart.z + wEnd.z) / 2);
+
+    // Edge direction in wire traversal order
+    const edgeDir = vec3d(wEnd.x - wStart.x, wEnd.y - wStart.y, wEnd.z - wStart.z);
+
+    // Face normal
+    let faceNormal: { x: number; y: number; z: number } | null = null;
+    if (face.surface.type === 'plane') {
+      faceNormal = face.surface.plane.normal;
+    } else if (face.surface.type === 'sphere') {
+      const s = face.surface;
+      const dx = mid.x - s.center.x, dy = mid.y - s.center.y, dz = mid.z - s.center.z;
+      const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      if (len > 1e-10) faceNormal = { x: dx / len, y: dy / len, z: dz / len };
+    } else if (face.surface.type === 'cylinder') {
+      const s = face.surface;
+      const rel = { x: mid.x - s.axis.origin.x, y: mid.y - s.axis.origin.y, z: mid.z - s.axis.origin.z };
+      const axComp = rel.x * s.axis.direction.x + rel.y * s.axis.direction.y + rel.z * s.axis.direction.z;
+      const radial = { x: rel.x - axComp * s.axis.direction.x, y: rel.y - axComp * s.axis.direction.y, z: rel.z - axComp * s.axis.direction.z };
+      const rLen = Math.sqrt(radial.x ** 2 + radial.y ** 2 + radial.z ** 2);
+      if (rLen > 1e-10) faceNormal = { x: radial.x / rLen, y: radial.y / rLen, z: radial.z / rLen };
+    }
+    if (!faceNormal) continue;
+
+    // Binormal = face_normal × edge_direction → perpendicular to edge, in face plane
+    // This points to one side of the edge (into the sub-face or away from it).
+    const fn = vec3d(faceNormal.x, faceNormal.y, faceNormal.z);
+    const binormal = cross(fn, edgeDir);
+    const binLen = length(binormal);
+    if (binLen < 1e-10) continue;
+
+    // Nudge along binormal
+    const nudge = 1e-4;
+    const testPt1 = point3d(
+      mid.x + (binormal.x / binLen) * nudge,
+      mid.y + (binormal.y / binLen) * nudge,
+      mid.z + (binormal.z / binLen) * nudge,
+    );
+
+    // Check if testPt1 is inside the sub-face polygon (for planar faces)
+    let useTestPt1 = true;
+    if (face.surface.type === 'plane') {
+      const poly = faceToPolygon2DRaw(face, face.surface.plane);
+      const pt2d = worldToSketch(face.surface.plane, testPt1);
+      useTestPt1 = pointInPolygon2DSimple(pt2d, poly);
+    }
+
+    const testPt = useTestPt1 ? testPt1 : point3d(
+      mid.x - (binormal.x / binLen) * nudge,
+      mid.y - (binormal.y / binLen) * nudge,
+      mid.z - (binormal.z / binLen) * nudge,
+    );
+
+    const result = pointInSolid(testPt, otherSolid);
+    if (result !== 'on') return result;
+  }
+
+  // Phase 2: Fallback to standard classifyFace
+  return classifyFace(face, otherSolid);
+}
+
 function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on' {
   const wire = face.outerWire;
 
@@ -708,7 +818,7 @@ export function booleanOperation(
     if (intEdges && intEdges.length > 0) {
       const subFaces = builderFace(faceA, intEdges);
       for (const sf of subFaces) {
-        allFacesA.push({ face: sf, classification: classifyFace(sf, b) });
+        allFacesA.push({ face: sf, classification: classifySubFace(sf, b, intEdges) });
       }
     } else {
       allFacesA.push({ face: faceA, classification: classifyFace(faceA, b) });
@@ -726,7 +836,7 @@ export function booleanOperation(
     if (intEdges && intEdges.length > 0) {
       const subFaces = builderFace(faceB, intEdges);
       for (const sf of subFaces) {
-        allFacesB.push({ face: sf, classification: classifyFace(sf, a) });
+        allFacesB.push({ face: sf, classification: classifySubFace(sf, a, intEdges) });
       }
     } else {
       allFacesB.push({ face: faceB, classification: classifyFace(faceB, a) });
