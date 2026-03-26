@@ -35,7 +35,7 @@ function makeRectFace(x0: number, y0: number, x1: number, y1: number) {
   return makePlanarFace(makeWireFromEdges(edges).result!).result!;
 }
 
-function lineEdge(x1: number, y1: number, x2: number, y2: number, surface?: Surface, face.surface) {
+function lineEdge(x1: number, y1: number, x2: number, y2: number, surface?: Surface) {
   const edge = makeEdgeFromCurve(makeLine3D(
     point3d(x1, y1, 0), point3d(x2, y2, 0),
   ).result!).result!;

@@ -556,7 +556,13 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   if (loopInfos.length === 0) return [face];
 
   // ── Classify loops as outers or holes ──
-  // Determine sign convention from original boundary area
+  // Following OCCT BOPAlgo_WireSplitter: use geometric containment,
+  // not area sign. A loop is a hole if it's contained inside another loop
+  // (odd nesting depth). This correctly handles face splitting where both
+  // sub-faces are outers with potentially different windings.
+
+  // Determine original face area sign for winding correction
+  // Compute original face area in UV from boundary half-edges
   const origPts: Pt2[] = boundaryHalfEdges
     .filter(he => he.isBoundary)
     .map(he => vertices2D[he.startVtx]);
@@ -566,18 +572,41 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     origArea += origPts[i].x * origPts[j].y - origPts[j].x * origPts[i].y;
   }
   origArea /= 2;
-
   const outerIsPositive = origArea > 0;
 
+  // Step 1: Initial classification by area sign (OCCT convention)
   const outers: LoopInfo[] = [];
-  const holes: LoopInfo[] = [];
+  const candidateHoles: LoopInfo[] = [];
 
   for (const li of loopInfos) {
     const isOuter = outerIsPositive ? li.area > 0 : li.area < 0;
     if (isOuter) {
       outers.push(li);
     } else {
-      holes.push(li);
+      candidateHoles.push(li);
+    }
+  }
+
+  // Step 2: Reclassify "holes" that aren't geometrically contained in any outer.
+  // Face splitting by intersection edges produces loops with reversed winding
+  // that are adjacent (not nested) — these are outers, not holes.
+  const holes: LoopInfo[] = [];
+  for (const ch of candidateHoles) {
+    const chIdx = loopInfos.indexOf(ch);
+    const chPt = vertices2D[loops[chIdx][0].startVtx];
+    let isContained = false;
+    for (const outer of outers) {
+      const outerIdx = loopInfos.indexOf(outer);
+      const outerPts = loops[outerIdx].map(he => vertices2D[he.startVtx]);
+      if (outerPts.length >= 3 && pointInPolygon2D(chPt, outerPts)) {
+        isContained = true;
+        break;
+      }
+    }
+    if (isContained) {
+      holes.push(ch);
+    } else {
+      outers.push(ch); // reclassify: split face, not hole
     }
   }
 
@@ -597,7 +626,18 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       }
     }
 
-    const faceResult = makeFace(surface, outer.wire, myHoles);
+    // Correct winding for outers whose area sign differs from original
+    let wire = outer.wire;
+    if ((outerIsPositive && outer.area < 0) || (!outerIsPositive && outer.area > 0)) {
+      const reversed: OrientedEdge[] = [];
+      for (let i = wire.edges.length - 1; i >= 0; i--) {
+        reversed.push(orientEdge(wire.edges[i].edge, !wire.edges[i].forward));
+      }
+      const rw = makeWire(reversed);
+      if (rw.success) wire = rw.result!;
+    }
+
+    const faceResult = makeFace(surface, wire, myHoles);
     if (faceResult.success) {
       faceResults.push(faceResult.result!);
     }

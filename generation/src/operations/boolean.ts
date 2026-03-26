@@ -11,7 +11,6 @@ import {
   isZero,
   distance,
   worldToSketch,
-  sketchToWorld,
   BoundingBox3D,
   emptyBoundingBox,
   addPoint,
@@ -24,8 +23,8 @@ import { evaluateArc3D } from '../geometry/arc3d';
 import { evaluateEllipse3D } from '../geometry/ellipse3d';
 import type { Curve3D } from '../topology/edge';
 import { Edge, makeEdgeFromCurve, edgeStartPoint, edgeEndPoint } from '../topology/edge';
-import { Wire, OrientedEdge, orientEdge, makeWire, makeWireFromEdges } from '../topology/wire';
-import { Face, Surface, makeFace, makePlanarFace } from '../topology/face';
+import { Wire, OrientedEdge, orientEdge, makeWire } from '../topology/wire';
+import { Face, Surface, makeFace } from '../topology/face';
 import { Shell, makeShell, shellFaces } from '../topology/shell';
 import { Solid, makeSolid, solidVolume } from '../topology/solid';
 import { PlaneSurface, makePlaneSurface } from '../surfaces';
@@ -144,65 +143,6 @@ function polygonArea2D(poly: Pt2[]): number {
   return area / 2;
 }
 
-function polygonDifference(subject: Pt2[], clip: Pt2[]): Pt2[][] {
-  if (subject.length < 3 || clip.length < 3) return [subject];
-
-  let fragments: Pt2[][] = [subject];
-
-  for (let i = 0; i < clip.length; i++) {
-    const edgeStart = clip[i];
-    const edgeEnd = clip[(i + 1) % clip.length];
-
-    const nextFragments: Pt2[][] = [];
-    for (const frag of fragments) {
-      const [inside, outside] = splitPolygonByLine(frag, edgeStart, edgeEnd);
-      if (inside.length >= 3) nextFragments.push(inside);
-      if (outside.length >= 3) nextFragments.push(outside);
-    }
-    fragments = nextFragments;
-  }
-
-  const result: Pt2[][] = [];
-  for (const frag of fragments) {
-    const cx = frag.reduce((s, p) => s + p.x, 0) / frag.length;
-    const cy = frag.reduce((s, p) => s + p.y, 0) / frag.length;
-    if (!pointInPolygon2DSimple({ x: cx, y: cy }, clip)) {
-      result.push(frag);
-    }
-  }
-
-  return result;
-}
-
-function splitPolygonByLine(poly: Pt2[], lineStart: Pt2, lineEnd: Pt2): [Pt2[], Pt2[]] {
-  const inside: Pt2[] = [];
-  const outside: Pt2[] = [];
-
-  for (let j = 0; j < poly.length; j++) {
-    const current = poly[j];
-    const previous = poly[(j + poly.length - 1) % poly.length];
-
-    const currInside = isInsideEdge(current, lineStart, lineEnd);
-    const prevInside = isInsideEdge(previous, lineStart, lineEnd);
-
-    if (currInside) {
-      if (!prevInside) {
-        const inter = lineIntersect2D(previous, current, lineStart, lineEnd);
-        if (inter) { inside.push(inter); outside.push(inter); }
-      }
-      inside.push(current);
-    } else {
-      if (prevInside) {
-        const inter = lineIntersect2D(previous, current, lineStart, lineEnd);
-        if (inter) { inside.push(inter); outside.push(inter); }
-      }
-      outside.push(current);
-    }
-  }
-
-  return [inside, outside];
-}
-
 function pointInPolygon2DSimple(pt: Pt2, poly: Pt2[]): boolean {
   let inside = false;
   for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
@@ -212,6 +152,176 @@ function pointInPolygon2DSimple(pt: Pt2, poly: Pt2[]): boolean {
     }
   }
   return inside;
+}
+
+// ═══════════════════════════════════════════════════════
+// COPLANAR BOUNDARY INTERSECTION
+// ═══════════════════════════════════════════════════════
+
+/**
+ * Clip a 2D line segment against a polygon, returning parameter ranges
+ * of the segment that lie strictly inside the polygon.
+ */
+function clipSegmentByPolygon2D(
+  segStart: Pt2, segEnd: Pt2, polygon: Pt2[],
+): { t1: number; t2: number }[] {
+  if (polygon.length < 3) return [];
+  const dx = segEnd.x - segStart.x;
+  const dy = segEnd.y - segStart.y;
+  if (dx * dx + dy * dy < 1e-20) return [];
+
+  // Collect intersection parameters with polygon edges
+  const crossings: number[] = [];
+  for (let i = 0; i < polygon.length; i++) {
+    const j = (i + 1) % polygon.length;
+    const ex = polygon[j].x - polygon[i].x;
+    const ey = polygon[j].y - polygon[i].y;
+    const denom = dx * ey - dy * ex;
+    if (Math.abs(denom) < 1e-12) continue;
+    const t = ((polygon[i].x - segStart.x) * ey - (polygon[i].y - segStart.y) * ex) / denom;
+    const s = ((polygon[i].x - segStart.x) * dy - (polygon[i].y - segStart.y) * dx) / denom;
+    if (s < -1e-8 || s > 1 + 1e-8) continue;
+    if (t < -1e-8 || t > 1 + 1e-8) continue;
+    crossings.push(Math.max(0, Math.min(1, t)));
+  }
+
+  // Build sorted unique parameter list including endpoints
+  crossings.push(0, 1);
+  crossings.sort((a, b) => a - b);
+  const unique: number[] = [crossings[0]];
+  for (let i = 1; i < crossings.length; i++) {
+    if (crossings[i] - unique[unique.length - 1] > 1e-8) unique.push(crossings[i]);
+  }
+
+  // Check midpoint of each sub-segment
+  const result: { t1: number; t2: number }[] = [];
+  for (let i = 0; i < unique.length - 1; i++) {
+    const t1 = unique[i], t2 = unique[i + 1];
+    if (t2 - t1 < 1e-8) continue;
+    const midT = (t1 + t2) / 2;
+    const mid = { x: segStart.x + midT * dx, y: segStart.y + midT * dy };
+    if (pointInPolygon2DSimple(mid, polygon)) {
+      if (result.length > 0 && Math.abs(result[result.length - 1].t2 - t1) < 1e-8) {
+        result[result.length - 1].t2 = t2;
+      } else {
+        result.push({ t1, t2 });
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Compute coplanar boundary intersection edges for two same-normal
+ * coplanar faces. Returns segments of each face's boundary that lie
+ * inside the other face — these become splitting edges for BuilderFace.
+ *
+ * OCCT reference: BOPAlgo_PaveFiller::PostTreatFF for tangent faces.
+ */
+function computeCoplanarEdges(
+  faceA: Face, faceB: Face, pl: Plane,
+): { edgesForA: Edge[]; edgesForB: Edge[] } {
+  const polyA = faceToPolygon2D(faceA, pl);
+  const polyB = faceToPolygon2D(faceB, pl);
+  const edgesForA: Edge[] = [];
+  const edgesForB: Edge[] = [];
+
+  // Segments of B's boundary inside A → splitting edges for A
+  // Filter: skip segments on A's boundary (touching, not interior)
+  for (const oe of faceB.outerWire.edges) {
+    const s3 = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    const e3 = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+    const s2 = worldToSketch(pl, s3);
+    const e2 = worldToSketch(pl, e3);
+    for (const { t1, t2 } of clipSegmentByPolygon2D(s2, e2, polyA)) {
+      const p1 = point3d(s3.x + t1 * (e3.x - s3.x), s3.y + t1 * (e3.y - s3.y), s3.z + t1 * (e3.z - s3.z));
+      const p2 = point3d(s3.x + t2 * (e3.x - s3.x), s3.y + t2 * (e3.y - s3.y), s3.z + t2 * (e3.z - s3.z));
+      if (distance(p1, p2) < 1e-6) continue;
+      const lr = makeLine3D(p1, p2);
+      if (!lr.success) continue;
+      const er = makeEdgeFromCurve(lr.result!);
+      if (!er.success) continue;
+      if (!edgeLiesOnFaceBoundary(er.result!, faceA)) edgesForA.push(er.result!);
+    }
+  }
+
+  // Segments of A's boundary inside B → splitting edges for B
+  for (const oe of faceA.outerWire.edges) {
+    const s3 = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    const e3 = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+    const s2 = worldToSketch(pl, s3);
+    const e2 = worldToSketch(pl, e3);
+    for (const { t1, t2 } of clipSegmentByPolygon2D(s2, e2, polyB)) {
+      const p1 = point3d(s3.x + t1 * (e3.x - s3.x), s3.y + t1 * (e3.y - s3.y), s3.z + t1 * (e3.z - s3.z));
+      const p2 = point3d(s3.x + t2 * (e3.x - s3.x), s3.y + t2 * (e3.y - s3.y), s3.z + t2 * (e3.z - s3.z));
+      if (distance(p1, p2) < 1e-6) continue;
+      const lr = makeLine3D(p1, p2);
+      if (!lr.success) continue;
+      const er = makeEdgeFromCurve(lr.result!);
+      if (!er.success) continue;
+      if (!edgeLiesOnFaceBoundary(er.result!, faceB)) edgesForB.push(er.result!);
+    }
+  }
+
+  return { edgesForA, edgesForB };
+}
+
+/**
+ * Classify a sub-face from a coplanar face split by BuilderFace.
+ * Sub-faces in the overlap region get operation-specific classification;
+ * non-overlap sub-faces use standard pointInSolid classification.
+ *
+ * OCCT reference: BOPAlgo_Builder::FillSameDomainFaces
+ */
+function classifyCoplanarSubFace(
+  subFace: Face,
+  otherCoplanarFace: Face,
+  otherSolid: Solid,
+  pl: Plane,
+  op: BooleanOp,
+  isSideA: boolean,
+  intEdges: Edge[],
+): 'inside' | 'outside' | 'on' {
+  const otherPoly = faceToPolygon2D(otherCoplanarFace, pl);
+
+  // A sub-face is in the overlap region if ALL its edge midpoints are inside
+  // (or on the boundary of) the other face's polygon. Edge midpoints from
+  // intersection edges lie exactly on the boundary, so we expand the polygon
+  // slightly to include boundary points.
+  let cx2 = 0, cy2 = 0;
+  for (const p of otherPoly) { cx2 += p.x; cy2 += p.y; }
+  cx2 /= otherPoly.length; cy2 /= otherPoly.length;
+  const expandedPoly = otherPoly.map(p => ({
+    x: p.x + (p.x - cx2) * 0.001,
+    y: p.y + (p.y - cy2) * 0.001,
+  }));
+
+  let allInside = true;
+  let anyChecked = false;
+  for (const oe of subFace.outerWire.edges) {
+    const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+    const mid = worldToSketch(pl, point3d((s.x + e.x) / 2, (s.y + e.y) / 2, (s.z + e.z) / 2));
+    anyChecked = true;
+    if (!pointInPolygon2DSimple(mid, expandedPoly)) {
+      allInside = false;
+      break;
+    }
+  }
+  if (!anyChecked) return classifySubFace(subFace, otherSolid, intEdges);
+
+  if (allInside) {
+    // Sub-face is fully in the overlap region
+    if (isSideA) {
+      if (op === 'union') return 'on';         // kept from A, discarded from B
+      if (op === 'subtract') return 'inside';   // NOT kept from A
+      return 'inside';                           // intersect: kept from A
+    }
+    return 'on'; // B-side overlap: not kept (A's copy handles it)
+  }
+
+  // Not in overlap: standard classification
+  return classifySubFace(subFace, otherSolid, intEdges);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -289,53 +399,6 @@ function faceToPolygon2D(face: Face, pl: Plane): Pt2[] {
   return verts;
 }
 
-function faceIsCW(face: Face, pl: Plane): boolean {
-  const verts = faceToPolygon2DRaw(face, pl);
-  return polygonArea2D(verts) < 0;
-}
-
-function polygonToFace(poly: Pt2[], pl: Plane, sourceSurface?: PlaneSurface): OperationResult<Face> {
-  if (poly.length < 3) return failure('Polygon has fewer than 3 vertices');
-
-  const cleaned: Pt2[] = [poly[0]];
-  for (let i = 1; i < poly.length; i++) {
-    const dx = poly[i].x - cleaned[cleaned.length - 1].x;
-    const dy = poly[i].y - cleaned[cleaned.length - 1].y;
-    if (Math.sqrt(dx * dx + dy * dy) > 1e-8) {
-      cleaned.push(poly[i]);
-    }
-  }
-  if (cleaned.length >= 2) {
-    const dx = cleaned[0].x - cleaned[cleaned.length - 1].x;
-    const dy = cleaned[0].y - cleaned[cleaned.length - 1].y;
-    if (Math.sqrt(dx * dx + dy * dy) < 1e-8) {
-      cleaned.pop();
-    }
-  }
-
-  if (cleaned.length < 3) return failure('Cleaned polygon has fewer than 3 vertices');
-
-  const pts3d = cleaned.map(p => sketchToWorld(pl, p));
-  const edges: Edge[] = [];
-  for (let i = 0; i < pts3d.length; i++) {
-    const next = (i + 1) % pts3d.length;
-    const lineResult = makeLine3D(pts3d[i], pts3d[next]);
-    if (!lineResult.success) continue;
-    const edgeResult = makeEdgeFromCurve(lineResult.result!);
-    if (!edgeResult.success) continue;
-    edges.push(edgeResult.result!);
-  }
-
-  if (edges.length < 3) return failure('Failed to create enough edges for polygon face');
-
-  const wireResult = makeWireFromEdges(edges);
-  if (!wireResult.success) return failure(`Wire creation failed: ${wireResult.error}`);
-
-  if (sourceSurface) {
-    return makeFace(sourceSurface, wireResult.result!);
-  }
-  return makePlanarFace(wireResult.result!);
-}
 
 /**
  * Flip a face's normal by reversing the wire winding.
@@ -386,9 +449,20 @@ function areFacesCoplanar(faceA: Face, faceB: Face): boolean {
   return Math.abs(dist) < COPLANAR_TOL;
 }
 
+/**
+ * Check if two coplanar faces have the same outward normal.
+ * Combines wire winding (polygon area sign) with face.forward flag
+ * to determine the actual outward normal direction.
+ */
 function coplanarSameNormal(faceA: Face, faceB: Face): boolean {
   if (faceA.surface.type !== 'plane' || faceB.surface.type !== 'plane') return false;
-  return dot(faceA.surface.plane.normal, faceB.surface.plane.normal) > 0;
+  const pl = faceA.surface.plane;
+  const areaA = polygonArea2D(faceToPolygon2DRaw(faceA, pl));
+  const areaB = polygonArea2D(faceToPolygon2DRaw(faceB, pl));
+  // Effective outward direction: area sign * forward flag
+  const effectiveA = (areaA > 0) === faceA.forward;
+  const effectiveB = (areaB > 0) === faceB.forward;
+  return effectiveA === effectiveB;
 }
 
 /** Evaluate a surface at (u,v). */
@@ -719,35 +793,6 @@ function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on
   return pointInSolid(centroid, otherSolid);
 }
 
-function faceOutwardPointsInto(face: Face, ownSolid: Solid, otherSolid: Solid): boolean {
-  if (face.surface.type !== 'plane') return false;
-
-  const wire = face.outerWire;
-  let cx = 0, cy = 0, cz = 0, n = 0;
-  for (const oe of wire.edges) {
-    const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-    cx += pt.x; cy += pt.y; cz += pt.z; n++;
-  }
-  if (n === 0) return false;
-
-  const normal = face.surface.plane.normal;
-  const nudgePos = point3d(
-    cx / n + normal.x * NUDGE_EPS,
-    cy / n + normal.y * NUDGE_EPS,
-    cz / n + normal.z * NUDGE_EPS,
-  );
-  const nudgeNeg = point3d(
-    cx / n - normal.x * NUDGE_EPS,
-    cy / n - normal.y * NUDGE_EPS,
-    cz / n - normal.z * NUDGE_EPS,
-  );
-
-  const posInOwn = pointInSolid(nudgePos, ownSolid);
-  const outwardIsPositive = posInOwn !== 'inside';
-  const outwardPt = outwardIsPositive ? nudgePos : nudgeNeg;
-
-  return pointInSolid(outwardPt, otherSolid) === 'inside';
-}
 
 // ═══════════════════════════════════════════════════════
 // CORE BOOLEAN PIPELINE (FFI + BuilderFace)
@@ -782,18 +827,52 @@ export function booleanOperation(
   const facesOfA = shellFaces(a.outerShell);
   const facesOfB = shellFaces(b.outerShell);
 
-  // ── Stage 2: FFI for all non-coplanar face pairs ──
-  // Collect intersection edges for each face.
+  // ── Stage 2: FFI + coplanar boundary intersection ──
   const edgesOnA: Map<Face, Edge[]> = new Map();
   const edgesOnB: Map<Face, Edge[]> = new Map();
-  const coplanarA: Map<Face, Face> = new Map(); // A face → first coplanar B face
-  const coplanarB: Map<Face, Face> = new Map();
+  // Track coplanar pairs: face → { partner, sameNormal }
+  const coplanarA: Map<Face, { partner: Face; sameNormal: boolean }> = new Map();
+  const coplanarB: Map<Face, { partner: Face; sameNormal: boolean }> = new Map();
 
   for (const faceA of facesOfA) {
     for (const faceB of facesOfB) {
       if (areFacesCoplanar(faceA, faceB)) {
-        if (!coplanarA.has(faceA)) coplanarA.set(faceA, faceB);
-        if (!coplanarB.has(faceB)) coplanarB.set(faceB, faceA);
+        const sameN = coplanarSameNormal(faceA, faceB);
+
+        if (sameN) {
+          // Same-normal coplanar: compute boundary intersection edges
+          const pl = (faceA.surface as PlaneSurface).plane;
+          const { edgesForA, edgesForB } = computeCoplanarEdges(faceA, faceB, pl);
+          if (edgesForA.length > 0 || edgesForB.length > 0) {
+            // Partial overlap — register as coplanar and add edges for BuilderFace
+            if (!coplanarA.has(faceA)) coplanarA.set(faceA, { partner: faceB, sameNormal: true });
+            if (!coplanarB.has(faceB)) coplanarB.set(faceB, { partner: faceA, sameNormal: true });
+            if (edgesForA.length > 0) {
+              if (!edgesOnA.has(faceA)) edgesOnA.set(faceA, []);
+              edgesOnA.get(faceA)!.push(...edgesForA);
+            }
+            if (edgesForB.length > 0) {
+              if (!edgesOnB.has(faceB)) edgesOnB.set(faceB, []);
+              edgesOnB.get(faceB)!.push(...edgesForB);
+            }
+          } else {
+            // No splitting edges — check if faces fully overlap (identical or contained).
+            // This happens when all boundary edges of one face lie on the other's boundary.
+            const polyA = faceToPolygon2D(faceA, pl);
+            const polyB = faceToPolygon2D(faceB, pl);
+            const overlapArea = Math.abs(polygonArea2D(clipPolygon(polyA, polyB)));
+            if (overlapArea > 1e-8) {
+              // Full overlap — register as coplanar (no splitting needed, whole face is overlap)
+              if (!coplanarA.has(faceA)) coplanarA.set(faceA, { partner: faceB, sameNormal: true });
+              if (!coplanarB.has(faceB)) coplanarB.set(faceB, { partner: faceA, sameNormal: true });
+            }
+          }
+          // Non-overlapping same-normal coplanar: skip (treat as non-coplanar)
+        } else {
+          // Opposite-normal coplanar: always register (for special handling)
+          if (!coplanarA.has(faceA)) coplanarA.set(faceA, { partner: faceB, sameNormal: false });
+          if (!coplanarB.has(faceB)) coplanarB.set(faceB, { partner: faceA, sameNormal: false });
+        }
         continue;
       }
 
@@ -806,63 +885,57 @@ export function booleanOperation(
       const ffiResult = intersectFaceFace(faceA, faceB);
       if (!ffiResult || ffiResult.edges.length === 0) continue;
 
-      // Following OCCT BOPAlgo_PaveFiller: intersection edges are added to
-      // each face's FaceInfo. But coplanar faces are handled separately by
-      // the coplanar path — only add edges to the non-coplanar face.
-      const aIsCoplanar = coplanarA.has(faceA);
-      const bIsCoplanar = coplanarB.has(faceB);
-
-      if (aIsCoplanar && bIsCoplanar) continue;
-
       for (const ffiEdge of ffiResult.edges) {
         const e = ffiEdge.edge;
-        if (!aIsCoplanar) {
-          // Skip edges that lie on faceA's boundary (redundant for coplanar-adjacent pairs)
-          if (!bIsCoplanar || !edgeLiesOnFaceBoundary(e, faceA)) {
-            if (!edgesOnA.has(faceA)) edgesOnA.set(faceA, []);
-            edgesOnA.get(faceA)!.push(e);
-          }
+        // Don't add FFI edges to coplanar faces — their splitting edges
+        // come from computeCoplanarEdges instead (avoids duplicates).
+        if (!coplanarA.has(faceA) && !edgeLiesOnFaceBoundary(e, faceA)) {
+          if (!edgesOnA.has(faceA)) edgesOnA.set(faceA, []);
+          edgesOnA.get(faceA)!.push(e);
         }
-        if (!bIsCoplanar) {
-          if (!aIsCoplanar || !edgeLiesOnFaceBoundary(e, faceB)) {
-            if (!edgesOnB.has(faceB)) edgesOnB.set(faceB, []);
-            edgesOnB.get(faceB)!.push(e);
-          }
+        if (!coplanarB.has(faceB) && !edgeLiesOnFaceBoundary(e, faceB)) {
+          if (!edgesOnB.has(faceB)) edgesOnB.set(faceB, []);
+          edgesOnB.get(faceB)!.push(e);
         }
       }
     }
   }
 
   // ── Stage 3: Split faces and classify ──
-
   const allFacesA: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
   const allFacesB: { face: Face; classification: 'inside' | 'outside' | 'on' }[] = [];
 
   // Process faces of A
   for (const faceA of facesOfA) {
-    if (coplanarA.has(faceA)) {
-      handleCoplanarFace(faceA, coplanarA.get(faceA)!, op, a, b, allFacesA);
+    const cpInfo = coplanarA.get(faceA);
+    if (cpInfo && !cpInfo.sameNormal) {
+      // Opposite-normal coplanar: special handling (no volume overlap)
+      handleOppositeNormalCoplanar(faceA, cpInfo.partner, op, a, b, allFacesA, true);
       continue;
     }
 
     const intEdges = edgesOnA.get(faceA);
     if (intEdges && intEdges.length > 0) {
-      // Let BuilderFace handle boundary splitting internally.
-      // BuilderFace adds reverse half-edges for split sub-edges, enabling
-      // L-junction loop tracing (OCCT BOPAlgo_WireSplitter bidirectional edges).
       const subFaces = builderFace(faceA, intEdges);
       for (const sf of subFaces) {
-        allFacesA.push({ face: sf, classification: classifySubFace(sf, b, intEdges) });
+        const cls = cpInfo
+          ? classifyCoplanarSubFace(sf, cpInfo.partner, b, (faceA.surface as PlaneSurface).plane, op, true, intEdges)
+          : classifySubFace(sf, b, intEdges);
+        allFacesA.push({ face: sf, classification: cls });
       }
+    } else if (cpInfo && cpInfo.sameNormal) {
+      // Full overlap (no splitting edges): entire face is the overlap region
+      const cls = op === 'union' ? 'on' as const : 'inside' as const;
+      allFacesA.push({ face: faceA, classification: cls });
     } else {
       allFacesA.push({ face: faceA, classification: classifyFace(faceA, b) });
     }
   }
-
   // Process faces of B
   for (const faceB of facesOfB) {
-    if (coplanarB.has(faceB)) {
-      handleCoplanarFaceSideB(faceB, coplanarB.get(faceB)!, op, a, b, allFacesB);
+    const cpInfo = coplanarB.get(faceB);
+    if (cpInfo && !cpInfo.sameNormal) {
+      handleOppositeNormalCoplanar(faceB, cpInfo.partner, op, a, b, allFacesB, false);
       continue;
     }
 
@@ -870,8 +943,14 @@ export function booleanOperation(
     if (intEdges && intEdges.length > 0) {
       const subFaces = builderFace(faceB, intEdges);
       for (const sf of subFaces) {
-        allFacesB.push({ face: sf, classification: classifySubFace(sf, a, intEdges) });
+        const cls = cpInfo
+          ? classifyCoplanarSubFace(sf, cpInfo.partner, a, (faceB.surface as PlaneSurface).plane, op, false, intEdges)
+          : classifySubFace(sf, a, intEdges);
+        allFacesB.push({ face: sf, classification: cls });
       }
+    } else if (cpInfo && cpInfo.sameNormal) {
+      // Full overlap: B-side → 'on' (A's copy handles it)
+      allFacesB.push({ face: faceB, classification: 'on' });
     } else {
       allFacesB.push({ face: faceB, classification: classifyFace(faceB, a) });
     }
@@ -951,7 +1030,7 @@ export function booleanOperation(
     const bad: string[] = [];
     for (const [key, dirs] of eu) {
       if (dirs.length !== 2 || dirs[0] === dirs[1])
-        bad.push(`${key}[${dirs.length}]`);
+        bad.push(`${key} x${dirs.length} ${dirs.join(' / ')}`);
     }
     return failure(`Solid creation failed (shell not closed): ${solidResult.error}`);
   }
@@ -964,124 +1043,45 @@ export function booleanOperation(
 }
 
 // ═══════════════════════════════════════════════════════
-// COPLANAR FACE HANDLING (2D polygon clipping)
+// OPPOSITE-NORMAL COPLANAR HANDLING
 // ═══════════════════════════════════════════════════════
 
 /**
- * Handle a coplanar face from side A.
- * Uses 2D polygon clipping (Sutherland-Hodgman) — separate from the
- * FFI+BuilderFace path per OCCT's approach.
+ * Handle opposite-normal coplanar faces. These share a surface plane but
+ * point in opposite directions — the face pair is internal (for union)
+ * or irrelevant (for subtract, since there's no volume overlap).
  */
-function handleCoplanarFace(
-  faceA: Face,
-  faceB: Face,
+function handleOppositeNormalCoplanar(
+  face: Face,
+  partner: Face,
   op: BooleanOp,
   solidA: Solid,
   solidB: Solid,
   allFaces: { face: Face; classification: 'inside' | 'outside' | 'on' }[],
+  isSideA: boolean,
 ): void {
-  const planeA = (faceA.surface as PlaneSurface).plane;
-  const polyA = faceToPolygon2D(faceA, planeA);
-  const polyB = faceToPolygon2D(faceB, planeA);
-
-  const intersection = clipPolygon(polyA, polyB);
+  const pl = (face.surface as PlaneSurface).plane;
+  const polyFace = faceToPolygon2D(face, pl);
+  const polyPartner = faceToPolygon2D(partner, pl);
+  const intersection = clipPolygon(polyFace, polyPartner);
   const intersectionArea = Math.abs(polygonArea2D(intersection));
 
   if (intersectionArea < 1e-8) {
-    // No overlap — treat as non-coplanar
-    allFaces.push({ face: faceA, classification: classifyFace(faceA, solidB) });
+    // No overlap — classify normally
+    const otherSolid = isSideA ? solidB : solidA;
+    allFaces.push({ face, classification: classifyFace(face, otherSolid) });
     return;
   }
 
-  const sameNormal = coplanarSameNormal(faceA, faceB);
-
   if (op === 'union') {
-    if (sameNormal) {
-      if (faceOutwardPointsInto(faceA, solidA, solidB)) {
-        const diffFragments = polygonDifference(polyA, polyB);
-        const originalCW = faceIsCW(faceA, planeA);
-        for (const frag of diffFragments) {
-          const oriented = originalCW ? [...frag].reverse() : frag;
-          const fragFace = polygonToFace(oriented, planeA, faceA.surface as PlaneSurface);
-          if (fragFace.success) {
-            allFaces.push({ face: fragFace.result!, classification: 'outside' });
-          }
-        }
-      } else {
-        allFaces.push({ face: faceA, classification: 'on' });
-      }
-    }
-    // Opposite normal → discard (internal face)
+    // Internal face → discard
   } else if (op === 'subtract') {
-    if (sameNormal) {
-      const diffFragments = polygonDifference(polyA, polyB);
-      const originalCW = faceIsCW(faceA, planeA);
-      for (const frag of diffFragments) {
-        const oriented = originalCW ? [...frag].reverse() : frag;
-        const fragFace = polygonToFace(oriented, planeA, faceA.surface as PlaneSurface);
-        if (fragFace.success) {
-          allFaces.push({ face: fragFace.result!, classification: 'outside' });
-        }
-      }
-    } else {
-      allFaces.push({ face: faceA, classification: 'outside' });
+    if (isSideA) {
+      allFaces.push({ face, classification: 'outside' });
     }
+    // B-side opposite-normal → discard
   } else { // intersect
-    if (sameNormal) {
-      const originalCW = faceIsCW(faceA, planeA);
-      const oriented = originalCW ? [...intersection].reverse() : intersection;
-      const intFaceResult = polygonToFace(oriented, planeA, faceA.surface as PlaneSurface);
-      if (intFaceResult.success) {
-        allFaces.push({ face: intFaceResult.result!, classification: 'inside' });
-      }
-    }
-  }
-}
-
-/**
- * Handle a coplanar face from side B.
- */
-function handleCoplanarFaceSideB(
-  faceB: Face,
-  faceA: Face,
-  op: BooleanOp,
-  solidA: Solid,
-  solidB: Solid,
-  allFaces: { face: Face; classification: 'inside' | 'outside' | 'on' }[],
-): void {
-  const planeB = (faceB.surface as PlaneSurface).plane;
-  const polyB = faceToPolygon2D(faceB, planeB);
-  const polyA = faceToPolygon2D(faceA, planeB);
-  const intersection = clipPolygon(polyB, polyA);
-  const intersectionArea = Math.abs(polygonArea2D(intersection));
-
-  if (intersectionArea < 1e-8) {
-    allFaces.push({ face: faceB, classification: classifyFace(faceB, solidA) });
-    return;
-  }
-
-  const sameNormal = coplanarSameNormal(faceA, faceB);
-
-  if (op === 'union') {
-    if (sameNormal) {
-      const diffFragments = polygonDifference(polyB, polyA);
-      const originalCWb = faceIsCW(faceB, planeB);
-      for (const frag of diffFragments) {
-        const oriented = originalCWb ? [...frag].reverse() : frag;
-        const fragFace = polygonToFace(oriented, planeB, faceB.surface as PlaneSurface);
-        if (fragFace.success) {
-          allFaces.push({ face: fragFace.result!, classification: 'outside' });
-        }
-      }
-    }
-    // Opposite normal → discard
-  } else if (op === 'subtract') {
-    if (sameNormal) {
-      // Same-normal coplanar: overlap removed by A's processing, nothing to add from B
-    }
-    // Opposite normal → discard
-  } else { // intersect
-    // Already handled by A's processing
+    // Opposite normals with overlap but no volume → discard
   }
 }
 
