@@ -30,6 +30,6 @@ export {
 
 export { pointInSolid } from './point-in-solid';
 
-export { trimCurvedFaceByPlanes } from './trim-curved-face';
+export { intersectFaceFace } from './face-face-intersection';
 
-export { splitPlanarFaceByCircle } from './split-face-by-circle';
+export { builderFace } from './builder-face';

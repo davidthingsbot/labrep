@@ -108,14 +108,10 @@ function analyzeShellClosure(faces: Face[]): boolean {
   // - The two usages should be in opposite directions
   for (const [, usages] of Array.from(edgeUsage)) {
     if (usages.length !== 2) {
-      // Edge is used by != 2 faces (boundary edge or non-manifold)
       return false;
     }
-    
-    // Check that the two usages are in opposite directions
-    // (same key but different directed values means opposite directions)
+
     if (usages[0] === usages[1]) {
-      // Same direction - invalid orientation (like Möbius strip)
       return false;
     }
   }

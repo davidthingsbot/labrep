@@ -107,11 +107,13 @@ describe('General: Sphere-Sphere', () => {
 });
 
 // ═══════════════════════════════════════════════
-// BOX-SPHERE UNION (currently broken — F7 test)
+// BOX-SPHERE CONTAINMENT (sphere fully inside box)
 // ═══════════════════════════════════════════════
 
-describe('General: Box-Sphere union', () => {
-  it('box ∪ sphere produces correct mesh (not degenerate)', () => {
+describe('General: Box-Sphere containment', () => {
+  it('box ∪ sphere (sphere fully inside) → just the box', () => {
+    // Box from (-2,-2,-2) to (2,2,2), sphere at origin r=1 → fully contained.
+    // Union of A containing B is just A.
     const box = makeBox(0, 0, -2, 4, 4, 4);
     const sphere = makeSphere(1);
     const result = booleanUnion(box.solid, sphere.solid);
@@ -119,8 +121,50 @@ describe('General: Box-Sphere union', () => {
 
     const mesh = solidToMesh(result.result!.solid);
     expect(mesh.success).toBe(true);
-    // Should have a reasonable number of triangles (not 12)
-    expect(meshTriangleCount(mesh.result!)).toBeGreaterThan(100);
+    expect(meshTriangleCount(mesh.result!)).toBe(12);
+  });
+});
+
+// ═══════════════════════════════════════════════
+// PARTIAL CIRCLE SPLITTING (Phase 13 C2)
+// Sphere at box corner — intersection circles cross face edges
+// ═══════════════════════════════════════════════
+
+describe('General: Partial circle splitting', () => {
+  it('box − sphere at corner: sphere straddles 3 faces', () => {
+    // Box from (0,0,0) to (4,4,4). Sphere at origin, r=1.5.
+    // Sphere protrudes from 3 faces (x=0, y=0, z=0).
+    // Each intersection circle crosses 2 face edges → partial arcs.
+    const box = makeBox(2, 2, 0, 4, 4, 4);
+    const sphere = makeSphere(1.5);
+
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    expect(result.result!.solid.outerShell.isClosed).toBe(true);
+
+    // Volume = box - sphere_octant = 64 - (4/3)π(1.5³)/8
+    const sphereVol = (4 / 3) * Math.PI * Math.pow(1.5, 3);
+    const expected = 64 - sphereVol / 8;
+    const vol = solidVolume(result.result!.solid);
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.10);
+  });
+
+  it('box − sphere at edge: sphere straddles 1 face', () => {
+    // Box from (-2,-2,0) to (2,2,4). Sphere at (0,0,0) r=1.
+    // Only z=0 face intersects sphere. Circle r=1 at (0,0,0) is fully
+    // inside the z=0 face (face extends ±2). Bottom hemisphere protrudes.
+    // This is actually the "full circle inside face" case — should already work.
+    const box = makeBox(0, 0, 0, 4, 4, 4);
+    const sphere = makeSphere(1);
+
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    expect(result.result!.solid.outerShell.isClosed).toBe(true);
+
+    // Volume = box - hemisphere = 64 - (2/3)π
+    const expected = 64 - (2 / 3) * Math.PI;
+    const vol = solidVolume(result.result!.solid);
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.05);
   });
 });
 

@@ -1077,173 +1077,116 @@ App Examples:
 
 ---
 
-### Phase 13: PCurve Infrastructure + Curved Boolean Operations
+### Phase 13: General Boolean Operations via BuilderFace
 
-**Goal:** Boolean operations between arbitrary curved solids (box-sphere, box-cylinder, L-bracket-sphere, etc.) with exact B-rep results.
+**Goal:** Boolean operations between arbitrary solids with exact B-rep results, using a general pipeline that scales to any surface type — not special-case code per surface combination.
 
-This is the hardest geometry kernel phase. It requires the PCurve (parameter-space curve) infrastructure that enables exact face trimming along curved intersection boundaries.
+**Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled.
+**Status (2026-03-25):** Aggressive pipeline cutover in progress. Old special-case pipeline deleted, FFI+BuilderFace wired in. 17/17 basic box-box boolean tests pass. Curved face and complex geometry tests in progress.
 
-**Status (2026-03-25):** In progress — general boolean pipeline.
+**Architecture:**
 
-Sub-phases A–D complete. Sub-phase E (unified boolean pipeline) in progress.
+The boolean pipeline follows OCCT's approach: one general pipeline for all surface combinations, not special-case handlers per surface pair.
 
-**Completed infrastructure:**
-- **A: Ellipse3D** (`geometry/ellipse3d.ts`) — full ellipse curve type. 23 tests.
-- **B: General SSI marching** (`geometry/surface-intersection.ts`) — predictor-corrector marching handles ANY surface pair. Spatial hash seed finding, adaptive step size. 21 tests. OCCT ref: IntWalk_PWalking.
-- **C: Face-Face Intersection** (`operations/face-face-intersection.ts`) — trims SSI curves to face boundaries in UV space. 7 tests. OCCT ref: IntTools_FaceFace.
-- **D: Generalized Face Splitting** (`operations/split-face.ts`) — splits any face by intersection edges. 5 tests. OCCT ref: BOPAlgo_BuilderFace.
-- **E: General Boolean Pipeline** (`operations/boolean.ts: generalBooleanPipeline`) — FFI-based pipeline wired up. Sphere-sphere subtract works (closed shell, <10% volume error). Routing between legacy and general pipeline in progress.
+```
+booleanOperation(A, B, op)
+  ├─ Stage 1: AABB overlap check
+  ├─ Stage 2: Coplanar face handling (polygon clipping — kept separate)
+  ├─ Stage 3: FFI for all non-coplanar face pairs → intersection edges
+  │   ├─ Analytic dispatch: plane-plane → Line3D, plane-sphere/cyl/cone → Circle3D/Arc3D
+  │   └─ General: SSI marcher → polyline segments (for future BSpline/NURBS)
+  ├─ Stage 4: BuilderFace for all face splitting (one general algorithm)
+  │   └─ UV-space angle-based wire tracing (OCCT BOPAlgo_BuilderFace)
+  ├─ Stage 5: Classify fragments (pointInSolid)
+  ├─ Stage 6: Select faces per operation rules
+  └─ Stage 7: Stitch edges and assemble
+```
 
-**What works now:**
-- Everything from initial Phase 13 (box-sphere, box-cylinder subtract, STEP, tessellation)
-- Sphere-sphere subtract: `booleanSubtract(sphereR2, sphereR1.5)` → closed shell, correct volume
-- Sphere-sphere tessellation works
-- Sequential subtracts: box − cyl1 − cyl2 (multi-bore)
+**Why this matters:** The old approach had ~15 special-case functions (`splitFaceByAllFaces`, `splitPlanarFaceByCircle`, `splitPlanarFaceByPartialCircle`, `trimCurvedFaceByPlanes`, `buildTrimmedCurvedFace`, etc.). Every new surface type (fillets = torus, BSpline sweeps, etc.) would need new code. The general approach handles any surface pair through the same FFI → BuilderFace path. Adding a new surface type means implementing `evaluate`, `normal`, and `projectTo*Surface` — the boolean pipeline just works.
 
-**What's failing (2 tests):**
-- Box ∪ sphere: general pipeline runs but face classification incorrect (degenerate mesh)
-- Nested coaxial cylinders: routing to general pipeline but FFI doesn't find intersection edges (concentric cylinders have no surface intersection — need containment-based face selection, not intersection-based)
+---
 
-**Architectural lesson learned:** The dual-pipeline routing (legacy vs general) is fragile. OCCT uses ONE pipeline (`BOPAlgo_PaveFiller` → `BOPAlgo_Builder`) for everything. The next step should be migrating ALL cases to the general pipeline, eliminating the legacy code path, rather than maintaining increasingly complex routing heuristics. The general pipeline needs to handle the "no intersection but containment" case (concentric shapes) that the legacy pipeline handles via whole-face classification.
+#### Completed Sub-Phases
 
-**Key OCCT patterns adopted:**
-- IntWalk_PWalking predictor-corrector marching for general SSI
-- IntTools_FaceFace face-face intersection with UV clipping
-- BOPAlgo_BuilderFace face reconstruction from split edges
-- Natural restriction detection (BRepGProp_Gauss)
-- Spatial hash seed finding (IntPatch closest-pair approach)
-- Curved face centroid: evaluate surface at bbox center (not wire vertex average)
+**A: Surface Inverse Mapping** ✅ — `projectTo*Surface` functions for plane, sphere, cylinder, cone.
 
-**Key reference:** OCCT source in `library/opencascade/src/`:
+**B: General SSI Marching** ✅ — `intersectSurfaces` predictor-corrector marcher handles any surface pair. 21 tests. OCCT ref: IntWalk_PWalking.
+
+**C: Face-Face Intersection (FFI)** ✅ — `intersectFaceFace` trims SSI curves to face boundaries in UV space. 7 tests. OCCT ref: IntTools_FaceFace. *(Needs enhancement: analytic dispatch in Sub-Phase G.)*
+
+**D: Ellipse3D** ✅ — Full ellipse curve type. 23 tests.
+
+**E: BuilderFace** ✅ — General face splitter in UV space. 6 tests. OCCT ref: BOPAlgo_BuilderFace + BOPAlgo_WireSplitter.
+- Line splitting (single, crossing, diagonal)
+- Circle splitting (full circle → hole + disk)
+- Arc splitting (arc at corner → 2 faces with mixed line+arc edges)
+- Sub-loop extraction for crossing vertices
+- Signed-area classification for outer/hole loops
+
+**F: Unified Boolean Pipeline (legacy)** ✅ — 89 boolean tests passed with special-case handlers. *(Deleted — replaced by G+H pipeline cutover.)*
+
+**G: FFI Analytic Edge Dispatch** ✅ — `intersectFaceFace` dispatches to analytic intersection for plane-plane (→Line3D), plane-sphere/cylinder/cone (→Circle3D/Arc3D). Falls back to SSI marcher for other pairs. 3 analytic dispatch tests.
+
+**H: Aggressive Pipeline Cutover** 🔧 IN PROGRESS — Deleted ~900 lines of special-case code. Wired FFI+BuilderFace as the single pipeline. Extended `projectToUV` for curved surfaces with angular seam handling. 17/17 basic box-box boolean tests pass. Remaining: non-coplanar box edge matching, curved face splitting.
+
+---
+
+#### Remaining Work
+
+##### Edge Matching for Non-Coplanar Boxes
+- BuilderFace sub-face edges at face-pair boundaries need to exactly match across adjacent faces
+- Stitcher handles coplanar face boundary splits but non-coplanar cases need verification
+- **Guard**: "boxes with different Z bases" tests (intersect, union, subtract volumes)
+
+##### Curved Face Splitting
+- FFI produces Circle3D/Arc3D edges between planar and curved faces
+- BuilderFace `projectToUV` now dispatches to sphere/cylinder/cone projectors with angular seam unwrapping
+- Need to verify: sphere face split by arc edge, cylinder face split by line edge
+- **Guard**: F1 (box−sphere), F2 (sphere partially outside), F3 (box−cylinder through-hole)
+
+##### Exit Criteria Tests
+- **F1: Box − sphere** — volume, shell closure, tessellation
+- **F2: Box − cylinder (through-hole)** — volume, shell closure, tessellation
+- **F3: Box − cone** — new test needed
+- **F4: L-bracket − sphere** — multi-arc splitting via BuilderFace
+- **F5: Volume invariant** — `V(A) + V(B) = V(union) + V(intersect)`
+- **F6: Adversarial edge cases** — tangent, on-edge, small/large ratio
+
+---
+
+#### Key OCCT Patterns Adopted
+
+- `IntWalk_PWalking` — predictor-corrector SSI marching for general surface pairs
+- `IntPatch_ALine` / `IntPatch_GLine` — analytic intersection for quadric surface pairs
+- `IntTools_FaceFace` — face-face intersection with UV clipping
+- `BOPAlgo_BuilderFace` — face reconstruction from split edges (UV-space angle tracing)
+- `BOPAlgo_WireSplitter` — wire loop tracing via smallest-clockwise-angle, sub-loop extraction
+- `BOPAlgo_PaveFiller` — pairwise edge intersection before face splitting
+- `BRepGProp_Gauss` — natural restriction detection
+- Coplanar faces handled separately (polygon clipping, not SSI)
+
+#### Key Reference
+
+OCCT source in `library/opencascade/src/`:
 - `ModelingAlgorithms/TKGeomAlgo/IntWalk/IntWalk_PWalking.cxx` — Marching algorithm
 - `ModelingAlgorithms/TKBO/IntTools/IntTools_FaceFace.hxx` — Face-face intersection
-- `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_BuilderFace.hxx` — Face reconstruction
+- `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_BuilderFace.cxx` — Face reconstruction
+- `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_WireSplitter_1.cxx` — Wire loop tracing (Path, Angle2D, ClockWiseAngle)
 - `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller.hxx` — Pairwise intersection
 - `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_Builder.hxx` — Single unified pipeline
 
-#### Sub-Phase A: Surface Inverse Mapping
+#### Files
 
-Projection functions already exist as private functions in `tessellation.ts` (lines 270–380). Extract them as public functions into each surface module, with proper tests.
-
-**A1: Plane inverse mapping**
-- **Test** (`tests/surfaces/plane-surface.test.ts`): round-trip — `projectToPlaneSurface(evaluate(u, v))` recovers `(u, v)` for 10+ points including origin, negative coords, large values
-- **Implement**: Add `projectToPlaneSurface(surface, point) → {u, v}` using dot-product formula (OCCT ProjLib_Plane)
-
-**A2: Cylinder inverse mapping**
-- **Test** (`tests/surfaces/cylindrical-surface.test.ts`): round-trip for points at θ=0, π/2, π, 3π/2 and v=0, 5, −3. Test non-axis-aligned cylinder.
-- **Implement**: Extract from `tessellation.ts:270`. Formula: U=atan2(y_local, x_local), V=z_local
-
-**A3: Sphere inverse mapping**
-- **Test** (`tests/surfaces/spherical-surface.test.ts`): round-trip for equator, poles, 45° latitude, arbitrary points. Pole special case: v=±π/2, u arbitrary.
-- **Implement**: Extract from `tessellation.ts:287`. Formula: U=atan2(y,x), V=atan(z/sqrt(x²+y²))
-
-**A4: Cone inverse mapping**
-- **Test** (`tests/surfaces/conical-surface.test.ts`): round-trip. Test near apex. Test negative semi-angle.
-- **Implement**: Extract from `tessellation.ts:305`. Apex handling per OCCT ProjLib_Cone.
-
-**A5: Refactor tessellation.ts** — Replace private `projectTo*` with calls to new public functions. All existing tests must still pass.
-
-#### Sub-Phase B: PCurve Data Structure + Edge Extension
-
-Following OCCT's BRep_CurveOnSurface: an Edge stores N PCurves, each linking a Curve2D to a Surface.
-
-**B1: PCurve type**
-- **Test** (`tests/topology/pcurve.test.ts`): Create PCurve from Line2D + PlaneSurface and Arc2D + SphericalSurface. Verify: `surface.evaluate(curve2d(t))` matches the 3D edge curve at t.
-- **Implement**: New `src/topology/pcurve.ts` — `interface PCurve { curve2d: Curve2D; surface: Surface; }`
-
-**B2: Add pcurves field to Edge**
-- **Test** (`tests/topology/edge.test.ts`): Existing edges have `pcurves: []` (backward compatible). `addPCurveToEdge(edge, pcurve)` returns new Edge with pcurve appended.
-- **Implement**: Add `readonly pcurves: readonly PCurve[]` to Edge, default `[]`.
-
-**B3: Compute PCurves for plane-surface intersection curves**
-- **Test** (`tests/topology/pcurve.test.ts`):
-  - Plane z=0 intersects unit sphere → circle. PCurve on sphere: horizontal line at v=0 in (θ,φ) space. PCurve on plane: circle r=1 in (u,v) space. Verify at 8 sample points within 1e-7.
-  - Plane z=0.5 intersects unit sphere → circle r=√0.75. PCurve on sphere: line at v=arcsin(0.5).
-  - Plane z=h intersects cylinder r=R along Z → circle. PCurve on cylinder: line at v=h.
-- **Implement**: `computeIntersectionPCurves(circle3D, surfaceA, surfaceB) → {pcurveA, pcurveB}`
-
-#### Sub-Phase C: Planar Face Splitting by Circles
-
-Replace the tangent-line approximation in `boolean.ts:962` with proper circle-based face splitting.
-
-**C1: Split planar face by full circle (circle inside face)**
-- **Test** (`tests/operations/split-face-by-circle.test.ts`):
-  - 4×4 square face at z=0, circle r=1 at origin: produces square-with-hole (area=16−π) + disk (area=π)
-  - Square-with-hole: outerWire = 4 line edges, innerWires = [1 circle edge]
-  - Disk: outerWire = 1 circle edge
-- **Implement**: New `src/operations/split-face-by-circle.ts` — `splitPlanarFaceByCircle(face, circle) → {outside, inside} | null`
-
-**C2: Split planar face by partial circle (circle crosses face boundary)**
-- **Test**: 2×2 square, circle r=2 at (2,0,0): arc survives inside face. Two fragments with mixed line+arc edges. Areas sum to 4.0. Edge cases: tangent to edge, passes through vertex.
-- **Implement**: Use `clipCircleByHalfSpaces` → surviving arc. Compute arc-edge intersections. Split boundary edges. Assemble two closed wires.
-
-**C3: Integrate into boolean pipeline**
-- **Test** (`tests/operations/boolean-curved.test.ts`): `booleanSubtract(4×4×4 box, unit sphere)` → volume = 64 − 4π/3 ≈ 59.811 (±0.01), shell closed, 6 planar faces with circular holes + spherical cavity
-- **Implement**: Replace `tangentLines` in `splitFaceByAllFaces` with `splitPlanarFaceByCircle`
-
-#### Sub-Phase D: Curved Face Trimming (Rewrite)
-
-**D1: Trim spherical face by single plane**
-- **Test** (`tests/operations/trim-curved-face.test.ts`):
-  - Full sphere trimmed by z=0: upper hemisphere, outerWire = circle at z=0
-  - Trimmed by z=0.5: spherical cap, boundary circle r=√(R²−0.25)
-- **Implement**: Rewrite `trimCurvedFaceByPlanes` using plane-sphere intersection + clipCircleByHalfSpaces
-
-**D2: Trim spherical face by box (6 planes)**
-- **Test**: Unit sphere in 4×4×4 box → unchanged. Sphere r=2 in 2×2×2 box → 6 circles, each clipped by 5 planes, arcs assembled into closed wires per face.
-- **Implement**: For each curved face: compute all plane intersections, clip, assemble arc chain, build face.
-
-**D3: Trim cylindrical face by box**
-- **Test**: Cylinder r=0.5 along Z in 4×4×4 box → strip z=−2 to z=2, bounded by 2 circles. Cylinder r=2 in 2×2×2 box → cylindrical patch with lines + arcs.
-- **Implement**: Extend trimming for CylindricalSurface.
-
-#### Sub-Phase E: Curved Face Tessellation with Trim Boundaries
-
-**E1: Tessellate spherical cap (simple trim)**
-- **Test** (`tests/mesh/tessellation-trim.test.ts`): Cap face at z=0.5 on unit sphere. All vertices on sphere (±1e-4). Normals outward. Area ≈ 2πR(R−h) (±5%).
-- **Implement**: Modify `tessellateCurvedFace` to handle arc-bounded wires. Project wire to UV → boundary polygon. Grid + filter + triangulate.
-
-**E2: Tessellate arc-bounded spherical face (box-sphere)**
-- **Test**: Spherical face bounded by 4 arcs. Smooth mesh, no degenerate triangles, continuous normals.
-
-**E3: Tessellate cylindrical face with trim**
-- **Test**: Cylindrical strip from through-hole. Mesh wraps correctly, normals outward.
-
-#### Sub-Phase F: Full Boolean Integration + End-to-End Tests
-
-**F1: Box − sphere**
-- `booleanSubtract(box(4,4,4), sphere(r=1))`: volume = 64 − 4π/3 = 59.8113 (±0.01), shell closed, `solidToMesh` succeeds with smooth normals on cavity
-- Invariant: V(box) + V(sphere) = V(union) + V(intersect) (±0.01)
-
-**F2: Box − cylinder (through-hole)**
-- `booleanSubtract(box(4,4,4), cylinder(r=0.5, Z, h=6))`: volume = 64 − π ≈ 60.858 (±0.01), shell closed, 2 faces with holes + 1 cylindrical face
-
-**F3: Box − cone**
-- Volume verified analytically, shell closed
-
-**F4: L-bracket − sphere (exit criterion)**
-- L-bracket = union(box(4,4,1), box(1,4,3)). Sphere r=1.5 at (0,0,1). Shell closed, volume = L_vol − cap_vol (±0.05), `solidToMesh` succeeds, all normals outward. Non-convex solid, sphere crosses multiple faces.
-
-**F5: Union and intersect**
-- `booleanUnion(box, sphere)`, `booleanIntersect(box, sphere)`. Invariant: V(A) + V(B) = V(union) + V(intersect).
-
-**F6: Adversarial edge cases**
-- Sphere tangent to face (point contact), sphere centered on box edge, cylinder axis along box edge, very small sphere in large box, sphere entirely outside box
-
-#### Files to Modify/Create
-
-| File | Action |
+| File | Status |
 |------|--------|
-| `src/surfaces/{plane,cylindrical,spherical,conical}-surface.ts` | Add `projectTo*Surface` inverse mapping |
-| `src/mesh/tessellation.ts` | Refactor to use public projections; handle trim boundaries |
-| `src/topology/pcurve.ts` | **New** — PCurve type |
-| `src/topology/edge.ts` | Add `pcurves` field, `addPCurveToEdge` |
-| `src/operations/split-face-by-circle.ts` | **New** — Split planar face by circle intersection |
-| `src/operations/trim-curved-face.ts` | **Rewrite** — Proper curved face trimming |
-| `src/operations/boolean.ts` | Replace tangent-line approx with circle splitting |
-| `src/geometry/intersections3d.ts` | Add PCurve computation for intersections |
+| `src/operations/boolean.ts` | ✅ **Rewritten** — FFI + BuilderFace pipeline (~600 lines, was ~1600) |
+| `src/operations/builder-face.ts` | ✅ — General face splitter with curved UV support (6 tests) |
+| `src/operations/face-face-intersection.ts` | ✅ — Analytic dispatch for plane-plane/sphere/cylinder/cone |
+| `src/operations/split-face-by-circle.ts` | **Dead code** — no longer used by pipeline, kept for unit tests |
+| `src/operations/trim-curved-face.ts` | **Dead code** — no longer used by pipeline, kept for unit tests |
+| `src/geometry/intersections3d.ts` | Reference: analytic intersections (complete) |
+| `src/surfaces/*-surface.ts` | Reference: projectTo*Surface (complete) |
 
 ---
 

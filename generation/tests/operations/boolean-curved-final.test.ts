@@ -422,10 +422,10 @@ describe('F7: known limitations (curved union/intersect, non-convex)', () => {
     expect(meshTriangleCount(mesh.result!)).toBeGreaterThan(500);
   });
 
-  it('L-bracket (extruded L-profile) minus sphere fails: shell not closed', () => {
-    // L-bracket from an extruded L-shaped profile (not union of 2 boxes).
-    // The sphere at the concave corner triggers the non-convex trimming bug:
-    // half-space clipping produces wrong trim arcs for non-convex solids.
+  it('L-bracket (extruded L-profile) minus sphere: concave profile limitation', () => {
+    // L-bracket from an extruded L-shaped profile with sphere at concave corner.
+    // The concave profile causes partial circle arcs to span multiple face
+    // edges with complex winding — requires multi-arc splitting support.
     const pts = [
       point3d(-2.5, -1, -2), point3d(2.5, -1, -2),
       point3d(2.5, 1, -2), point3d(-0.5, 1, -2),
@@ -437,7 +437,9 @@ describe('F7: known limitations (curved union/intersect, non-convex)', () => {
     const lSolid = extrude(makeWireFromEdges(edges).result!, vec3d(0, 0, 1), 4).result!;
     const sphere = makeSphere(1.2);
     const result = booleanSubtract(lSolid.solid, sphere.solid);
-    // Documents the failure — non-convex solid trimming is broken
+    // Concave L-profile + sphere at corner → partial circle crosses multiple edges
+    // per face, producing multiple inside-arcs. Currently only single-arc splitting
+    // is supported. When multi-arc splitting is implemented, this should succeed.
     expect(result.success).toBe(false);
   });
 });

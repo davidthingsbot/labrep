@@ -165,6 +165,97 @@ describe('FFI: Plane-Sphere', () => {
 });
 
 // ═══════════════════════════════════════════════
+// ANALYTIC EDGE TYPES (Sub-Phase G)
+// ═══════════════════════════════════════════════
+
+describe('FFI: Analytic edge dispatch', () => {
+  it('G1: plane-plane → line3d edge (not SSI polyline)', () => {
+    // Use bottom face + side face of the same box (perpendicular, share an edge)
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const faces = shellFaces(box.solid.outerShell);
+
+    const bottomFace = faces.find(f =>
+      f.surface.type === 'plane' && Math.abs(f.surface.plane.normal.z) > 0.5 &&
+      f.outerWire.edges.some(oe => Math.abs(edgeStartPoint(oe.edge).z - (-2)) < 0.01)
+    )!;
+    const sideFace = faces.find(f =>
+      f.surface.type === 'plane' && Math.abs(f.surface.plane.normal.y) > 0.5 &&
+      f.outerWire.edges.some(oe => Math.abs(edgeStartPoint(oe.edge).y - (-2)) < 0.01)
+    )!;
+    expect(bottomFace).toBeDefined();
+    expect(sideFace).toBeDefined();
+
+    const result = intersectFaceFace(bottomFace, sideFace);
+    expect(result).not.toBeNull();
+    expect(result!.edges.length).toBe(1);
+    // The edge should be a proper Line3D, not an SSI polyline approximation
+    expect(result!.edges[0].edge.curve.type).toBe('line3d');
+  });
+
+  it('G2: plane-sphere → circle3d edge (full circle inside face)', () => {
+    // Sphere R=1 at origin, box bottom face at z=-0.5
+    // Intersection circle at z=-0.5, r=sqrt(0.75) ≈ 0.866
+    // The 4×4 face fully contains this circle
+    const box = makeBox(0, 0, -0.5, 4, 4, 4);
+    const sphere = makeSphere(1);
+
+    const boxFaces = shellFaces(box.solid.outerShell);
+    const sphereFaces = shellFaces(sphere.solid.outerShell);
+
+    const bottomFace = boxFaces.find(f => {
+      if (f.surface.type !== 'plane') return false;
+      const verts = f.outerWire.edges.map(oe => edgeStartPoint(oe.edge));
+      return verts.every(v => Math.abs(v.z - (-0.5)) < 0.1);
+    })!;
+    expect(bottomFace).toBeDefined();
+
+    const sphFace = sphereFaces[0];
+    const result = intersectFaceFace(bottomFace, sphFace);
+    expect(result).not.toBeNull();
+    expect(result!.edges.length).toBeGreaterThanOrEqual(1);
+
+    // The edge should be a circle3d or arc3d, not a degenerate line
+    const edgeType = result!.edges[0].edge.curve.type;
+    expect(edgeType === 'circle3d' || edgeType === 'arc3d').toBe(true);
+
+    // Circle radius should be sqrt(1 - 0.25) = sqrt(0.75) ≈ 0.866
+    if (edgeType === 'circle3d') {
+      const r = (result!.edges[0].edge.curve as any).radius;
+      expect(r).toBeCloseTo(Math.sqrt(0.75), 1);
+    }
+  });
+
+  it('G3: plane-cylinder → circle3d edge', () => {
+    const box = makeBox(0, 0, -2, 4, 4, 4);
+    const cyl = makeCylinder(0.5, 6);
+
+    const boxFaces = shellFaces(box.solid.outerShell);
+    const cylFaces = shellFaces(cyl.solid.outerShell);
+
+    const topFace = boxFaces.find(f => {
+      if (f.surface.type !== 'plane') return false;
+      const verts = f.outerWire.edges.map(oe => edgeStartPoint(oe.edge));
+      return verts.every(v => Math.abs(v.z - 2) < 0.1);
+    })!;
+    const cylSide = cylFaces.find(f => f.surface.type === 'cylinder')!;
+    expect(topFace).toBeDefined();
+    expect(cylSide).toBeDefined();
+
+    const result = intersectFaceFace(topFace, cylSide);
+    expect(result).not.toBeNull();
+    expect(result!.edges.length).toBeGreaterThanOrEqual(1);
+
+    const edgeType = result!.edges[0].edge.curve.type;
+    expect(edgeType === 'circle3d' || edgeType === 'arc3d').toBe(true);
+
+    if (edgeType === 'circle3d') {
+      const r = (result!.edges[0].edge.curve as any).radius;
+      expect(r).toBeCloseTo(0.5, 1);
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════
 // SPHERE-SPHERE
 // ═══════════════════════════════════════════════
 

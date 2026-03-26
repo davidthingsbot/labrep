@@ -1,7 +1,8 @@
 import { Point3D, cross, dot, normalize, subtractPoints, vec3d } from '../core';
 import { OperationResult, success, failure } from '../mesh/mesh';
 import { Shell, shellIsClosed, shellFaces } from './shell';
-import { faceOuterWire, Face, Surface } from './face';
+import { faceOuterWire, faceInnerWires, Face, Surface } from './face';
+import type { Wire } from './wire';
 import { edgeStartPoint, edgeEndPoint, Curve3D } from './edge';
 import { evaluateLine3D } from '../geometry/line3d';
 import { evaluateCircle3D } from '../geometry/circle3d';
@@ -630,14 +631,70 @@ function computeShellSignedVolume(shell: Shell): number {
   let totalVolume = 0;
 
   for (const face of shellFaces(shell)) {
+    let faceVol: number;
     if (faceIsLinear(face)) {
-      totalVolume += computeLinearFaceVolume(face);
+      faceVol = computeLinearFaceVolume(face);
     } else {
-      totalVolume += computeCurvedFaceVolume(face);
+      faceVol = computeCurvedFaceVolume(face);
+    }
+    totalVolume += faceVol;
+
+    // Subtract inner wire (hole) contributions.
+    // Each inner wire represents a hole in the face. The divergence theorem
+    // requires the hole volume to have the SAME sign as the outer wire (so
+    // subtracting it reduces the face's contribution). Inner wires are stored
+    // CW (hole convention), but the outer wire's winding varies per face.
+    // We match signs: compute the inner wire volume as-is, and if its sign
+    // disagrees with the outer wire, negate it before subtracting.
+    for (const innerWire of faceInnerWires(face)) {
+      const iwVol = computeWireSignedVolume(innerWire, face.surface);
+      const iwVolMatched = (Math.sign(faceVol) === Math.sign(iwVol) || faceVol === 0 || iwVol === 0)
+        ? iwVol : -iwVol;
+      totalVolume -= iwVolMatched;
     }
   }
 
   return totalVolume;
+}
+
+/**
+ * Compute signed volume contribution of a wire boundary using fan triangulation.
+ * For closed circle/arc wires, samples the curve to create a polygon.
+ *
+ * @param reversed - If true, traverse edges in reverse order with flipped
+ *   orientation. Used for inner wires (holes), which are stored CW. Reversing
+ *   gives CCW traversal, matching the outer wire's sign convention so the
+ *   subtraction works correctly regardless of face position/normal direction.
+ */
+function computeWireSignedVolume(wire: Wire, surface: Surface, reversed = false): number {
+  const vertices: Pt[] = [];
+  const edges = reversed ? [...wire.edges].reverse() : wire.edges;
+  for (const oe of edges) {
+    const fwd = reversed ? !oe.forward : oe.forward;
+    const curve = oe.edge.curve;
+    const isCurved = curve.type === 'circle3d' || curve.type === 'arc3d' || curve.type === 'ellipse3d';
+    if (isCurved) {
+      const n = curve.isClosed ? 32 : 16;
+      for (let i = 0; i < n; i++) {
+        const t = fwd
+          ? curve.startParam + (i / n) * (curve.endParam - curve.startParam)
+          : curve.endParam - (i / n) * (curve.endParam - curve.startParam);
+        vertices.push(evaluateCurve(curve, t));
+      }
+    } else {
+      const pt = fwd ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      vertices.push(pt);
+    }
+  }
+
+  if (vertices.length < 3) return 0;
+
+  let vol = 0;
+  const v0 = vertices[0];
+  for (let i = 1; i < vertices.length - 1; i++) {
+    vol += tetVol(v0, vertices[i], vertices[i + 1]);
+  }
+  return vol;
 }
 
 // edgeEndPoint imported from ./edge
