@@ -1128,21 +1128,39 @@ booleanOperation(A, B, op)
 
 **G: FFI Analytic Edge Dispatch** ✅ — `intersectFaceFace` dispatches to analytic intersection for plane-plane (→Line3D), plane-sphere/cylinder/cone (→Circle3D/Arc3D). Falls back to SSI marcher for other pairs. 3 analytic dispatch tests.
 
-**H: Aggressive Pipeline Cutover** 🔧 IN PROGRESS — Deleted ~900 lines of special-case code. Wired FFI+BuilderFace as the single pipeline. Extended `projectToUV` for curved surfaces with angular seam handling. 17/17 basic box-box boolean tests pass. Remaining: non-coplanar box edge matching, curved face splitting.
+**H: Pipeline Cutover + OCCT Classification** 🔧 IN PROGRESS
+
+Deleted ~900 lines of special-case code. Wired FFI+BuilderFace as the single pipeline. 17/17 basic coplanar box-box boolean tests pass.
+
+Key OCCT patterns implemented this phase:
+- `classifySubFace` following `BOPTools_AlgoTools::IsInternalFace` — uses intersection edge binormals to classify non-convex (L-shaped) sub-faces correctly
+- `ComputeState` fallback — when no intersection edges in sub-face boundary, uses farthest-from-intersection edge midpoint
+- `OrientFacesOnShell` following `BOPTools_AlgoTools::OrientFacesOnShell` — BFS-based face orientation to ensure consistent edge winding across faces from different source solids
+- `projectToUV` extended for sphere/cylinder/cone with angular seam unwrapping (`ShapeAnalysis_WireOrder`)
+- Vertex snapping in stitcher (canonical vertex pool)
+
+**Current status:** Non-coplanar box intersect correctly classifies sub-faces (6 selected, was 11 before OCCT classification). Remaining: BuilderFace produces 1 sub-face instead of 2 when 2 FFI edges meet at a shared vertex on B's z=1 face.
 
 ---
 
 #### Remaining Work
 
-##### Edge Matching for Non-Coplanar Boxes
-- BuilderFace sub-face edges at face-pair boundaries need to exactly match across adjacent faces
-- Stitcher handles coplanar face boundary splits but non-coplanar cases need verification
-- **Guard**: "boxes with different Z bases" tests (intersect, union, subtract volumes)
+##### BuilderFace: L-meeting edge handling
+- Two FFI edges that share a vertex (meeting at a corner, not crossing) should produce 2 sub-faces
+- Current: B's z=1 face with 2 meeting edges produces only 1 sub-face
+- **Root cause**: BuilderFace's loop tracing may treat meeting-at-vertex as a single path instead of a junction
+- **OCCT ref**: `BOPAlgo_WireSplitter_1.cxx` Path() function handles vertex fan-out
+- **Guard**: "boxes with different Z bases" intersect/union/subtract tests
+
+##### Shell edge matching
+- After classification is correct, adjacent faces' edges must match at coordinate level
+- `orientFacesOnShell` ensures consistent winding
+- Vertex snapping ensures coordinate consistency
+- **Guard**: shell closure check passes for all operations
 
 ##### Curved Face Splitting
 - FFI produces Circle3D/Arc3D edges between planar and curved faces
-- BuilderFace `projectToUV` now dispatches to sphere/cylinder/cone projectors with angular seam unwrapping
-- Need to verify: sphere face split by arc edge, cylinder face split by line edge
+- BuilderFace `projectToUV` dispatches to sphere/cylinder/cone projectors with seam unwrapping
 - **Guard**: F1 (box−sphere), F2 (sphere partially outside), F3 (box−cylinder through-hole)
 
 ##### Exit Criteria Tests
@@ -1163,8 +1181,11 @@ booleanOperation(A, B, op)
 - `BOPAlgo_BuilderFace` — face reconstruction from split edges (UV-space angle tracing)
 - `BOPAlgo_WireSplitter` — wire loop tracing via smallest-clockwise-angle, sub-loop extraction
 - `BOPAlgo_PaveFiller` — pairwise edge intersection before face splitting
-- `BRepGProp_Gauss` — natural restriction detection
-- Coplanar faces handled separately (polygon clipping, not SSI)
+- `BOPTools_AlgoTools::IsInternalFace` — intersection-edge binormal classification for non-convex sub-faces
+- `BOPTools_AlgoTools::ComputeState` — fallback classification using edge midpoints far from intersection boundary
+- `BOPTools_AlgoTools::OrientFacesOnShell` — BFS face orientation for consistent edge winding
+- `ShapeAnalysis_WireOrder` — angular seam unwrapping for periodic surfaces
+- Coplanar faces handled separately (polygon clipping, not SSI) per `BRepAlgo_FaceRestrictor`
 
 #### Key Reference
 
@@ -1175,13 +1196,16 @@ OCCT source in `library/opencascade/src/`:
 - `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_WireSplitter_1.cxx` — Wire loop tracing (Path, Angle2D, ClockWiseAngle)
 - `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_PaveFiller.hxx` — Pairwise intersection
 - `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_Builder.hxx` — Single unified pipeline
+- `ModelingAlgorithms/TKBO/BOPAlgo/BOPAlgo_Builder_3.cxx` — FillIn3DParts, BuildDraftSolid
+- `ModelingAlgorithms/TKBO/BOPTools/BOPTools_AlgoTools.cxx` — IsInternalFace, ComputeState, OrientFacesOnShell, IsSplitToReverse
+- `ModelingAlgorithms/TKShHealing/ShapeFix/ShapeFix_Shell.cxx` — GetShells (edge-balance shell assembly)
 
 #### Files
 
 | File | Status |
 |------|--------|
-| `src/operations/boolean.ts` | ✅ **Rewritten** — FFI + BuilderFace pipeline (~600 lines, was ~1600) |
-| `src/operations/builder-face.ts` | ✅ — General face splitter with curved UV support (6 tests) |
+| `src/operations/boolean.ts` | ✅ **Rewritten** — FFI + BuilderFace pipeline with OCCT classification + orientation |
+| `src/operations/builder-face.ts` | ✅ — General face splitter with curved UV support (7 tests) |
 | `src/operations/face-face-intersection.ts` | ✅ — Analytic dispatch for plane-plane/sphere/cylinder/cone |
 | `src/operations/split-face-by-circle.ts` | **Dead code** — no longer used by pipeline, kept for unit tests |
 | `src/operations/trim-curved-face.ts` | **Dead code** — no longer used by pipeline, kept for unit tests |
