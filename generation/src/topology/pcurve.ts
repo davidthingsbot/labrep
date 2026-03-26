@@ -187,10 +187,10 @@ export function buildPCurveForEdgeOnSurface(
     const v = startUV.v;
     const uStart = seamOccurrence === 0 ? 0 : adapter.uPeriod;
     const uEnd = uStart + adapter.uPeriod;
-    // Wire direction: forward traverses the period normally;
-    // reversed traverses it backwards.
-    const u0 = forward ? uStart : uEnd;
-    const u1 = forward ? uEnd : uStart;
+    // PCurve in edge geometric direction (always forward).
+    // Wire direction handled by getEdgeUV.
+    const u0 = uStart;
+    const u1 = uEnd;
     const line2d = makeLine2D({ x: u0, y: v }, { x: u1, y: v });
     if (!line2d.result) return null;
     return makePCurve(line2d.result, surface);
@@ -209,13 +209,10 @@ export function buildPCurveForEdgeOnSurface(
     }
   }
 
-  // Wire traversal direction determines which UV is "start" and "end"
-  const u0 = forward ? startUV.u : endUV.u;
-  const v0 = forward ? startUV.v : endUV.v;
-  const u1 = forward ? endUV.u : startUV.u;
-  const v1 = forward ? endUV.v : startUV.v;
-
-  const line2d = makeLine2D({ x: u0, y: v0 }, { x: u1, y: v1 });
+  // PCurve always goes in edge geometric direction (startVertex → endVertex).
+  // Wire traversal direction is handled by the consumer (getEdgeUV swaps if needed).
+  // This matches OCCT where BRep_CurveOnSurface stores the curve in edge direction.
+  const line2d = makeLine2D({ x: startUV.u, y: startUV.v }, { x: endUV.u, y: endUV.v });
   if (!line2d.result) return null;
   return makePCurve(line2d.result, surface);
 }
