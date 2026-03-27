@@ -1106,7 +1106,7 @@ App Examples:
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Status (2026-03-27):** OCCT-aligned boolean pipeline. All planar booleans pass. Cylinder through-hole, sphere trimming, nested cylinders, multiple bores working. 1332 tests passing, 1 remaining (sphere at box corner — needs BOPDS_DS pave block splitting for closed circles on periodic surfaces).
+**Status (2026-03-27):** OCCT-aligned boolean pipeline with both-direction binormal classification active. Two new authoritative test suites: `boolean-cad-objects.test.ts` (15/28 real CAD operations passing) and `boolean-pipeline-internals.test.ts` (2/11 targeting BuilderFace self-loop + classification). 14 old tests fail because they were calibrated to incorrect tube-face exclusion. The critical path is BuilderFace self-loop circle handling on periodic surfaces (OCCT `BOPDS_PaveBlock::Update`).
 
 **Architecture:**
 
@@ -1192,16 +1192,56 @@ Major architectural refactor (2026-03-26):
 
 ---
 
-#### Remaining Work (1 failure)
+#### Remaining Work
 
-##### Curved Face Failures
+##### Authoritative Test Suites (new, 2026-03-27)
 
-- Box−sphere at corner (1 test) — sphere at box corner straddles 3 faces. Requires BOPDS_DS-style pave block splitting: closed intersection circles on periodic surfaces must be split into arcs at seam vertices before BuilderFace, so they connect with seam segments instead of forming self-loops. Also needs OCCT-aligned both-direction binormal classification for curved faces (GetFaceDir + FindPointInFace iterative projection).
+These describe CORRECT geometry. Old tests that disagree should be updated when these pass.
 
-##### Exit Criteria Tests
+**`boolean-cad-objects.test.ts`** — 15/28 passing:
+| Test | Status | Notes |
+|------|--------|-------|
+| Through-hole (cyl through box) | ❌ 0/4 | Needs pave block splitting |
+| Counterbore (sequential booleans) | ❌ 0/1 | Needs through-hole |
+| Spherical pocket (sphere inside box) | ✅ 4/4 | |
+| Mounting plate (4 bolt holes) | ❌ 0/1 | Needs through-hole |
+| Pipe fitting (tube) | ✅ 4/4 | |
+| Equatorial slot (sphere−box) | ✅ 2/2 | |
+| Cylinder flat (plane cut) | ❌ 0/3 | Needs plane-cylinder line FFI |
+| Spherical cavity (large scale) | ✅ 3/3 | |
+| T-pipe union (perp cylinders) | ❌ 0/3 | Needs cylinder-cylinder SSI |
+| Truncated sphere (intersect) | ❌ 0/3 | Needs intersect classification |
+
+**`boolean-pipeline-internals.test.ts`** — 2/11 passing:
+| Group | Tests | Status | What it targets |
+|-------|-------|--------|----------------|
+| A: Circle on cylinder | 2 | ❌ | BuilderFace self-loop: 1 circle → 3 faces not 2 |
+| B: Circle on sphere | 1 | ❌ | Same issue on sphere surface |
+| C: Tube classification | 2 | ❌ | Binormal nudge + tube face existence |
+| D: Sphere cavity | 2 | ✅ | UV interior point fallback works |
+| E: Through-hole pipeline | 3 | ❌ | Needs A + C together |
+| F: Edge sharing | 1 | ❌ | Needs the whole pipeline |
+
+##### Critical Path
+
+**Root cause:** BuilderFace treats full circles on periodic surfaces as self-loops (startVtx==endVtx from 3D vertex merging). They become standalone faces instead of joining seam edges in proper tube boundary wires.
+
+**OCCT's solution:** `BOPDS_PaveBlock::Update` splits circles at seam vertices BEFORE BuilderFace. Two arcs with distinct endpoints avoid self-loops. Must happen in the boolean pipeline between FFI and BuilderFace — NOT inside BuilderFace (which would break self-loop hole handling on planar faces).
+
+**Fix dependency chain:**
+1. BuilderFace self-loop fix (Group A/B) → 3 tests
+2. Classification tube selection (Group C) → 2 tests (depends on #1)
+3. Full through-hole + edge sharing (Group E/F + CAD through-hole) → ~10 tests (depends on #1 + #2)
+4. Old failing tests updated → 14 tests
+
+##### Legacy Exit Criteria Tests
 - **F1: Box − sphere (fully inside)** ✅ — all 5 tests
-- **F2: Sphere partially outside** ✅ — all 5 tests (degenerate edges at poles fix)
-- **F3: Box − cylinder (through-hole)** ✅ — all 10 tests
+- **F2: Sphere partially outside** ❌ — 4 of 5 fail (old tests calibrated to wrong classification)
+- **F3: Box − cylinder (through-hole)** ❌ — 5 of 10 fail (old tests calibrated to wrong classification)
+- **F4: L-bracket − sphere** ✅ — all 4 tests
+- **F5: Volume invariant** ✅ — all tests
+- **F6: Edge cases** ✅ — sphere outside, sphere inside
+- **F7: Known limitations** ✅ — documented (curved union mesh degenerate)
 - **F4: L-bracket − sphere** ✅ — all 4 tests
 - **F5: Volume invariant** ✅ — all tests
 - **F6: Edge cases** ✅ — sphere outside, sphere inside
