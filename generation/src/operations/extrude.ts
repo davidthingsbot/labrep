@@ -534,15 +534,21 @@ function generateSideFaceOriented(
   direction: Vector3D,
   dist: number,
   canonicalize: boolean = true,
+  sharedTopEdge?: Edge,
 ): OperationResult<Face> {
   const offset = scale(direction, dist);
   const curve = edge.curve;
 
-  let topEdgeResult = translateEdge(edge, offset);
-  if (!topEdgeResult.success) {
-    return failure(`Failed to create top edge: ${topEdgeResult.error}`);
+  let topEdge: Edge;
+  if (sharedTopEdge) {
+    topEdge = sharedTopEdge;
+  } else {
+    const topEdgeResult = translateEdge(edge, offset);
+    if (!topEdgeResult.success) {
+      return failure(`Failed to create top edge: ${topEdgeResult.error}`);
+    }
+    topEdge = topEdgeResult.result!;
   }
-  let topEdge = topEdgeResult.result!;
 
   let surface: Surface;
   const extSurfResult = makeExtrusionSurface(curve, direction);
@@ -661,24 +667,40 @@ function generateSideFaceOriented(
 /**
  * Generate all side faces for a wire.
  */
+/**
+ * OCCT ref: BRepSweep_Translation — edges are created per generating vertex
+ * and shared between adjacent faces. We pre-create translated top edges so
+ * side faces and the top cap share the same Edge objects.
+ */
 function generateSideFaces(
   wire: Wire,
   direction: Vector3D,
   dist: number,
   canonicalize: boolean,
-): OperationResult<Face[]> {
+): OperationResult<{ faces: Face[]; topEdgeMap: Map<Edge, Edge> }> {
   const sideFaces: Face[] = [];
+  const topEdgeMap = new Map<Edge, Edge>();
+
+  // Pre-create shared translated top edges per original edge
+  const offset = scale(direction, dist);
+  for (const oe of wire.edges) {
+    if (!topEdgeMap.has(oe.edge)) {
+      const topResult = translateEdge(oe.edge, offset);
+      if (!topResult.success) return failure(`Failed to translate edge: ${topResult.error}`);
+      topEdgeMap.set(oe.edge, topResult.result!);
+    }
+  }
 
   for (const oe of wire.edges) {
-    // Pass the wire edge orientation to generateSideFace for proper edge matching
-    const faceResult = generateSideFaceOriented(oe.edge, oe.forward, direction, dist, canonicalize);
+    const sharedTopEdge = topEdgeMap.get(oe.edge)!;
+    const faceResult = generateSideFaceOriented(oe.edge, oe.forward, direction, dist, canonicalize, sharedTopEdge);
     if (!faceResult.success) {
       return failure(`Failed to generate side face: ${faceResult.error}`);
     }
     sideFaces.push(faceResult.result!);
   }
 
-  return success(sideFaces);
+  return success({ faces: sideFaces, topEdgeMap });
 }
 
 // ═══════════════════════════════════════════════════════
@@ -694,6 +716,7 @@ export function generateCapFaces(
   p: Plane,
   direction: Vector3D,
   dist: number,
+  topEdgeMap?: Map<Edge, Edge>,
 ): OperationResult<{ bottomFace: Face; topFace: Face }> {
   const offset = scale(direction, dist);
 
@@ -736,22 +759,55 @@ export function generateCapFaces(
     return failure(`Failed to create bottom cap: ${bottomFaceResult.error}`);
   }
 
-  // Top cap: translated profile
+  // Top cap: use shared top edges from side faces (OCCT edge sharing)
   const topPlane = translatePlane(p, offset);
   const topSurface = makePlaneSurface(topPlane);
 
-  const topWireResult = translateWire(outerWire, offset);
+  // Build top wire from shared edges if available, else translate
+  let topWireResult: OperationResult<Wire>;
+  if (topEdgeMap && topEdgeMap.size > 0) {
+    const topOEs: OrientedEdge[] = [];
+    for (const oe of outerWire.edges) {
+      const sharedTop = topEdgeMap.get(oe.edge);
+      if (sharedTop) {
+        topOEs.push(orientEdge(sharedTop, oe.forward));
+      } else {
+        // Fallback: translate
+        const tr = translateEdge(oe.edge, offset);
+        if (tr.success) topOEs.push(orientEdge(tr.result!, oe.forward));
+      }
+    }
+    topWireResult = makeWire(topOEs);
+  } else {
+    topWireResult = translateWire(outerWire, offset);
+  }
   if (!topWireResult.success) {
-    return failure(`Failed to translate top wire: ${topWireResult.error}`);
+    return failure(`Failed to create top wire: ${topWireResult.error}`);
   }
 
   const topInnerWires: Wire[] = [];
   for (const inner of innerWires) {
-    const translatedResult = translateWire(inner, offset);
-    if (!translatedResult.success) {
-      return failure(`Failed to translate inner wire: ${translatedResult.error}`);
+    // Inner wires: use shared top edges if available
+    let innerTopWireResult: OperationResult<Wire>;
+    if (topEdgeMap && topEdgeMap.size > 0) {
+      const innerTopOEs: OrientedEdge[] = [];
+      for (const oe of inner.edges) {
+        const sharedTop = topEdgeMap.get(oe.edge);
+        if (sharedTop) {
+          innerTopOEs.push(orientEdge(sharedTop, oe.forward));
+        } else {
+          const tr = translateEdge(oe.edge, offset);
+          if (tr.success) innerTopOEs.push(orientEdge(tr.result!, oe.forward));
+        }
+      }
+      innerTopWireResult = makeWire(innerTopOEs);
+    } else {
+      innerTopWireResult = translateWire(inner, offset);
     }
-    topInnerWires.push(translatedResult.result!);
+    if (!innerTopWireResult.success) {
+      return failure(`Failed to create inner top wire: ${innerTopWireResult.error}`);
+    }
+    topInnerWires.push(innerTopWireResult.result!);
   }
 
   // Attach PCurves to top cap edges
@@ -819,7 +875,8 @@ export function extrude(
   if (!outerSideResult.success) {
     return failure(`Failed to generate outer side faces: ${outerSideResult.error}`);
   }
-  const sideFaces = outerSideResult.result!;
+  const sideFaces = outerSideResult.result!.faces;
+  const allTopEdgeMaps = new Map<Edge, Edge>(outerSideResult.result!.topEdgeMap);
 
   // Generate side faces for inner wires (holes)
   for (const innerWire of innerWires) {
@@ -827,11 +884,12 @@ export function extrude(
     if (!innerSideResult.success) {
       return failure(`Failed to generate inner side faces: ${innerSideResult.error}`);
     }
-    sideFaces.push(...innerSideResult.result!);
+    sideFaces.push(...innerSideResult.result!.faces);
+    for (const [k, v] of innerSideResult.result!.topEdgeMap) allTopEdgeMaps.set(k, v);
   }
 
-  // Generate cap faces
-  const capsResult = generateCapFaces(outerWire, innerWires, profilePlane, normalizedDir, dist);
+  // Generate cap faces using shared top edges (OCCT edge sharing)
+  const capsResult = generateCapFaces(outerWire, innerWires, profilePlane, normalizedDir, dist, allTopEdgeMaps);
   if (!capsResult.success) {
     return failure(capsResult.error!);
   }
@@ -904,7 +962,8 @@ export function extrudeWithHoles(
   if (!outerSideResult.success) {
     return failure(`Failed to generate outer side faces: ${outerSideResult.error}`);
   }
-  const sideFaces = outerSideResult.result!;
+  const sideFaces = outerSideResult.result!.faces;
+  const allTopEdgeMaps = new Map<Edge, Edge>(outerSideResult.result!.topEdgeMap);
 
   // Generate side faces for inner wires (holes)
   for (const innerWire of innerWires) {
@@ -912,11 +971,12 @@ export function extrudeWithHoles(
     if (!innerSideResult.success) {
       return failure(`Failed to generate inner side faces: ${innerSideResult.error}`);
     }
-    sideFaces.push(...innerSideResult.result!);
+    sideFaces.push(...innerSideResult.result!.faces);
+    for (const [k, v] of innerSideResult.result!.topEdgeMap) allTopEdgeMaps.set(k, v);
   }
 
-  // Generate cap faces
-  const capsResult = generateCapFaces(outerWire, innerWires, profilePlane, normalizedDir, dist);
+  // Generate cap faces using shared top edges (OCCT edge sharing)
+  const capsResult = generateCapFaces(outerWire, innerWires, profilePlane, normalizedDir, dist, allTopEdgeMaps);
   if (!capsResult.success) {
     return failure(capsResult.error!);
   }

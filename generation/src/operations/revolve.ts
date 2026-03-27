@@ -360,6 +360,7 @@ function generateRevolveSideFace(
   startAngle: number,
   endAngle: number,
   isFullRevolve: boolean,
+  sharedCircleEdges?: Map<object, Edge>,
 ): OperationResult<Face | null> {
   const startPt = edgeStartPoint(edge);
   const endPt = edgeEndPoint(edge);
@@ -388,7 +389,7 @@ function generateRevolveSideFace(
   const rotatedEdge = rotatedEdgeResult.result!;
 
   if (isFullRevolve) {
-    return generateFullRevolveFace(edge, rotatedEdge, surface, ax, startPt, endPt, startOnAxis, endOnAxis);
+    return generateFullRevolveFace(edge, rotatedEdge, surface, ax, startPt, endPt, startOnAxis, endOnAxis, sharedCircleEdges);
   } else {
     return generatePartialRevolveFace(edge, rotatedEdge, surface, ax, startAngle, endAngle, startPt, endPt, startOnAxis, endOnAxis);
   }
@@ -407,6 +408,7 @@ function generateFullRevolveFace(
   endPt: Point3D,
   startOnAxis: boolean,
   endOnAxis: boolean,
+  sharedCircleEdges?: Map<object, Edge>,
 ): OperationResult<Face | null> {
   const wireEdges: OrientedEdge[] = [];
 
@@ -475,13 +477,20 @@ function generateFullRevolveFace(
     );
   } else if (!startOnAxis && !endOnAxis) {
     // Normal case: 4-edge face (cylinder-like)
-    const endCircleResult = makeSweepEdge(endPt, ax, 0, TWO_PI);
-    const startCircleResult = makeSweepEdge(startPt, ax, 0, TWO_PI);
-    if (!endCircleResult.success || !startCircleResult.success) {
-      return failure('Failed to create sweep circles');
+    // Use shared circle edges from pre-created map (OCCT edge sharing)
+    const ROUND = 1e-7;
+    const vtxKey = (pt: Point3D) => `${Math.round(pt.x/ROUND)*ROUND},${Math.round(pt.y/ROUND)*ROUND},${Math.round(pt.z/ROUND)*ROUND}`;
+    let endCircle = sharedCircleEdges?.get(vtxKey(endPt));
+    let startCircle = sharedCircleEdges?.get(vtxKey(startPt));
+    if (!endCircle || !startCircle) {
+      const endCircleResult = makeSweepEdge(endPt, ax, 0, TWO_PI);
+      const startCircleResult = makeSweepEdge(startPt, ax, 0, TWO_PI);
+      if (!endCircleResult.success || !startCircleResult.success) {
+        return failure('Failed to create sweep circles');
+      }
+      endCircle = endCircle || endCircleResult.result!;
+      startCircle = startCircle || startCircleResult.result!;
     }
-    let endCircle = endCircleResult.result!;
-    let startCircle = startCircleResult.result!;
 
     addSeamPCurves(edge);
     addCirclePCurve(endCircle, vEnd, true);
@@ -495,11 +504,14 @@ function generateFullRevolveFace(
     );
   } else if (startOnAxis) {
     // Start vertex on axis (pole) — 3-edge face
-    const endCircleResult = makeSweepEdge(endPt, ax, 0, TWO_PI);
-    if (!endCircleResult.success) {
-      return failure('Failed to create sweep circle');
+    const ROUND2 = 1e-7;
+    const vtxKey2 = (pt: Point3D) => `${Math.round(pt.x/ROUND2)*ROUND2},${Math.round(pt.y/ROUND2)*ROUND2},${Math.round(pt.z/ROUND2)*ROUND2}`;
+    let endCircle = sharedCircleEdges?.get(vtxKey2(endPt));
+    if (!endCircle) {
+      const endCircleResult = makeSweepEdge(endPt, ax, 0, TWO_PI);
+      if (!endCircleResult.success) return failure('Failed to create sweep circle');
+      endCircle = endCircleResult.result!;
     }
-    let endCircle = endCircleResult.result!;
 
     addSeamPCurves(edge);
     addCirclePCurve(endCircle, vEnd, true);
@@ -511,11 +523,14 @@ function generateFullRevolveFace(
     );
   } else {
     // End vertex on axis (pole) — 3-edge face
-    const startCircleResult = makeSweepEdge(startPt, ax, 0, TWO_PI);
-    if (!startCircleResult.success) {
-      return failure('Failed to create sweep circle');
+    const ROUND3 = 1e-7;
+    const vtxKey3 = (pt: Point3D) => `${Math.round(pt.x/ROUND3)*ROUND3},${Math.round(pt.y/ROUND3)*ROUND3},${Math.round(pt.z/ROUND3)*ROUND3}`;
+    let startCircle = sharedCircleEdges?.get(vtxKey3(startPt));
+    if (!startCircle) {
+      const startCircleResult = makeSweepEdge(startPt, ax, 0, TWO_PI);
+      if (!startCircleResult.success) return failure('Failed to create sweep circle');
+      startCircle = startCircleResult.result!;
     }
-    let startCircle = startCircleResult.result!;
 
     addSeamPCurves(edge);
     addCirclePCurve(startCircle, vStart, false);
@@ -730,6 +745,28 @@ function revolveInternal(
     return failure(validationResult.error!);
   }
 
+  // OCCT ref: BRepSweep_Rotation::MakeEmptyDirectingEdge
+  // Pre-create circle/degenerate edges per profile VERTEX so adjacent faces
+  // share the same edge objects. In OCCT, edges are stored in a (genShape, dirShape)
+  // array; here we key by rounded 3D position since adjacent edges may have
+  // different Vertex objects at the same geometric location.
+  const vertexCircleEdges = new Map<string, Edge>();
+  const ROUND = 1e-7;
+  const vtxKey = (pt: Point3D) => `${Math.round(pt.x/ROUND)*ROUND},${Math.round(pt.y/ROUND)*ROUND},${Math.round(pt.z/ROUND)*ROUND}`;
+
+  for (const oe of profile.edges) {
+    for (const vtx of [oe.edge.startVertex, oe.edge.endVertex]) {
+      const key = vtxKey(vtx.point);
+      if (vertexCircleEdges.has(key)) continue;
+      const pt = vtx.point;
+      if (isOnAxis(pt, normalizedAxis)) continue; // Poles handled per-face
+      const circleResult = makeSweepEdge(pt, normalizedAxis, startAngle, endAngle);
+      if (circleResult.success) {
+        vertexCircleEdges.set(key, circleResult.result!);
+      }
+    }
+  }
+
   // Generate side faces
   const sideFaces: Face[] = [];
 
@@ -740,6 +777,7 @@ function revolveInternal(
       startAngle,
       endAngle,
       isFullRevolve,
+      vertexCircleEdges,
     );
     if (!faceResult.success) {
       return failure(`Failed to generate side face: ${faceResult.error}`);

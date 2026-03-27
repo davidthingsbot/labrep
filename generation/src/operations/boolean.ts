@@ -353,23 +353,35 @@ function faceToPolygon2D(face: Face, pl: Plane): Pt2[] {
  * Flip a face's normal by reversing the wire winding.
  */
 function flipFace(face: Face): OperationResult<Face> {
+  // Reverse outer wire
   const reversedEdges: OrientedEdge[] = [];
   for (let i = face.outerWire.edges.length - 1; i >= 0; i--) {
     const oe = face.outerWire.edges[i];
     reversedEdges.push(orientEdge(oe.edge, !oe.forward));
   }
-
   const wireResult = makeWire(reversedEdges);
   if (!wireResult.success) return failure(`Failed to reverse wire: ${wireResult.error}`);
+
+  // Reverse inner wires (holes) — OCCT preserves holes when flipping faces
+  const flippedInnerWires: Wire[] = [];
+  for (const iw of face.innerWires) {
+    const revInner: OrientedEdge[] = [];
+    for (let i = iw.edges.length - 1; i >= 0; i--) {
+      const oe = iw.edges[i];
+      revInner.push(orientEdge(oe.edge, !oe.forward));
+    }
+    const iwResult = makeWire(revInner);
+    if (iwResult.success) flippedInnerWires.push(iwResult.result!);
+  }
 
   if (face.surface.type === 'plane') {
     const p = face.surface.plane;
     const flippedPlane = plane(p.origin, vec3d(-p.normal.x, -p.normal.y, -p.normal.z), p.xAxis);
     const flippedSurface = makePlaneSurface(flippedPlane);
-    return makeFace(flippedSurface, wireResult.result!);
+    return makeFace(flippedSurface, wireResult.result!, flippedInnerWires);
   }
 
-  return makeFace(face.surface, wireResult.result!, [], !face.forward);
+  return makeFace(face.surface, wireResult.result!, flippedInnerWires, !face.forward);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -849,7 +861,8 @@ export function booleanOperation(
             }
           }
           if (!edgesOnA.has(faceA)) edgesOnA.set(faceA, []);
-          edgesOnA.get(faceA)!.push(edgeToUse);
+          const listA = edgesOnA.get(faceA)!;
+          if (!listA.includes(edgeToUse)) listA.push(edgeToUse); // Dedup shared edges
         }
         if (!matchB) {
           let edgeToUse = e;
@@ -863,7 +876,8 @@ export function booleanOperation(
             }
           }
           if (!edgesOnB.has(faceB)) edgesOnB.set(faceB, []);
-          edgesOnB.get(faceB)!.push(edgeToUse);
+          const listB = edgesOnB.get(faceB)!;
+          if (!listB.includes(edgeToUse)) listB.push(edgeToUse); // Dedup shared edges
         }
       }
     }
