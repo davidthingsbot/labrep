@@ -1106,7 +1106,7 @@ App Examples:
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Status (2026-03-26):** OCCT-aligned boolean pipeline. All planar booleans pass. Cylinder through-hole, sphere trimming, nested cylinders, multiple bores working. 1330 tests passing, 1 remaining (sphere at box corner — multi-face shared vertex pool needed).
+**Status (2026-03-27):** OCCT-aligned boolean pipeline. All planar booleans pass. Cylinder through-hole, sphere trimming, nested cylinders, multiple bores working. 1332 tests passing, 1 remaining (sphere at box corner — needs BOPDS_DS pave block splitting for closed circles on periodic surfaces).
 
 **Architecture:**
 
@@ -1196,7 +1196,7 @@ Major architectural refactor (2026-03-26):
 
 ##### Curved Face Failures
 
-- Box−sphere at corner (1 test) — sphere at box corner straddles 3 faces, producing partial arcs from 3 different FFI calls that share endpoint vertices. Requires a global vertex/edge pool (OCCT's `BOPDS_DS`) for proper shared vertex management where arcs from different planes meet.
+- Box−sphere at corner (1 test) — sphere at box corner straddles 3 faces. Requires BOPDS_DS-style pave block splitting: closed intersection circles on periodic surfaces must be split into arcs at seam vertices before BuilderFace, so they connect with seam segments instead of forming self-loops. Also needs OCCT-aligned both-direction binormal classification for curved faces (GetFaceDir + FindPointInFace iterative projection).
 
 ##### Exit Criteria Tests
 - **F1: Box − sphere (fully inside)** ✅ — all 5 tests
