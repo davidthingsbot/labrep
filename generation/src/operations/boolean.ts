@@ -567,22 +567,35 @@ function classifySubFace(
       mid.z + (binormal.z / binLen) * nudge,
     );
 
-    // Check if testPt1 is inside the sub-face polygon (for planar faces)
-    let useTestPt1 = true;
+    // OCCT ref: BOPTools_AlgoTools::GetFaceDir + FindPointInFace
+    // For planar faces: 2D polygon containment picks the correct nudge side.
+    // For curved faces: the simple binormal may point wrong (e.g., at a seam
+    // edge on a sphere). OCCT uses iterative projection in FindPointInFace.
+    // We test both nudge directions: if they disagree, fall through to
+    // Phase 1.5 (UV interior point) for a robust answer.
     if (face.surface.type === 'plane') {
       const poly = faceToPolygon2DRaw(face, face.surface.plane);
       const pt2d = worldToSketch(face.surface.plane, testPt1);
-      useTestPt1 = pointInPolygon2DSimple(pt2d, poly);
+      const useTestPt1 = pointInPolygon2DSimple(pt2d, poly);
+      const testPt = useTestPt1 ? testPt1 : point3d(
+        mid.x - (binormal.x / binLen) * nudge,
+        mid.y - (binormal.y / binLen) * nudge,
+        mid.z - (binormal.z / binLen) * nudge,
+      );
+      const result = pointInSolid(testPt, otherSolid);
+      if (result !== 'on') return result;
+    } else {
+      // Non-planar: test both nudge directions
+      const testPt2 = point3d(
+        mid.x - (binormal.x / binLen) * nudge,
+        mid.y - (binormal.y / binLen) * nudge,
+        mid.z - (binormal.z / binLen) * nudge,
+      );
+      const r1 = pointInSolid(testPt1, otherSolid);
+      const r2 = pointInSolid(testPt2, otherSolid);
+      if (r1 === r2 && r1 !== 'on') return r1;
+      // Disagree or 'on' → fall through to Phase 1.5 UV interior point
     }
-
-    const testPt = useTestPt1 ? testPt1 : point3d(
-      mid.x - (binormal.x / binLen) * nudge,
-      mid.y - (binormal.y / binLen) * nudge,
-      mid.z - (binormal.z / binLen) * nudge,
-    );
-
-    const result = pointInSolid(testPt, otherSolid);
-    if (result !== 'on') return result;
   }
 
   // Phase 1.5: For non-planar faces, compute an interior point via UV sampling.
