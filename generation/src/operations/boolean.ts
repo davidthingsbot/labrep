@@ -763,6 +763,32 @@ function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on
 }
 
 
+/**
+ * Add an edge to a list if no geometrically equivalent edge already exists.
+ * OCCT deduplicates via BOPDS_DS PaveBlock identity; we check by endpoint proximity.
+ */
+function addEdgeIfNotDuplicate(list: Edge[], edge: Edge): void {
+  if (list.includes(edge)) return; // Same object → skip
+  const s = edgeStartPoint(edge);
+  const e = edgeEndPoint(edge);
+  const TOL = 1e-5;
+  for (const existing of list) {
+    const es = edgeStartPoint(existing);
+    const ee = edgeEndPoint(existing);
+    // Same geometry: both endpoints match (in either order for open curves)
+    if (distance(s, es) < TOL && distance(e, ee) < TOL) return;
+    if (!edge.curve.isClosed && distance(s, ee) < TOL && distance(e, es) < TOL) return;
+    // For closed curves: same center + radius + plane check
+    if (edge.curve.isClosed && existing.curve.isClosed) {
+      if (edge.curve.type === 'circle3d' && existing.curve.type === 'circle3d' && 'plane' in edge.curve && 'plane' in existing.curve) {
+        const c1 = edge.curve as any, c2 = existing.curve as any;
+        if (Math.abs(c1.radius - c2.radius) < TOL && distance(c1.plane.origin, c2.plane.origin) < TOL) return;
+      }
+    }
+  }
+  list.push(edge);
+}
+
 // ═══════════════════════════════════════════════════════
 // CORE BOOLEAN PIPELINE (FFI + BuilderFace)
 // ═══════════════════════════════════════════════════════
@@ -874,8 +900,7 @@ export function booleanOperation(
             }
           }
           if (!edgesOnA.has(faceA)) edgesOnA.set(faceA, []);
-          const listA = edgesOnA.get(faceA)!;
-          if (!listA.includes(edgeToUse)) listA.push(edgeToUse);
+          addEdgeIfNotDuplicate(edgesOnA.get(faceA)!, edgeToUse);
         }
         if (!matchB) {
           let edgeToUse = e;
@@ -889,8 +914,7 @@ export function booleanOperation(
             }
           }
           if (!edgesOnB.has(faceB)) edgesOnB.set(faceB, []);
-          const listB = edgesOnB.get(faceB)!;
-          if (!listB.includes(edgeToUse)) listB.push(edgeToUse);
+          addEdgeIfNotDuplicate(edgesOnB.get(faceB)!, edgeToUse);
         }
       }
     }
