@@ -1106,7 +1106,7 @@ App Examples:
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Status (2026-03-26):** OCCT-aligned boolean pipeline. All planar booleans pass. Cylinder through-hole + sphere trimming working. 1327 tests passing, 4 remaining (nested coaxial cylinders, sphere at corner/edge).
+**Status (2026-03-26):** OCCT-aligned boolean pipeline. All planar booleans pass. Cylinder through-hole, sphere trimming, nested cylinders, multiple bores working. 1330 tests passing, 1 remaining (sphere at box corner — multi-face shared vertex pool needed).
 
 **Architecture:**
 
@@ -1192,13 +1192,11 @@ Major architectural refactor (2026-03-26):
 
 ---
 
-#### Remaining Work (4 failures)
+#### Remaining Work (1 failure)
 
 ##### Curved Face Failures
 
-- Box−sphere at corner/edge (2 tests) — 2-face sphere equatorial boundary circle coincides with box face; needs edge sharing between hemisphere boundary and intersection arc
-- Nested coaxial cylinders (1 test) — outer boundary circles (r=3) at z=±3 appearing with same direction between lateral and annular ring faces (orientation or shared topology issue)
-- Box with multiple bores (1 test) — sequential subtract cascades from nested cylinder issue
+- Box−sphere at corner (1 test) — sphere at box corner straddles 3 faces, producing partial arcs from 3 different FFI calls that share endpoint vertices. Requires a global vertex/edge pool (OCCT's `BOPDS_DS`) for proper shared vertex management where arcs from different planes meet.
 
 ##### Exit Criteria Tests
 - **F1: Box − sphere (fully inside)** ✅ — all 5 tests
