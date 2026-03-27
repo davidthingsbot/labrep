@@ -20,7 +20,7 @@ import {
   transformVector,
 } from '../core';
 import { OperationResult, success, failure } from '../mesh/mesh';
-import { Curve3D, Edge, makeEdgeFromCurve, edgeStartPoint, edgeEndPoint } from '../topology/edge';
+import { Curve3D, Edge, makeEdgeFromCurve, makeDegenerateEdge, edgeStartPoint, edgeEndPoint } from '../topology/edge';
 import { makeVertex, Vertex } from '../topology/vertex';
 import {
   Wire,
@@ -431,10 +431,13 @@ function generateFullRevolveFace(
   const TWO_PI = 2 * Math.PI;
 
   // Helper: attach seam PCurves to edge (two PCurves: left at U=0, right at U=2π)
+  // Both PCurves are in edge geometric direction (startVertex → endVertex).
+  // Wire direction is handled by getEdgeUV which swaps when forward=false.
+  // OCCT reference: seam edges always have PCurves in edge direction.
   function addSeamPCurves(e: Edge): void {
     const leftPC = makeLine2D({ x: 0, y: vStart }, { x: 0, y: vEnd });
     if (leftPC.result) addPCurveToEdge(e, makePCurve(leftPC.result, surface));
-    const rightPC = makeLine2D({ x: TWO_PI, y: vEnd }, { x: TWO_PI, y: vStart });
+    const rightPC = makeLine2D({ x: TWO_PI, y: vStart }, { x: TWO_PI, y: vEnd });
     if (rightPC.result) addPCurveToEdge(e, makePCurve(rightPC.result, surface));
   }
 
@@ -448,11 +451,27 @@ function generateFullRevolveFace(
 
   if (startOnAxis && endOnAxis) {
     // Both poles on axis: "lens" face (sphere).
-    // Wire: seam (forward) → seam (reversed)
+    // OCCT reference: BRepSweep_Rotation::MakeEmptyDirectingEdge
+    // Wire: seam(fwd) → degen_end → seam(rev) → degen_start
+    // The degenerate edges at poles connect left/right seam in UV space,
+    // forming a closed rectangle in UV that BuilderFace can split.
     addSeamPCurves(edge);
+
+    // Degenerate edge at end pole (e.g., north pole)
+    const degenEnd = makeDegenerateEdge(endPt);
+    const degenEndPC = makeLine2D({ x: 0, y: vEnd }, { x: TWO_PI, y: vEnd });
+    if (degenEndPC.result) addPCurveToEdge(degenEnd, makePCurve(degenEndPC.result, surface));
+
+    // Degenerate edge at start pole (e.g., south pole)
+    const degenStart = makeDegenerateEdge(startPt);
+    const degenStartPC = makeLine2D({ x: TWO_PI, y: vStart }, { x: 0, y: vStart });
+    if (degenStartPC.result) addPCurveToEdge(degenStart, makePCurve(degenStartPC.result, surface));
+
     wireEdges.push(
-      orientEdge(edge, true),
-      orientEdge(edge, false),
+      orientEdge(edge, true),       // left seam: SP → NP at u=0
+      orientEdge(degenEnd, true),    // top pole: u=0 → u=2π at v=vEnd
+      orientEdge(edge, false),       // right seam: NP → SP at u=2π
+      orientEdge(degenStart, true),  // bottom pole: u=2π → u=0 at v=vStart
     );
   } else if (!startOnAxis && !endOnAxis) {
     // Normal case: 4-edge face (cylinder-like)

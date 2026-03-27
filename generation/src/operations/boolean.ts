@@ -226,7 +226,13 @@ function classifyCoplanarSubFace(
  * Edges on the boundary are redundant for BuilderFace — the face boundary
  * already provides that constraint. Adding them causes duplicate loops.
  */
-function edgeLiesOnFaceBoundary(edge: Edge, face: Face): boolean {
+/**
+ * Check if an intersection edge lies on a face's boundary.
+ * Returns the matching boundary Edge if found (for edge sharing), or null.
+ * OCCT ref: In OCCT, FFI clips to UV domain; boundary-coincident curves
+ * produce zero-length segments and are discarded. We check post-FFI.
+ */
+function findMatchingBoundaryEdge(edge: Edge, face: Face): Edge | null {
   const eStart = edgeStartPoint(edge);
   const eEnd = edgeEndPoint(edge);
   // For closed curves (circles), start==end so their average is the start point,
@@ -241,6 +247,48 @@ function edgeLiesOnFaceBoundary(edge: Edge, face: Face): boolean {
   const tol = 1e-5;
 
   for (const oe of face.outerWire.edges) {
+    // Skip degenerate boundary edges (zero 3D length at poles)
+    if (oe.edge.degenerate) continue;
+
+    const bCurve = oe.edge.curve;
+
+    // Check curved boundary edges (circles, arcs)
+    // OCCT approach: IntTools_FaceFace clips to UV domain; intersection curves
+    // exactly on the boundary get clipped to zero length and are discarded.
+    // We replicate this by checking if the intersection edge's midpoint lies
+    // on a boundary circle/arc.
+    if ((bCurve.type === 'circle3d' || bCurve.type === 'arc3d') && 'plane' in bCurve) {
+      const bArc = bCurve as any;
+      const bPlane = bArc.plane;
+      const bRadius = bArc.radius;
+      // Check if eMid lies on this circle/arc
+      const rel = vec3d(
+        eMid.x - bPlane.origin.x,
+        eMid.y - bPlane.origin.y,
+        eMid.z - bPlane.origin.z,
+      );
+      const nComp = dot(rel, bPlane.normal);
+      if (Math.abs(nComp) > tol) continue;
+      const inPlane = vec3d(rel.x - nComp * bPlane.normal.x,
+                            rel.y - nComp * bPlane.normal.y,
+                            rel.z - nComp * bPlane.normal.z);
+      const r = length(inPlane);
+      if (Math.abs(r - bRadius) < tol) {
+        // For full circles (closed), any point at correct radius+plane is on boundary
+        if (bCurve.isClosed) return oe.edge;
+        // For arcs, check angle range
+        const yDir = cross(bPlane.normal, bPlane.xAxis);
+        const yLen = length(yDir);
+        if (yLen < 1e-10) continue;
+        const xComp = dot(inPlane, bPlane.xAxis);
+        const yComp = (inPlane.x * yDir.x + inPlane.y * yDir.y + inPlane.z * yDir.z) / yLen;
+        const angle = Math.atan2(yComp, xComp);
+        if (angle >= bCurve.startParam - tol && angle <= bCurve.endParam + tol) return oe.edge;
+      }
+      continue;
+    }
+
+    // Line boundary edges
     const bStart = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
     const bEnd = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
     const dx = bEnd.x - bStart.x, dy = bEnd.y - bStart.y, dz = bEnd.z - bStart.z;
@@ -255,9 +303,9 @@ function edgeLiesOnFaceBoundary(edge: Edge, face: Face): boolean {
     const px = bStart.x + t * dx - eMid.x;
     const py = bStart.y + t * dy - eMid.y;
     const pz = bStart.z + t * dz - eMid.z;
-    if (Math.sqrt(px * px + py * py + pz * pz) < tol) return true;
+    if (Math.sqrt(px * px + py * py + pz * pz) < tol) return oe.edge;
   }
-  return false;
+  return null;
 }
 
 function evaluateCurveAt(curve: Curve3D, t: number): Point3D | null {
@@ -776,13 +824,46 @@ export function booleanOperation(
       // B's side wall crossing A's top face produces a section edge on A's top.
       for (const ffiEdge of ffiResult.edges) {
         const e = ffiEdge.edge;
-        if (!edgeLiesOnFaceBoundary(e, faceA)) {
+        // OCCT ref: BOPAlgo_PaveFiller stores section edges in BOPDS_DS,
+        // and both faces reference the SAME edge. When an FFI edge coincides
+        // with a curved boundary edge (circle/arc), we share the boundary
+        // edge object and copy PCurves. For line edges, coordinate-based
+        // stitching already handles matching, so just skip as before.
+        const matchA = findMatchingBoundaryEdge(e, faceA);
+        const matchB = findMatchingBoundaryEdge(e, faceB);
+
+        // For curved boundary matches: share the boundary edge object
+        // For line boundary matches: just skip (stitching handles it)
+        const isCurvedA = matchA && (matchA.curve.type === 'circle3d' || matchA.curve.type === 'arc3d');
+        const isCurvedB = matchB && (matchB.curve.type === 'circle3d' || matchB.curve.type === 'arc3d');
+
+        if (!matchA) {
+          let edgeToUse = e;
+          if (isCurvedB) {
+            // Use B's curved boundary edge for sharing. Copy PCurves from FFI edge.
+            edgeToUse = matchB!;
+            for (const pc of e.pcurves) {
+              if (!edgeToUse.pcurves.some(p => p.surface === pc.surface)) {
+                edgeToUse.pcurves.push(pc);
+              }
+            }
+          }
           if (!edgesOnA.has(faceA)) edgesOnA.set(faceA, []);
-          edgesOnA.get(faceA)!.push(e);
+          edgesOnA.get(faceA)!.push(edgeToUse);
         }
-        if (!edgeLiesOnFaceBoundary(e, faceB)) {
+        if (!matchB) {
+          let edgeToUse = e;
+          if (isCurvedA) {
+            // Use A's curved boundary edge for sharing. Copy PCurves from FFI edge.
+            edgeToUse = matchA!;
+            for (const pc of e.pcurves) {
+              if (!edgeToUse.pcurves.some(p => p.surface === pc.surface)) {
+                edgeToUse.pcurves.push(pc);
+              }
+            }
+          }
           if (!edgesOnB.has(faceB)) edgesOnB.set(faceB, []);
-          edgesOnB.get(faceB)!.push(e);
+          edgesOnB.get(faceB)!.push(edgeToUse);
         }
       }
     }
@@ -905,6 +986,7 @@ export function booleanOperation(
     const eu = new Map<string, string[]>();
     for (const f of stitched) {
       for (const oe of f.outerWire.edges) {
+        if (oe.edge.degenerate) continue;
         const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
         const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
         const k1 = `${rr(s.x)},${rr(s.y)},${rr(s.z)}`;
@@ -926,6 +1008,7 @@ export function booleanOperation(
     const em = new Map<string, string[]>();
     for (const f of stitched) {
       for (const oe of f.outerWire.edges) {
+        if (oe.edge.degenerate) continue;
         const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
         const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
         const k1 = `${R(s.x)},${R(s.y)},${R(s.z)}`;
@@ -937,6 +1020,7 @@ export function booleanOperation(
       }
       for (const iw of f.innerWires) {
         for (const oe of iw.edges) {
+          if (oe.edge.degenerate) continue;
           const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
           const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
           const k1 = `${R(s.x)},${R(s.y)},${R(s.z)}`;
@@ -1029,6 +1113,11 @@ function preSplitFaceAtVertices(face: Face, vertices: Point3D[]): Face {
   let anySplit = false;
 
   for (const oe of face.outerWire.edges) {
+    // Skip degenerate edges — they can't be split
+    if (oe.edge.degenerate) {
+      splitOEs.push(oe);
+      continue;
+    }
     // Only split line edges at vertices
     if (oe.edge.curve.type !== 'line3d') {
       splitOEs.push(oe);
@@ -1173,19 +1262,40 @@ function orientFacesOnShell(faces: Face[]): Face[] {
   const TOL7 = 1e-7;
   const round = (n: number) => Math.round(n / TOL7) * TOL7;
 
-  // Helper: compute edge keys for a face
+  // Helper: compute edge keys for a face (outer + inner wires)
+  // For closed circles, use geometry-based keys (center+radius+normal) to match
+  // different edge objects at the same geometric location.
+  function edgeKey(oe: { edge: Edge; forward: boolean }): { key: string; directed: string } | null {
+    if (oe.edge.degenerate) return null;
+    const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+    const k1 = `${round(s.x)},${round(s.y)},${round(s.z)}`;
+    const k2 = `${round(e.x)},${round(e.y)},${round(e.z)}`;
+
+    const curve = oe.edge.curve;
+    if (curve.isClosed && (curve.type === 'circle3d' || curve.type === 'arc3d') && 'plane' in curve) {
+      const c = curve as any;
+      const ctr = c.plane.origin;
+      const n = c.plane.normal;
+      const geoKey = `C:${round(ctr.x)},${round(ctr.y)},${round(ctr.z)}|r=${round(c.radius)}|n=${round(n.x)},${round(n.y)},${round(n.z)}`;
+      return { key: geoKey, directed: `${geoKey}|${oe.forward ? 'F' : 'R'}` };
+    }
+    const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
+    const directed = curve.isClosed ? `${k1}|${oe.forward ? 'F' : 'R'}` : `${k1}->${k2}`;
+    return { key, directed };
+  }
+
   function faceEdgeKeys(face: Face): { key: string; directed: string }[] {
     const result: { key: string; directed: string }[] = [];
     for (const oe of face.outerWire.edges) {
-      const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-      const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
-      const k1 = `${round(s.x)},${round(s.y)},${round(s.z)}`;
-      const k2 = `${round(e.x)},${round(e.y)},${round(e.z)}`;
-      const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
-      const directed = oe.edge.curve.isClosed
-        ? `${k1}|${oe.forward ? 'F' : 'R'}`
-        : `${k1}->${k2}`;
-      result.push({ key, directed });
+      const ek = edgeKey(oe);
+      if (ek) result.push(ek);
+    }
+    for (const iw of face.innerWires) {
+      for (const oe of iw.edges) {
+        const ek = edgeKey(oe);
+        if (ek) result.push(ek);
+      }
     }
     return result;
   }

@@ -283,6 +283,7 @@ function getParametricBounds(
   const uvPts: { u: number; v: number }[] = [];
   for (const oe of wire.edges) {
     const e = oe.edge;
+    if (e.degenerate) continue; // Skip degenerate edges (zero 3D length at poles)
     const nSamples = e.curve.type === 'line3d' ? 2 : N;
     for (let i = 0; i < nSamples; i++) {
       const tStart = oe.forward ? e.startParam : e.endParam;
@@ -334,10 +335,12 @@ function isNaturalRestriction(face: Face): boolean {
   const wire = faceOuterWire(face);
   const edges = wire.edges;
 
-  // Case 1: wire has exactly 2 oriented edges using the SAME underlying edge
-  // (seam: forward + reversed). This is how our 1-face sphere is constructed.
-  if (edges.length === 2) {
-    if (edges[0].edge === edges[1].edge && edges[0].forward !== edges[1].forward) {
+  // Case 1: wire has exactly 2 non-degenerate oriented edges using the SAME
+  // underlying edge (seam: forward + reversed). With degenerate edges at poles,
+  // the wire may have 4 edges: seam_fwd + degen + seam_rev + degen.
+  const nonDegen = edges.filter(oe => !oe.edge.degenerate);
+  if (nonDegen.length === 2) {
+    if (nonDegen[0].edge === nonDegen[1].edge && nonDegen[0].forward !== nonDegen[1].forward) {
       return true;
     }
   }

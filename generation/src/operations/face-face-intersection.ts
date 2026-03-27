@@ -65,11 +65,16 @@ export interface FFIResult {
 /**
  * Check if a face has a natural restriction wire (same edge fwd+rev).
  * These faces cover the full surface — UV clipping is not meaningful.
+ * OCCT reference: BRep_Tool::NaturalRestriction
+ *
+ * With degenerate edges at poles (OCCT convention), the wire may have
+ * 4 edges: seam_fwd + degen + seam_rev + degen. Filter out degenerate
+ * edges and check the non-degenerate pair.
  */
 function isNaturalRestriction(face: Face): boolean {
-  const edges = face.outerWire.edges;
-  if (edges.length === 2) {
-    return edges[0].edge === edges[1].edge && edges[0].forward !== edges[1].forward;
+  const nonDegen = face.outerWire.edges.filter(oe => !oe.edge.degenerate);
+  if (nonDegen.length === 2) {
+    return nonDegen[0].edge === nonDegen[1].edge && nonDegen[0].forward !== nonDegen[1].forward;
   }
   return false;
 }

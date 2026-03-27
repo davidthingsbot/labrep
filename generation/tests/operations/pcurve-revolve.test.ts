@@ -27,8 +27,9 @@ describe('PCurves on revolved edges', () => {
     const sphereFace = faces.find(f => f.surface.type === 'sphere');
     expect(sphereFace).toBeDefined();
 
-    // Sphere face wire has 2 edges (same seam edge fwd+rev)
-    expect(sphereFace!.outerWire.edges.length).toBe(2);
+    // Sphere face wire has 4 edges: seam fwd + degen_pole + seam rev + degen_pole
+    // (OCCT convention: degenerate edges at poles connect left/right seam in UV)
+    expect(sphereFace!.outerWire.edges.length).toBe(4);
 
     // The seam edge should have 2 PCurves
     const seamEdge = sphereFace!.outerWire.edges[0].edge;

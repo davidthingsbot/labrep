@@ -44,6 +44,16 @@ export interface Edge {
    * modified in-place by BRep_Builder::UpdateEdge.
    */
   pcurves: PCurve[];
+
+  /**
+   * Degenerate edge flag — true for edges with zero 3D length at surface poles.
+   * OCCT reference: BRep_TEdge::Degenerated()
+   *
+   * Degenerate edges have start==end in 3D but span a meaningful range in UV.
+   * They appear at poles of spherical/conical surfaces, connecting the left
+   * and right seam edges across the full U period.
+   */
+  readonly degenerate?: boolean;
 }
 
 /**
@@ -119,6 +129,41 @@ export function makeEdgeFromCurve(curve: Curve3D): OperationResult<Edge> {
     endParam: curve.endParam,
     pcurves: [],
   });
+}
+
+/**
+ * Create a degenerate edge at a pole point.
+ *
+ * OCCT reference: BRepSweep_Rotation::MakeEmptyDirectingEdge
+ * A degenerate edge has zero 3D length (start == end at the pole) but
+ * spans the full U period in UV, connecting left seam to right seam.
+ *
+ * The 3D curve is a zero-length line3d (a formality — only the PCurve matters).
+ */
+export function makeDegenerateEdge(point: Point3D): Edge {
+  const vertex = makeVertex(point);
+  // Minimal line3d representing a point. segmentLength == 0.
+  // OCCT uses a zero-radius circle; we use a zero-length line.
+  const curve: Line3D = {
+    type: 'line3d',
+    origin: point,
+    direction: { x: 0, y: 0, z: 1 },
+    segmentLength: 0,
+    startParam: 0,
+    endParam: 0,
+    isClosed: true,
+    startPoint: point,
+    endPoint: point,
+  };
+  return {
+    curve,
+    startVertex: vertex,
+    endVertex: vertex,
+    startParam: 0,
+    endParam: 0,
+    pcurves: [],
+    degenerate: true,
+  };
 }
 
 /**

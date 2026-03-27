@@ -1106,7 +1106,7 @@ App Examples:
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Status (2026-03-26):** OCCT-aligned boolean pipeline. All planar booleans pass. Cylinder through-hole working. 1321 tests passing, 10 remaining (sphere trimming, nested cylinders).
+**Status (2026-03-26):** OCCT-aligned boolean pipeline. All planar booleans pass. Cylinder through-hole + sphere trimming working. 1327 tests passing, 4 remaining (nested coaxial cylinders, sphere at corner/edge).
 
 **Architecture:**
 
@@ -1176,6 +1176,12 @@ Major architectural refactor (2026-03-26):
 - **BuilderFace loop classification**: Containment-based (not area-sign-only) with winding correction for reversed outers from face splitting.
 - **Periodic surface UV continuity**: Seam tracking in BuilderFace boundary processing ensures consecutive edges have continuous UV across periodic seams.
 - **Cylinder through-hole**: Fixed `edgeLiesOnFaceBoundary` for closed curves, extrude seam PCurve direction, BuilderFace UV continuity.
+- **Degenerate edges at poles** (OCCT `BRepSweep_Rotation`): Sphere faces from revolve now have 4-edge wire: seam_fwd + degen_NP + seam_rev + degen_SP. Degenerate edges have zero 3D length but span the full U period in UV, forming a proper UV rectangle. Handled throughout: shell closure, orientation BFS, stitching, tessellation, volume computation.
+- **Revolve seam PCurve direction**: Both seam PCurves in edge geometric direction (vStart→vEnd). Fixes double-reverse via getEdgeUV.
+- **BuilderFace sub-arc forward flag**: When boundary arcs split at intersection points, sub-arcs from `makeArc3D(min,max)` always go ascending angle; for reversed wire traversal, forward=false with reversed PCurve.
+- **Curved boundary edge detection** (`findMatchingBoundaryEdge`): Checks circle/arc boundary edges by center+radius+normal. Returns boundary Edge for sharing (OCCT shared topology pattern). Copies PCurves from FFI edge to shared boundary edge.
+- **Self-loop containment in BuilderFace**: Samples circle self-loops to build polygons for containment testing (was failing `length >= 3` check with 1-vertex circles). Fixes cylindrical cap splitting to produce correct 2-face result (annulus + disk).
+- **Geometry-based circle edge keys**: Shell closure and orientation BFS match circles by center+radius+normal instead of start point. Inner wire edges included in orientation BFS.
 
 **Key OCCT patterns adopted:**
 - `BOPAlgo_PaveFiller::PerformFF`: coplanar detection + FFI-based splitting (no separate coplanar edge computation)
@@ -1186,18 +1192,17 @@ Major architectural refactor (2026-03-26):
 
 ---
 
-#### Remaining Work (10 failures)
+#### Remaining Work (4 failures)
 
 ##### Curved Face Failures
 
-- Sphere partially outside box (6 tests) — 1-face sphere sticking out bottom: intersection circle crosses box boundary, needs sphere face trimming at partial arc
-- Box−sphere at corner/edge (2 tests) — partial circle arcs crossing multiple face edges
-- Nested coaxial cylinders (1 test) — coplanar circular caps
-- Box with multiple bores (1 test) — sequential subtract with offset cylinders
+- Box−sphere at corner/edge (2 tests) — 2-face sphere equatorial boundary circle coincides with box face; needs edge sharing between hemisphere boundary and intersection arc
+- Nested coaxial cylinders (1 test) — outer boundary circles (r=3) at z=±3 appearing with same direction between lateral and annular ring faces (orientation or shared topology issue)
+- Box with multiple bores (1 test) — sequential subtract cascades from nested cylinder issue
 
 ##### Exit Criteria Tests
 - **F1: Box − sphere (fully inside)** ✅ — all 5 tests
-- **F2: Sphere partially outside** ❌ — sphere trimming needed (4 of 5 tests fail)
+- **F2: Sphere partially outside** ✅ — all 5 tests (degenerate edges at poles fix)
 - **F3: Box − cylinder (through-hole)** ✅ — all 10 tests
 - **F4: L-bracket − sphere** ✅ — all 4 tests
 - **F5: Volume invariant** ✅ — all tests
@@ -1217,6 +1222,7 @@ Major architectural refactor (2026-03-26):
 - `BOPTools_AlgoTools::IsInternalFace` — intersection-edge binormal classification for non-convex sub-faces
 - `BOPTools_AlgoTools::ComputeState` — fallback classification using edge midpoints far from intersection boundary
 - `BOPTools_AlgoTools::OrientFacesOnShell` — BFS face orientation for consistent edge winding
+- `BRepSweep_Rotation::MakeEmptyDirectingEdge` — degenerate edges at poles (zero 3D length, full UV period)
 - `ShapeAnalysis_WireOrder` — angular seam unwrapping for periodic surfaces
 - Coplanar faces handled separately (polygon clipping, not SSI) per `BRepAlgo_FaceRestrictor`
 

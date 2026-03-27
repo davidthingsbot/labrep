@@ -95,8 +95,23 @@ function evalCurve(curve: Curve3D, t: number): Point3D {
 }
 
 function tangentAngle(he: HalfEdge, atStart: boolean, surface: Surface, adapter: SurfaceAdapter): number {
+  // OCCT reference: BOPAlgo_WireSplitter_1.cxx Angle2D()
+  // Degenerate edges: compute direction from PCurve (3D curve has zero length).
+  if (he.edge.degenerate) {
+    const pc = findPCurve(he.edge, surface, 0);
+    if (pc) {
+      const c = pc.curve2d;
+      const s = evaluateCurve2D(c, c.startParam);
+      const e = evaluateCurve2D(c, c.endParam);
+      const dx = he.forward ? e.x - s.x : s.x - e.x;
+      const dy = he.forward ? e.y - s.y : s.y - e.y;
+      let angle = Math.atan2(dy, dx);
+      if (angle < 0) angle += 2 * Math.PI;
+      return angle;
+    }
+  }
+
   // Project 3D curve samples to UV for tangent direction.
-  // This matches the old BuilderFace behavior exactly.
   const curve = he.edge.curve;
   const tRange = curve.endParam - curve.startParam;
   const dt3d = Math.min(tRange * 0.01, 0.01);
@@ -271,6 +286,19 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     }
     prevEndUV = edgeEndUV;
 
+    // Degenerate edges (pole connectors): no intersection endpoints can lie on them.
+    // Just add as a boundary half-edge and continue.
+    if (oe.edge.degenerate) {
+      const startIdx = findOrAddVertex(vertices, vertices2D, eStart, edgeStartUV, periodic);
+      const endIdx = findOrAddVertex(vertices, vertices2D, eEnd, edgeEndUV, periodic);
+      boundaryHalfEdges.push({
+        edge: oe.edge, forward: oe.forward,
+        startVtx: startIdx, endVtx: endIdx,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
+      });
+      continue;
+    }
+
     // Find intersection endpoints on this boundary edge
     const hitsOnEdge: { pt3d: Point3D; t: number }[] = [];
     const curve = oe.edge.curve;
@@ -359,11 +387,25 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         const subPC = makeLine2D({ x: sUV.x, y: sUV.y }, { x: eUV.x, y: eUV.y });
         if (subPC.result) addPCurveToEdge(subEdge, makePCurve(subPC.result, surface));
 
+        // Determine correct forward flag: sub-edges from makeArc3D always have
+        // geometric direction from lower to higher angle. When the original wire
+        // traversal was reversed, the sub-edge's geometric direction may be opposite
+        // to the wire direction. Check by comparing the edge's start point to pts3d[i].
+        const subFwd = distance(edgeStartPoint(subEdge), pts3d[i]) < TOL * 100;
         const startIdx = findOrAddVertex(vertices, vertices2D, pts3d[i], sUV, periodic);
         const endIdx = findOrAddVertex(vertices, vertices2D, pts3d[i + 1], eUV, periodic);
 
+        // PCurve must be in edge geometric direction. If subFwd=false, the PCurve
+        // we just attached goes in wire direction (sUV→eUV) but the edge goes
+        // in the opposite geometric direction. Re-create the PCurve reversed.
+        if (!subFwd && subEdge.pcurves.length > 0) {
+          subEdge.pcurves.length = 0;
+          const revPC = makeLine2D({ x: eUV.x, y: eUV.y }, { x: sUV.x, y: sUV.y });
+          if (revPC.result) addPCurveToEdge(subEdge, makePCurve(revPC.result, surface));
+        }
+
         boundaryHalfEdges.push({
-          edge: subEdge, forward: true, startVtx: startIdx, endVtx: endIdx,
+          edge: subEdge, forward: subFwd, startVtx: startIdx, endVtx: endIdx,
           angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
         });
       }
@@ -603,17 +645,46 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   }
 
   // Step 2: Reclassify "holes" that aren't geometrically contained in any outer.
-  // Face splitting by intersection edges produces loops with reversed winding
-  // that are adjacent (not nested) — these are outers, not holes.
+  // OCCT ref: BOPAlgo_BuilderFace::PerformAreas uses IntTools_FClass2d.
+  // For self-loop circles (1 vertex only), sample the curve to build a polygon.
   const holes: LoopInfo[] = [];
+
+  function loopPolygon(loopIdx: number): Pt2[] {
+    const loop = loops[loopIdx];
+    if (loop.length === 1 && loop[0].startVtx === loop[0].endVtx) {
+      // Self-loop: sample the curve in UV for proper containment test
+      const he = loop[0];
+      const pts: Pt2[] = [];
+      const curve = he.edge.curve;
+      const isCurved = curve.type === 'circle3d' || curve.type === 'arc3d' || curve.type === 'ellipse3d';
+      if (isCurved) {
+        const n = curve.isClosed ? 32 : 16;
+        for (let i = 0; i < n; i++) {
+          const frac = i / n;
+          const t = he.forward
+            ? curve.startParam + frac * (curve.endParam - curve.startParam)
+            : curve.endParam - frac * (curve.endParam - curve.startParam);
+          const uv = adapter.projectPoint(evalCurve(curve, t));
+          pts.push({ x: uv.u, y: uv.v });
+        }
+      }
+      return pts.length >= 3 ? pts : [vertices2D[loop[0].startVtx]];
+    }
+    return loop.map(he => vertices2D[he.startVtx]);
+  }
+
   for (const ch of candidateHoles) {
     const chIdx = loopInfos.indexOf(ch);
-    const chPt = vertices2D[loops[chIdx][0].startVtx];
+    const chPoly = loopPolygon(chIdx);
+    // Use a point from the candidate hole's polygon for containment check
+    const chPt = chPoly.length >= 3
+      ? chPoly[0]  // Use first sampled point for circle self-loops
+      : vertices2D[loops[chIdx][0].startVtx];
     let isContained = false;
     for (const outer of outers) {
       const outerIdx = loopInfos.indexOf(outer);
-      const outerPts = loops[outerIdx].map(he => vertices2D[he.startVtx]);
-      if (outerPts.length >= 3 && pointInPolygon2D(chPt, outerPts)) {
+      const outerPoly = loopPolygon(outerIdx);
+      if (outerPoly.length >= 3 && pointInPolygon2D(chPt, outerPoly)) {
         isContained = true;
         break;
       }
@@ -634,9 +705,12 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     const myHoles: Wire[] = [];
 
     for (const hole of holes) {
-      const holePt = vertices2D[loops[loopInfos.indexOf(hole)][0].startVtx];
-      const outerPts = loops[loopInfos.indexOf(outer)].map(he => vertices2D[he.startVtx]);
-      if (pointInPolygon2D(holePt, outerPts)) {
+      const holeIdx = loopInfos.indexOf(hole);
+      const holePoly = loopPolygon(holeIdx);
+      const holePt = holePoly.length >= 3 ? holePoly[0] : vertices2D[loops[holeIdx][0].startVtx];
+      const outerIdx = loopInfos.indexOf(outer);
+      const outerPoly = loopPolygon(outerIdx);
+      if (outerPoly.length >= 3 && pointInPolygon2D(holePt, outerPoly)) {
         myHoles.push(hole.wire);
       }
     }

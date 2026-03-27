@@ -45,6 +45,7 @@ interface FaceTessellation {
 function wireVertices(face: Face): Point3D[] {
   const verts: Point3D[] = [];
   for (const oe of face.outerWire.edges) {
+    if (oe.edge.degenerate) continue;
     const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
     verts.push(pt);
   }
@@ -73,6 +74,7 @@ function sampleWireForTessellation(face: Face, segments: number = 24): Point3D[]
 
   for (const oe of face.outerWire.edges) {
     if (edgeCounts.get(oe.edge)! > 1) continue; // Skip seam edges
+    if (oe.edge.degenerate) continue; // Skip degenerate edges at poles
 
     const curve = oe.edge.curve;
 

@@ -41,28 +41,40 @@ function collectWireEdges(wire: Wire): Array<{ key: string; directed: string }> 
   const edges: Array<{ key: string; directed: string }> = [];
   
   for (const oe of wire.edges) {
+    // Skip degenerate edges (zero 3D length, e.g., at poles) — they don't
+    // participate in shell closure analysis.
+    if (oe.edge.degenerate) continue;
     const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
     const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
     
     const round = (n: number) => Math.round(n / TOLERANCE) * TOLERANCE;
     const k1 = `${round(start.x)},${round(start.y)},${round(start.z)}`;
     const k2 = `${round(end.x)},${round(end.y)},${round(end.z)}`;
-    
-    // For closed curves (start == end), use forward flag to distinguish direction
-    const isClosed = oe.edge.curve.isClosed;
+
+    // For closed curves (circles/arcs), use geometry-based key (center + radius + normal)
+    // instead of start point. Different circle objects at the same location may have
+    // different start angles. OCCT avoids this via shared topology (IsSame).
+    const curve = oe.edge.curve;
+    const isClosed = curve.isClosed;
+    let key: string;
     let directed: string;
-    if (isClosed) {
-      // For closed curves, encode direction using forward flag
-      // "fwd" means traversing curve in its natural direction
-      // "rev" means traversing curve in reverse
+    if (isClosed && (curve.type === 'circle3d' || curve.type === 'arc3d') && 'plane' in curve) {
+      const c = curve as any;
+      const ctr = c.plane.origin;
+      const n = c.plane.normal;
+      const geoKey = `C:${round(ctr.x)},${round(ctr.y)},${round(ctr.z)}|r=${round(c.radius)}|n=${round(n.x)},${round(n.y)},${round(n.z)}`;
+      key = geoKey;
+      directed = `${geoKey}|${oe.forward ? 'fwd' : 'rev'}`;
+    } else if (isClosed) {
+      key = `${k1}|${k1}`;
       directed = `${k1}|${oe.forward ? 'fwd' : 'rev'}`;
     } else {
-      // For open curves, use start->end direction
+      key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
       directed = `${k1}->${k2}`;
     }
-    
+
     edges.push({
-      key: k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`,
+      key,
       directed,
     });
   }
