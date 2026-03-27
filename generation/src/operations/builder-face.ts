@@ -36,6 +36,7 @@ interface HalfEdge {
   angleAtEnd: number;
   used: boolean;
   isBoundary: boolean;
+  pcurveOccurrence: number;  // Which PCurve to use (0=first, 1=second for seam edges)
 }
 
 // ═══════════════════════════════════════════════
@@ -96,22 +97,39 @@ function evalCurve(curve: Curve3D, t: number): Point3D {
 
 function tangentAngle(he: HalfEdge, atStart: boolean, surface: Surface, adapter: SurfaceAdapter): number {
   // OCCT reference: BOPAlgo_WireSplitter_1.cxx Angle2D()
-  // Degenerate edges: compute direction from PCurve (3D curve has zero length).
-  if (he.edge.degenerate) {
-    const pc = findPCurve(he.edge, surface, 0);
-    if (pc) {
-      const c = pc.curve2d;
-      const s = evaluateCurve2D(c, c.startParam);
-      const e = evaluateCurve2D(c, c.endParam);
-      const dx = he.forward ? e.x - s.x : s.x - e.x;
-      const dy = he.forward ? e.y - s.y : s.y - e.y;
-      let angle = Math.atan2(dy, dx);
-      if (angle < 0) angle += 2 * Math.PI;
-      return angle;
+  // Uses the edge's PCurve (2D curve on face) for tangent direction.
+  // This is critical for seam edges on periodic surfaces: the PCurve gives
+  // the correct UV (u=0 for forward seam, u=2π for reverse seam), while
+  // surface projection always returns u=0 for both.
+
+  // Try PCurve-based computation first (matches OCCT's Angle2D)
+  const pc = findPCurve(he.edge, surface, he.pcurveOccurrence);
+  if (pc) {
+    const c = pc.curve2d;
+    const tRange = c.endParam - c.startParam;
+    const dt = Math.min(Math.abs(tRange) * 0.01, 0.01);
+
+    let t0: number, t1: number;
+    if (he.forward) {
+      t0 = atStart ? c.startParam : c.endParam;
+      t1 = atStart ? c.startParam + dt : c.endParam - dt;
+    } else {
+      t0 = atStart ? c.endParam : c.startParam;
+      t1 = atStart ? c.endParam - dt : c.startParam + dt;
     }
+
+    const uv0 = evaluateCurve2D(c, t0);
+    const uv1 = evaluateCurve2D(c, t1);
+    const dx = uv1.x - uv0.x;
+    const dy = uv1.y - uv0.y;
+    let angle = Math.atan2(dy, dx);
+    if (angle < 0) angle += 2 * Math.PI;
+    return angle;
   }
 
-  // Project 3D curve samples to UV for tangent direction.
+  // Fallback: project 3D curve samples to UV (for edges without PCurves).
+  if (he.edge.degenerate) return 0;
+
   const curve = he.edge.curve;
   const tRange = curve.endParam - curve.startParam;
   const dt3d = Math.min(tRange * 0.01, 0.01);
@@ -141,25 +159,19 @@ function tangentAngle(he: HalfEdge, atStart: boolean, surface: Surface, adapter:
 
 /**
  * Find or create a vertex index.
- * Non-periodic surfaces: merge by 3D distance (same as OCCT for non-seam vertices).
- * Periodic surfaces: merge by UV distance (seam vertices at same 3D point
- * but different UV must stay distinct).
+ * OCCT ref: mySmartMap uses TopoDS_Vertex identity (IsSame) — same 3D vertex
+ * = same map entry, regardless of UV position. Seam vertices at the same 3D
+ * point share a single vertex index; UV disambiguation happens during
+ * traversal via PCurve evaluation (Coord2d), not in the vertex pool.
  */
 function findOrAddVertex(
   vertices: Point3D[], vertices2D: Pt2[],
   pt3d: Point3D, pt2d: Pt2,
-  useUV: boolean,
+  _useUV: boolean,
 ): number {
-  if (useUV) {
-    for (let i = 0; i < vertices2D.length; i++) {
-      const dx = vertices2D[i].x - pt2d.x;
-      const dy = vertices2D[i].y - pt2d.y;
-      if (Math.sqrt(dx * dx + dy * dy) < TOL * 10) return i;
-    }
-  } else {
-    for (let i = 0; i < vertices.length; i++) {
-      if (distance(vertices[i], pt3d) < TOL) return i;
-    }
+  // Always merge by 3D distance, matching OCCT's vertex identity approach
+  for (let i = 0; i < vertices.length; i++) {
+    if (distance(vertices[i], pt3d) < TOL) return i;
   }
   vertices.push(pt3d);
   vertices2D.push(pt2d);
@@ -272,19 +284,9 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       oe.edge, surface, adapter, oe.forward, occurrence, eStart, eEnd,
     );
 
-    // On periodic surfaces, ensure UV continuity with the previous edge.
-    // The seam creates a UV discontinuity: one edge ends at u≈2π, the next
-    // starts at u≈0. Shift the current edge's UV to match the previous end.
-    if (periodic && prevEndUV) {
-      const period = adapter.uPeriod;
-      const du = edgeStartUV.x - prevEndUV.x;
-      if (Math.abs(du) > period / 2) {
-        const shift = du > 0 ? -period : period;
-        edgeStartUV = { x: edgeStartUV.x + shift, y: edgeStartUV.y };
-        edgeEndUV = { x: edgeEndUV.x + shift, y: edgeEndUV.y };
-      }
-    }
-    prevEndUV = edgeEndUV;
+    // OCCT ref: UV coordinates come from PCurves (Coord2d), which naturally
+    // encode the correct seam side. No UV continuity shifting needed —
+    // vertex identity is based on 3D position, not UV.
 
     // Degenerate edges (pole connectors): no intersection endpoints can lie on them.
     // Just add as a boundary half-edge and continue.
@@ -294,7 +296,7 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       boundaryHalfEdges.push({
         edge: oe.edge, forward: oe.forward,
         startVtx: startIdx, endVtx: endIdx,
-        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true, pcurveOccurrence: occurrence,
       });
       continue;
     }
@@ -344,7 +346,7 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       boundaryHalfEdges.push({
         edge: oe.edge, forward: oe.forward,
         startVtx: startIdx, endVtx: endIdx,
-        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true, pcurveOccurrence: occurrence,
       });
     } else {
       hitsOnEdge.sort((a, b) => a.t - b.t);
@@ -355,7 +357,7 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         if (distance(pts3d[i], pts3d[i + 1]) < TOL) continue;
 
         let subEdge: Edge | null = null;
-        if (curve.type === 'arc3d' && 'plane' in curve) {
+        if ((curve.type === 'arc3d' || curve.type === 'circle3d') && 'plane' in curve) {
           const tRange = curve.endParam - curve.startParam;
           const subT0 = oe.forward ? curve.startParam + segTs[i] * tRange : curve.endParam - segTs[i] * tRange;
           const subT1 = oe.forward ? curve.startParam + segTs[i + 1] * tRange : curve.endParam - segTs[i + 1] * tRange;
@@ -383,9 +385,30 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
           y: edgeStartUV.y + segTs[i + 1] * (edgeEndUV.y - edgeStartUV.y),
         };
 
-        // Attach PCurve to sub-edge (mutates in place)
+        // Attach PCurve(s) to sub-edge.
+        // For seam edges (2 PCurves at u=0 and u=2π), create both PCurves.
+        // OCCT ref: split sub-edges of a seam inherit both PCurves.
         const subPC = makeLine2D({ x: sUV.x, y: sUV.y }, { x: eUV.x, y: eUV.y });
         if (subPC.result) addPCurveToEdge(subEdge, makePCurve(subPC.result, surface));
+
+        // Check if parent edge has a second PCurve (seam edge)
+        const parentPC2 = findPCurve(oe.edge, surface, 1);
+        if (parentPC2) {
+          // Compute second PCurve UV range for this sub-segment
+          const pc2uv = getEdgeUV(oe.edge, surface, oe.forward, 1);
+          if (pc2uv) {
+            const sUV2: Pt2 = {
+              x: pc2uv.start.x + segTs[i] * (pc2uv.end.x - pc2uv.start.x),
+              y: pc2uv.start.y + segTs[i] * (pc2uv.end.y - pc2uv.start.y),
+            };
+            const eUV2: Pt2 = {
+              x: pc2uv.start.x + segTs[i + 1] * (pc2uv.end.x - pc2uv.start.x),
+              y: pc2uv.start.y + segTs[i + 1] * (pc2uv.end.y - pc2uv.start.y),
+            };
+            const subPC2 = makeLine2D({ x: sUV2.x, y: sUV2.y }, { x: eUV2.x, y: eUV2.y });
+            if (subPC2.result) addPCurveToEdge(subEdge, makePCurve(subPC2.result, surface));
+          }
+        }
 
         // Determine correct forward flag: sub-edges from makeArc3D always have
         // geometric direction from lower to higher angle. When the original wire
@@ -395,18 +418,24 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         const startIdx = findOrAddVertex(vertices, vertices2D, pts3d[i], sUV, periodic);
         const endIdx = findOrAddVertex(vertices, vertices2D, pts3d[i + 1], eUV, periodic);
 
-        // PCurve must be in edge geometric direction. If subFwd=false, the PCurve
-        // we just attached goes in wire direction (sUV→eUV) but the edge goes
-        // in the opposite geometric direction. Re-create the PCurve reversed.
+        // PCurves must be in edge geometric direction. If subFwd=false, the PCurves
+        // we just attached go in wire direction — reverse them all.
         if (!subFwd && subEdge.pcurves.length > 0) {
+          const reversedPCs: typeof subEdge.pcurves = [];
+          for (const pc of subEdge.pcurves) {
+            const c = pc.curve2d;
+            const s = evaluateCurve2D(c, c.startParam);
+            const e = evaluateCurve2D(c, c.endParam);
+            const rev = makeLine2D({ x: e.x, y: e.y }, { x: s.x, y: s.y });
+            if (rev.result) reversedPCs.push(makePCurve(rev.result, surface));
+          }
           subEdge.pcurves.length = 0;
-          const revPC = makeLine2D({ x: eUV.x, y: eUV.y }, { x: sUV.x, y: sUV.y });
-          if (revPC.result) addPCurveToEdge(subEdge, makePCurve(revPC.result, surface));
+          for (const rpc of reversedPCs) addPCurveToEdge(subEdge, rpc);
         }
 
         boundaryHalfEdges.push({
           edge: subEdge, forward: subFwd, startVtx: startIdx, endVtx: endIdx,
-          angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
+          angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true, pcurveOccurrence: occurrence,
         });
       }
     }
@@ -449,7 +478,7 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       boundaryHalfEdges.push({
         edge: oe.edge, forward: oe.forward,
         startVtx: startIdx, endVtx: endIdx,
-        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true, pcurveOccurrence: occurrence,
       });
     }
   }
@@ -482,13 +511,13 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
 
     if (isSelfLoop) {
       const idx = findOrAddVertex(vertices, vertices2D, startPt, startUV, periodic);
-      intHalfEdges.push({ edge: e, forward: true, startVtx: idx, endVtx: idx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false });
-      intHalfEdges.push({ edge: e, forward: false, startVtx: idx, endVtx: idx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false });
+      intHalfEdges.push({ edge: e, forward: true, startVtx: idx, endVtx: idx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false, pcurveOccurrence: 0 });
+      intHalfEdges.push({ edge: e, forward: false, startVtx: idx, endVtx: idx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false, pcurveOccurrence: 0 });
     } else {
       const startIdx = findOrAddVertex(vertices, vertices2D, startPt, startUV, periodic);
       const endIdx = findOrAddVertex(vertices, vertices2D, endPt, endUV, periodic);
-      intHalfEdges.push({ edge: e, forward: true, startVtx: startIdx, endVtx: endIdx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false });
-      intHalfEdges.push({ edge: e, forward: false, startVtx: endIdx, endVtx: startIdx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false });
+      intHalfEdges.push({ edge: e, forward: true, startVtx: startIdx, endVtx: endIdx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false, pcurveOccurrence: 0 });
+      intHalfEdges.push({ edge: e, forward: false, startVtx: endIdx, endVtx: startIdx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false, pcurveOccurrence: 0 });
     }
   }
 
@@ -512,14 +541,12 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   const loops: HalfEdge[][] = [];
   for (const he of allHalfEdges) {
     if (he.used) continue;
+    // OCCT ref: BOPAlgo_WireSplitter_1.cxx lines 438-446 — skip degenerate
+    // edges as starting points for wire tracing. They participate as
+    // intermediate edges when encountered during traversal, but never
+    // initiate a new path (they'd create standalone degenerate "wires").
+    if (he.edge.degenerate) continue;
     let current = he;
-
-    // Self-loop (closed curve, startVtx === endVtx)
-    if (current.startVtx === current.endVtx) {
-      current.used = true;
-      loops.push([current]);
-      continue;
-    }
 
     // Path tracing (OCCT BOPAlgo_WireSplitter_1.cxx Path())
     const pathEdges: HalfEdge[] = [];
@@ -531,10 +558,34 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     for (let safety = 0; safety < 10000; safety++) {
       const vtx = pathVertices[pathVertices.length - 1];
 
-      // Check for sub-loop (revisited vertex)
+      // Check for sub-loop (revisited vertex).
+      // OCCT ref: Path() lines 448-468 — at seam vertices, also check UV
+      // distance to avoid premature closure across the seam.
       let loopStartIdx = -1;
+      const lastEdgeForClosure = pathEdges[pathEdges.length - 1];
+      let endUVForClosure: Pt2 | null = null;
+      if (periodic) {
+        const uv = getEdgeUV(lastEdgeForClosure.edge, surface, lastEdgeForClosure.forward, lastEdgeForClosure.pcurveOccurrence);
+        if (uv) endUVForClosure = uv.end;
+      }
       for (let k = 0; k < pathVertices.length - 1; k++) {
-        if (pathVertices[k] === vtx) { loopStartIdx = k; break; }
+        if (pathVertices[k] !== vtx) continue;
+        // Same 3D vertex — now check UV if on a periodic surface
+        if (periodic && endUVForClosure) {
+          // Get the UV at the start of the path at index k
+          const pathEdgeAtK = pathEdges[k];
+          const uvAtK = getEdgeUV(pathEdgeAtK.edge, surface, pathEdgeAtK.forward, pathEdgeAtK.pcurveOccurrence);
+          if (uvAtK) {
+            let du = Math.abs(uvAtK.start.x - endUVForClosure.x);
+            // OCCT ref: seam vertex UV check accounts for periodicity
+            if (adapter.isUPeriodic) du = du % adapter.uPeriod;
+            if (du > adapter.uPeriod / 2) du = adapter.uPeriod - du;
+            const dv = Math.abs(uvAtK.start.y - endUVForClosure.y);
+            if (du > adapter.uPeriod / 4 || dv > 0.5) continue; // Wrong seam side
+          }
+        }
+        loopStartIdx = k;
+        break;
       }
 
       if (loopStartIdx >= 0) {
@@ -555,11 +606,37 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       const candidates = outgoing.get(vtx);
       if (!candidates) break;
 
+      // OCCT ref: At seam vertices, filter candidates by UV position.
+      // Compute current UV from last edge's PCurve end (Coord2d in OCCT).
+      // Candidates whose PCurve start UV is far from current UV are on the
+      // wrong side of the seam and must be skipped.
+      let currentUV: Pt2 | null = null;
+      if (periodic) {
+        const lastUV = getEdgeUV(lastEdge.edge, surface, lastEdge.forward, lastEdge.pcurveOccurrence);
+        if (lastUV) currentUV = lastUV.end;
+      }
+
       const viable: HalfEdge[] = [];
       for (const cand of candidates) {
         if (cand.used) continue;
         // Prevent immediate U-turn on same edge
         if (cand.edge === lastEdge.edge && cand.forward !== lastEdge.forward) continue;
+
+        // Seam disambiguation (OCCT: Path() lines 572-583)
+        // Skip edges whose PCurve start UV is far from the current UV position.
+        // Exception: self-loop edges (closed curves) span the full U range and
+        // should never be filtered — they're valid from either seam side.
+        if (periodic && currentUV && cand.startVtx !== cand.endVtx) {
+          const candUV = getEdgeUV(cand.edge, surface, cand.forward, cand.pcurveOccurrence);
+          if (candUV) {
+            let du = Math.abs(candUV.start.x - currentUV.x);
+            if (adapter.isUPeriodic) du = du % adapter.uPeriod;
+            if (du > adapter.uPeriod / 2) du = adapter.uPeriod - du;
+            const dv = Math.abs(candUV.start.y - currentUV.y);
+            if (du > adapter.uPeriod / 4 || dv > 0.5) continue; // Wrong seam side
+          }
+        }
+
         viable.push(cand);
       }
 

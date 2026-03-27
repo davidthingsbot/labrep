@@ -503,7 +503,11 @@ function generateFullRevolveFace(
       orientEdge(startCircle, false),
     );
   } else if (startOnAxis) {
-    // Start vertex on axis (pole) — 3-edge face
+    // Start vertex on axis (pole) — 4-edge face with degenerate edge at pole.
+    // OCCT ref: BRepSweep_Rotation always creates degenerate edges at poles.
+    // Wire: seam(fwd) → circle(fwd) → seam(rev) → degen_start
+    // The degenerate edge connects seam(rev) end at u=2π to seam(fwd) start
+    // at u=0 in UV space, closing the UV rectangle.
     const ROUND2 = 1e-7;
     const vtxKey2 = (pt: Point3D) => `${Math.round(pt.x/ROUND2)*ROUND2},${Math.round(pt.y/ROUND2)*ROUND2},${Math.round(pt.z/ROUND2)*ROUND2}`;
     let endCircle = sharedCircleEdges?.get(vtxKey2(endPt));
@@ -516,13 +520,19 @@ function generateFullRevolveFace(
     addSeamPCurves(edge);
     addCirclePCurve(endCircle, vEnd, true);
 
+    const degenStart = makeDegenerateEdge(startPt);
+    const degenStartPC = makeLine2D({ x: TWO_PI, y: vStart }, { x: 0, y: vStart });
+    if (degenStartPC.result) addPCurveToEdge(degenStart, makePCurve(degenStartPC.result, surface));
+
     wireEdges.push(
       orientEdge(edge, true),
       orientEdge(endCircle, true),
       orientEdge(edge, false),
+      orientEdge(degenStart, true),
     );
   } else {
-    // End vertex on axis (pole) — 3-edge face
+    // End vertex on axis (pole) — 4-edge face with degenerate edge at pole.
+    // Wire: seam(fwd) → degen_end → seam(rev) → circle(rev)
     const ROUND3 = 1e-7;
     const vtxKey3 = (pt: Point3D) => `${Math.round(pt.x/ROUND3)*ROUND3},${Math.round(pt.y/ROUND3)*ROUND3},${Math.round(pt.z/ROUND3)*ROUND3}`;
     let startCircle = sharedCircleEdges?.get(vtxKey3(startPt));
@@ -535,8 +545,13 @@ function generateFullRevolveFace(
     addSeamPCurves(edge);
     addCirclePCurve(startCircle, vStart, false);
 
+    const degenEnd = makeDegenerateEdge(endPt);
+    const degenEndPC = makeLine2D({ x: 0, y: vEnd }, { x: TWO_PI, y: vEnd });
+    if (degenEndPC.result) addPCurveToEdge(degenEnd, makePCurve(degenEndPC.result, surface));
+
     wireEdges.push(
       orientEdge(edge, true),
+      orientEdge(degenEnd, true),
       orientEdge(edge, false),
       orientEdge(startCircle, false),
     );

@@ -327,3 +327,125 @@ describe('BuilderFace: no split', () => {
     expect(result[0]).toBe(face);
   });
 });
+
+// ═══════════════════════════════════════════════
+// SPHERE HEMISPHERE SPLITTING
+// ═══════════════════════════════════════════════
+
+import { revolve } from '../../src/operations/revolve';
+
+/**
+ * Construct a sphere (r=1.5) at origin via revolve, returning the top
+ * hemisphere face and the equatorial/seam edge references.
+ */
+function makeSphereHemispheres(r: number) {
+  const arcP = plane(point3d(0, 0, 0), vec3d(0, -1, 0), vec3d(1, 0, 0));
+  const arc1 = makeArc3D(arcP, r, -Math.PI / 2, 0).result!;
+  const arc2 = makeArc3D(arcP, r, 0, Math.PI / 2).result!;
+  const line = makeLine3D(point3d(0, 0, r), point3d(0, 0, -r)).result!;
+  const axis = { origin: point3d(0, 0, 0), direction: vec3d(0, 0, 1) };
+  const res = revolve(makeWireFromEdges([
+    makeEdgeFromCurve(arc1).result!,
+    makeEdgeFromCurve(arc2).result!,
+    makeEdgeFromCurve(line).result!,
+  ]).result!, axis, 2 * Math.PI);
+  expect(res.success).toBe(true);
+  const faces = shellFaces(res.result!.solid.outerShell);
+  return { solid: res.result!, faces };
+}
+
+describe('BuilderFace: sphere hemisphere with 1 arc', () => {
+  it('single arc through non-pole points splits hemisphere into 2', () => {
+    // Simplest test: one arc on the sphere surface that doesn't touch
+    // the pole or seam. This isolates the basic sphere splitting.
+    const { faces } = makeSphereHemispheres(1.5);
+    const sphereFaces = faces.filter(f => f.surface.type === 'sphere');
+
+    // Find the top hemisphere face: seam arc reaches z=1.5 (north pole)
+    const topHemi = sphereFaces.find(f => {
+      return f.outerWire.edges.some(oe => {
+        if (oe.edge.degenerate) return false;
+        const s = edgeStartPoint(oe.edge);
+        const e = edgeEndPoint(oe.edge);
+        return s.z > 0.1 || e.z > 0.1;
+      });
+    });
+    expect(topHemi).toBeDefined();
+
+    // Create an arc on the sphere surface: quarter circle in the x=0 plane
+    // from (0, 1.5, 0) [equator] to (0, 0, 1.5) [pole]
+    // But to avoid pole issues, use an arc from (0, 1.5, 0) partway up.
+    // Actually, let's use an arc that avoids the pole entirely:
+    // Arc in the plane x+y=1.5 (rotated), going from a mid-latitude point
+    // to another mid-latitude point.
+
+    // Use the x=0 arc from (0, 1.5, 0) to (0, 0, 1.5).
+    // Plane normal (1,0,0) with xAxis (0,1,0) gives yDir = cross(n,x) = (0,0,1).
+    // At angle 0: (0, 1.5, 0). At angle π/2: (0, 0, 1.5). ✓
+    const arcPlane2 = plane(point3d(0, 0, 0), vec3d(1, 0, 0), vec3d(0, 1, 0));
+    const arc = makeArc3D(arcPlane2, 1.5, 0, Math.PI / 2).result!;
+    const edge = makeEdgeFromCurve(arc).result!;
+    const s = edgeStartPoint(edge), e = edgeEndPoint(edge);
+    expect(s.x).toBeCloseTo(0, 5);
+    expect(s.y).toBeCloseTo(1.5, 5);
+    expect(s.z).toBeCloseTo(0, 5);
+    expect(e.x).toBeCloseTo(0, 5);
+    expect(e.y).toBeCloseTo(0, 5);
+    expect(e.z).toBeCloseTo(1.5, 5);
+
+    // Add PCurve on the sphere surface
+    const pc = buildPCurveForEdgeOnSurface(edge, topHemi!.surface, true);
+    if (pc) addPCurveToEdge(edge, pc);
+
+    const result = builderFace(topHemi!, [edge]);
+    // Should split into 2 sub-faces
+    expect(result.length).toBe(2);
+    for (const f of result) {
+      expect(f.outerWire.isClosed).toBe(true);
+    }
+  });
+});
+
+describe('BuilderFace: sphere hemisphere with 3 octant arcs', () => {
+  it('three arcs forming octant triangle split hemisphere into 2', () => {
+    const { faces } = makeSphereHemispheres(1.5);
+    const topHemi = faces.filter(f => f.surface.type === 'sphere').find(f => {
+      return f.outerWire.edges.some(oe => {
+        if (oe.edge.degenerate) return false;
+        const s = edgeStartPoint(oe.edge);
+        const e = edgeEndPoint(oe.edge);
+        return s.z > 0.1 || e.z > 0.1;
+      });
+    })!;
+    expect(topHemi).toBeDefined();
+
+    // Three arcs forming the octant triangle on the sphere:
+    // 1. z=0 plane ∩ sphere: equatorial arc from (1.5,0,0) to (0,1.5,0)
+    const eqPlane = plane(point3d(0, 0, 0), vec3d(0, 0, 1), vec3d(1, 0, 0));
+    const eqArc = makeArc3D(eqPlane, 1.5, 0, Math.PI / 2).result!;
+    const eqEdge = makeEdgeFromCurve(eqArc).result!;
+
+    // 2. y=0 plane ∩ sphere: from (1.5,0,0) to (0,0,1.5)
+    const yzPlane = plane(point3d(0, 0, 0), vec3d(0, -1, 0), vec3d(1, 0, 0));
+    const yzArc = makeArc3D(yzPlane, 1.5, 0, Math.PI / 2).result!;
+    const yzEdge = makeEdgeFromCurve(yzArc).result!;
+
+    // 3. x=0 plane ∩ sphere: from (0,1.5,0) to (0,0,1.5)
+    const xzPlane = plane(point3d(0, 0, 0), vec3d(1, 0, 0), vec3d(0, 1, 0));
+    const xzArc = makeArc3D(xzPlane, 1.5, 0, Math.PI / 2).result!;
+    const xzEdge = makeEdgeFromCurve(xzArc).result!;
+
+    // Add PCurves on the sphere surface
+    for (const edge of [eqEdge, yzEdge, xzEdge]) {
+      const pc = buildPCurveForEdgeOnSurface(edge, topHemi.surface, true);
+      if (pc) addPCurveToEdge(edge, pc);
+    }
+
+    const result = builderFace(topHemi, [eqEdge, yzEdge, xzEdge]);
+    // Should split into 2 sub-faces: octant + rest
+    expect(result.length).toBe(2);
+    for (const f of result) {
+      expect(f.outerWire.isClosed).toBe(true);
+    }
+  });
+});
