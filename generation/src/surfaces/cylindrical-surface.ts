@@ -51,13 +51,20 @@ function perpendicularTo(dir: Vector3D): Vector3D {
 /**
  * Create a cylindrical surface from an axis and radius.
  *
+ * OCCT reference: Geom_CylindricalSurface constructor takes gp_Ax3 which
+ * specifies the axis and XDirection (θ=0 reference). When created from an
+ * extrusion of a circle, XDirection should match the circle's xAxis.
+ *
  * @param axis - The axis of the cylinder
  * @param radius - Radius (must be positive)
+ * @param refDir - Optional reference direction for θ=0 (must be perpendicular to axis).
+ *                 If omitted, computed from axis direction.
  * @returns CylindricalSurface or failure if radius is not positive
  */
 export function makeCylindricalSurface(
   axis: Axis,
   radius: number,
+  refDir?: Vector3D,
 ): OperationResult<CylindricalSurface> {
   if (radius <= 0 || isZero(radius)) {
     return failure('Radius must be positive');
@@ -79,8 +86,18 @@ export function makeCylindricalSurface(
     direction: normalize(axis.direction),
   };
 
-  // Compute a reference direction perpendicular to axis
-  const refDirection = perpendicularTo(normalizedAxis.direction);
+  // Compute reference direction
+  let refDirection: Vector3D;
+  if (refDir) {
+    // Project out axial component and normalize
+    const axd = normalizedAxis.direction;
+    const d = dot(refDir, axd);
+    const proj = vec3d(refDir.x - d * axd.x, refDir.y - d * axd.y, refDir.z - d * axd.z);
+    const len = Math.sqrt(proj.x * proj.x + proj.y * proj.y + proj.z * proj.z);
+    refDirection = len > 1e-10 ? normalize(proj) : perpendicularTo(normalizedAxis.direction);
+  } else {
+    refDirection = perpendicularTo(normalizedAxis.direction);
+  }
 
   return success({
     type: 'cylinder',

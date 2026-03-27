@@ -66,6 +66,7 @@ export function makeConicalSurface(
   coneAxis: Axis,
   radius: number,
   semiAngle: number,
+  refDir?: Vector3D,
 ): OperationResult<ConicalSurface> {
   if (radius < 0) {
     return failure('Radius must be non-negative');
@@ -89,7 +90,16 @@ export function makeConicalSurface(
     direction: normalize(coneAxis.direction),
   };
 
-  const refDirection = perpendicularTo(normalizedAxis.direction);
+  let refDirection: Vector3D;
+  if (refDir) {
+    const axd = normalizedAxis.direction;
+    const d = dot(refDir, axd);
+    const proj = vec3d(refDir.x - d * axd.x, refDir.y - d * axd.y, refDir.z - d * axd.z);
+    const len = Math.sqrt(proj.x * proj.x + proj.y * proj.y + proj.z * proj.z);
+    refDirection = len > 1e-10 ? normalize(proj) : perpendicularTo(normalizedAxis.direction);
+  } else {
+    refDirection = perpendicularTo(normalizedAxis.direction);
+  }
 
   return success({
     type: 'cone',

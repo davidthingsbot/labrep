@@ -32,6 +32,7 @@ import { toAdapter } from '../surfaces/surface-adapter';
 import { pointInSolid } from './point-in-solid';
 import { intersectFaceFace } from './face-face-intersection';
 import { builderFace } from './builder-face';
+import { evaluateCurve2D } from '../topology/pcurve';
 
 // ═══════════════════════════════════════════════════════
 // TYPES
@@ -495,7 +496,21 @@ function classifySubFace(
         return false;
       }
 
-      // Open intersection edge: check if eMid lies on segment iStart→iEnd
+      // For arc/circle intersection edges: check if eMid lies on the arc
+      // (distance from center ≈ radius, in the arc plane, within angle range).
+      if ((ie.curve.type === 'arc3d' || ie.curve.type === 'circle3d') && 'plane' in ie.curve) {
+        const arcCurve = ie.curve as any;
+        const center = arcCurve.plane.origin;
+        const normal = arcCurve.plane.normal;
+        const radius = arcCurve.radius;
+        const rel = vec3d(eMid.x - center.x, eMid.y - center.y, eMid.z - center.z);
+        const normalComp = Math.abs(rel.x * normal.x + rel.y * normal.y + rel.z * normal.z);
+        if (normalComp > STITCH_TOL * 100) return false;
+        const dist = Math.sqrt(rel.x * rel.x + rel.y * rel.y + rel.z * rel.z);
+        return Math.abs(dist - radius) < STITCH_TOL * 100;
+      }
+
+      // Open intersection edge (line): check if eMid lies on segment iStart→iEnd
       const vx = eMid.x - iStart.x, vy = eMid.y - iStart.y, vz = eMid.z - iStart.z;
       const t = (vx * dx + vy * dy + vz * dz) / lenSq;
       if (t < -0.01 || t > 1.01) return false;
@@ -568,6 +583,51 @@ function classifySubFace(
 
     const result = pointInSolid(testPt, otherSolid);
     if (result !== 'on') return result;
+  }
+
+  // Phase 1.5: For non-planar faces, compute an interior point via UV sampling.
+  // OCCT ref: BOPTools_AlgoTools::ComputeState → PointInFace uses a hatcher
+  // to find a 2D interior point, then evaluates the surface there.
+  // We approximate: sample the face boundary in UV, compute the UV centroid,
+  // evaluate the surface at that centroid, and classify the 3D point.
+  if (face.surface.type !== 'plane') {
+    const adapter = toAdapter(face.surface);
+    const uvSamples: { u: number; v: number }[] = [];
+    for (const oe of face.outerWire.edges) {
+      if (oe.edge.degenerate) continue;
+      const curve = oe.edge.curve;
+      const nSamp = (curve.type === 'line3d') ? 2 : 8;
+      for (let si = 0; si < nSamp; si++) {
+        const frac = si / nSamp;
+        const tStart = oe.forward ? curve.startParam : curve.endParam;
+        const tEnd = oe.forward ? curve.endParam : curve.startParam;
+        const t = tStart + frac * (tEnd - tStart);
+        const pt = evaluateCurveAt(curve, t);
+        if (pt) {
+          // Prefer PCurve UV (correct seam side) over projection
+          const pc = oe.edge.pcurves.find(p => p.surface === face.surface);
+          if (pc) {
+            const c2 = pc.curve2d;
+            const t2d = oe.forward
+              ? c2.startParam + frac * (c2.endParam - c2.startParam)
+              : c2.endParam - frac * (c2.endParam - c2.startParam);
+            const uv2d = evaluateCurve2D(c2, t2d);
+            if (uv2d) { uvSamples.push({ u: uv2d.x, v: uv2d.y }); continue; }
+          }
+          const uv = adapter.projectPoint(pt);
+          uvSamples.push(uv);
+        }
+      }
+    }
+    if (uvSamples.length >= 3) {
+      let uSum = 0, vSum = 0;
+      for (const uv of uvSamples) { uSum += uv.u; vSum += uv.v; }
+      const uCentroid = uSum / uvSamples.length;
+      const vCentroid = vSum / uvSamples.length;
+      const interiorPt3D = adapter.evaluate(uCentroid, vCentroid);
+      const result = pointInSolid(interiorPt3D, otherSolid);
+      if (result !== 'on') return result;
+    }
   }
 
   // Phase 2: OCCT ComputeState fallback (line 662-673):

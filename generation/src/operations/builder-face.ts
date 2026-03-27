@@ -391,11 +391,14 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         const subPC = makeLine2D({ x: sUV.x, y: sUV.y }, { x: eUV.x, y: eUV.y });
         if (subPC.result) addPCurveToEdge(subEdge, makePCurve(subPC.result, surface));
 
-        // Check if parent edge has a second PCurve (seam edge)
-        const parentPC2 = findPCurve(oe.edge, surface, 1);
+        // Check if parent edge has a second PCurve (seam edge).
+        // For the first seam traversal (occurrence=0), the secondary is occurrence=1.
+        // For the second seam traversal (occurrence=1), the secondary is occurrence=0.
+        const secondaryOccurrence = occurrence === 0 ? 1 : 0;
+        const parentPC2 = findPCurve(oe.edge, surface, secondaryOccurrence);
         if (parentPC2) {
           // Compute second PCurve UV range for this sub-segment
-          const pc2uv = getEdgeUV(oe.edge, surface, oe.forward, 1);
+          const pc2uv = getEdgeUV(oe.edge, surface, oe.forward, secondaryOccurrence);
           if (pc2uv) {
             const sUV2: Pt2 = {
               x: pc2uv.start.x + segTs[i] * (pc2uv.end.x - pc2uv.start.x),
@@ -484,6 +487,15 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   }
 
   // ── Intersection half-edges ──
+  // OCCT ref: BOPAlgo_PaveFiller handles edge-on-face detection so that FFI
+  // result edges that coincide with face boundary edges are not duplicated.
+  // We detect this here: if an intersection edge connects the same vertex pair
+  // as an existing boundary half-edge, skip it — it's redundant.
+  const boundaryEdgePairs = new Set<string>();
+  for (const bhe of boundaryHalfEdges) {
+    boundaryEdgePairs.add(`${bhe.startVtx}-${bhe.endVtx}`);
+  }
+
   const intHalfEdges: HalfEdge[] = [];
   for (const e of splitEdges) {
     const startPt = edgeStartPoint(e);
@@ -516,6 +528,12 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     } else {
       const startIdx = findOrAddVertex(vertices, vertices2D, startPt, startUV, periodic);
       const endIdx = findOrAddVertex(vertices, vertices2D, endPt, endUV, periodic);
+
+      // Skip if this edge coincides with a boundary half-edge (same vertex pair)
+      if (boundaryEdgePairs.has(`${startIdx}-${endIdx}`) || boundaryEdgePairs.has(`${endIdx}-${startIdx}`)) {
+        continue;
+      }
+
       intHalfEdges.push({ edge: e, forward: true, startVtx: startIdx, endVtx: endIdx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false, pcurveOccurrence: 0 });
       intHalfEdges.push({ edge: e, forward: false, startVtx: endIdx, endVtx: startIdx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false, pcurveOccurrence: 0 });
     }
@@ -577,7 +595,6 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
           const uvAtK = getEdgeUV(pathEdgeAtK.edge, surface, pathEdgeAtK.forward, pathEdgeAtK.pcurveOccurrence);
           if (uvAtK) {
             let du = Math.abs(uvAtK.start.x - endUVForClosure.x);
-            // OCCT ref: seam vertex UV check accounts for periodicity
             if (adapter.isUPeriodic) du = du % adapter.uPeriod;
             if (du > adapter.uPeriod / 2) du = adapter.uPeriod - du;
             const dv = Math.abs(uvAtK.start.y - endUVForClosure.y);

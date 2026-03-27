@@ -282,7 +282,10 @@ export function canonicalizeExtrusionSurface(
       // We keep the direction as given
       const cylinderAxis = axis(center, direction);
 
-      const result = makeCylindricalSurface(cylinderAxis, curve.radius);
+      // OCCT ref: When creating a cylinder from extruding a circle, the
+      // cylinder's refDirection (θ=0) must match the circle's xAxis so that
+      // the PCurve parameterization (U=0 at xAxis) aligns with projectPoint.
+      const result = makeCylindricalSurface(cylinderAxis, curve.radius, curve.plane.xAxis);
       if (result.success) {
         return result.result!;
       }

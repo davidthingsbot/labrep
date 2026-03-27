@@ -11,6 +11,7 @@ import {
   cross,
   normalize,
   length,
+  dot,
   rotationAxis,
   transformPoint,
   transformVector,
@@ -232,6 +233,63 @@ function projectOntoAxis(point: Point3D, ax: Axis): number {
 }
 
 /**
+ * Compute the reference direction (θ=0) from a single 3D point's radial
+ * direction relative to an axis.
+ *
+ * OCCT ref: GeomAdaptor_SurfaceOfRevolution::Load — for lines, Ox is the
+ * direction from axis to the line origin, projected perpendicular to the axis.
+ */
+function computeRefDirectionFromPoint(pt: Point3D, ax: Axis): Vector3D {
+  const axDir = ax.direction;
+  const rel = vec3d(pt.x - ax.origin.x, pt.y - ax.origin.y, pt.z - ax.origin.z);
+  const d = dot(rel, axDir);
+  const perp = vec3d(rel.x - d * axDir.x, rel.y - d * axDir.y, rel.z - d * axDir.z);
+  const perpLen = Math.sqrt(perp.x * perp.x + perp.y * perp.y + perp.z * perp.z);
+  if (perpLen > 1e-10) return normalize(perp);
+  return perpendicularTo(axDir);
+}
+
+/**
+ * Compute the reference direction (θ=0) for a sphere/torus created from revolving
+ * a circular curve around an axis.
+ *
+ * OCCT ref: GeomAdaptor_SurfaceOfRevolution::Load lines 153-172.
+ * When the curve center is on the axis, samples the curve to find a point that
+ * is NOT on the axis, then computes Ox = (Oz × (PP - O)) × Oz, which gives the
+ * radial direction from the axis to that point, projected perpendicular to the axis.
+ */
+function computeRefDirectionFromCurve(
+  curve: Circle3D | Arc3D,
+  ax: Axis,
+): Vector3D {
+  const axDir = ax.direction;
+  const O = ax.origin;
+
+  // Try start point, midpoint, and other samples to find a non-axis point
+  const tStart = curve.startParam;
+  const tEnd = curve.endParam;
+  const tRange = tEnd - tStart;
+
+  // OCCT samples at: Last, then (First + range/2), (First + range/3), etc.
+  const samples = [tStart, tEnd, tStart + tRange / 2, tStart + tRange / 4, tStart + tRange * 3 / 4];
+  for (const t of samples) {
+    const pp = curve.type === 'arc3d' ? evaluateArc3D(curve, t) : evaluateCircle3D(curve, t);
+    // Compute vector from axis origin to point
+    const rel = vec3d(pp.x - O.x, pp.y - O.y, pp.z - O.z);
+    // Project out axial component: perpComponent = rel - dot(rel, axDir) * axDir
+    const d = dot(rel, axDir);
+    const perp = vec3d(rel.x - d * axDir.x, rel.y - d * axDir.y, rel.z - d * axDir.z);
+    const perpLen = Math.sqrt(perp.x * perp.x + perp.y * perp.y + perp.z * perp.z);
+    if (perpLen > 1e-7) {
+      return normalize(perp);
+    }
+  }
+
+  // Fallback: all points on axis (shouldn't happen for valid sphere/torus)
+  return perpendicularTo(axDir);
+}
+
+/**
  * Attempt to simplify a revolution surface to a canonical form.
  *
  * - Line parallel to axis → CylindricalSurface
@@ -284,7 +342,9 @@ function canonicalizeLine(
       // Line is on the axis — degenerate, return as-is
       return surface;
     }
-    const cylResult = makeCylindricalSurface(ax, radius);
+    // OCCT ref: refDirection = radial direction from axis to the line origin
+    const refDir = computeRefDirectionFromPoint(line.origin, ax);
+    const cylResult = makeCylindricalSurface(ax, radius, refDir);
     if (cylResult.success) {
       return cylResult.result!;
     }
@@ -333,7 +393,10 @@ function canonicalizeLine(
         ax.origin.z + apexH * axDir.z,
       );
       const coneAxis: Axis = { origin: apex, direction: axDir };
-      const coneResult = makeConicalSurface(coneAxis, 0, coneSemiAngle);
+      // OCCT ref: refDirection = radial direction from axis to the non-apex endpoint
+      const nonApexPt = startDist < distTol ? line.endPoint : line.startPoint;
+      const refDir = computeRefDirectionFromPoint(nonApexPt, ax);
+      const coneResult = makeConicalSurface(coneAxis, 0, coneSemiAngle, refDir);
       if (coneResult.success) {
         return coneResult.result!;
       }
@@ -371,21 +434,21 @@ function canonicalizeCircularCurve(
   const centerDist = distanceToAxis(curve.plane.origin, ax);
 
   if (centerDist < distTol) {
-    // Center is on axis — check for sphere (semicircle / arc that spans π)
+    // Center is on axis → sphere.
+    // OCCT ref: GeomAdaptor_SurfaceOfRevolution::Load lines 153-172.
+    // When the circle/arc center is on the axis, find a non-degenerate point
+    // on the curve and compute refDirection = radial direction from axis to
+    // that point. This ensures θ=0 aligns with the revolve's starting angle.
+    const refDir = computeRefDirectionFromCurve(curve, ax);
+
     if (curve.type === 'arc3d') {
-      // Any arc centered on the rotation axis in a meridional plane
-      // produces a spherical surface when revolved, regardless of arc span.
-      const sphereResult = makeSphericalSurface(curve.plane.origin, curve.radius);
+      const sphereResult = makeSphericalSurface(curve.plane.origin, curve.radius, undefined, refDir);
       if (sphereResult.success) {
         return sphereResult.result!;
       }
     }
-    // Full circle centered on axis → also a sphere cross-section, but
-    // a full circle would create a sphere if it's a great circle
-    // For a full circle centered on axis, it's a degenerate torus (tube radius = circle radius)
-    // Actually it's a sphere. A full circle centered on the axis revolved = sphere.
     if (curve.type === 'circle3d') {
-      const sphereResult = makeSphericalSurface(curve.plane.origin, curve.radius);
+      const sphereResult = makeSphericalSurface(curve.plane.origin, curve.radius, undefined, refDir);
       if (sphereResult.success) {
         return sphereResult.result!;
       }

@@ -9,6 +9,7 @@ import { evaluateCircle3D } from '../geometry/circle3d';
 import { evaluateArc3D } from '../geometry/arc3d';
 import { evaluateEllipse3D } from '../geometry/ellipse3d';
 import { toAdapter } from '../surfaces/surface-adapter';
+import { evaluateCurve2D } from './pcurve';
 
 /**
  * A closed 3D volume defined by its boundary shell(s).
@@ -278,12 +279,33 @@ function getParametricBounds(
     return getNaturalBounds(surface);
   }
 
-  // Trimmed face: derive bounds from wire boundary
+  // Trimmed face: derive bounds from wire boundary.
+  // Prefer PCurves over 3D projection — PCurves correctly distinguish seam
+  // sides (U=0 vs U=2π) while projectPoint collapses both to the same U.
   const wire = faceOuterWire(face);
+  const adapter = toAdapter(surface);
   const uvPts: { u: number; v: number }[] = [];
   for (const oe of wire.edges) {
     const e = oe.edge;
     if (e.degenerate) continue; // Skip degenerate edges (zero 3D length at poles)
+
+    // Try PCurve first (OCCT: BRepGProp uses PCurves for UV sampling)
+    const pc = e.pcurves.find(p => p.surface === surface);
+    if (pc) {
+      const c = pc.curve2d;
+      const nSamples = (c.type === 'line') ? 2 : N;
+      for (let i = 0; i <= nSamples; i++) {
+        const frac = i / nSamples;
+        const t = oe.forward
+          ? c.startParam + frac * (c.endParam - c.startParam)
+          : c.endParam - frac * (c.endParam - c.startParam);
+        const pt2d = evaluateCurve2D(c, t);
+        uvPts.push({ u: pt2d.x, v: pt2d.y });
+      }
+      continue;
+    }
+
+    // Fallback: 3D projection
     const nSamples = e.curve.type === 'line3d' ? 2 : N;
     for (let i = 0; i < nSamples; i++) {
       const tStart = oe.forward ? e.startParam : e.endParam;
@@ -317,6 +339,13 @@ function getParametricBounds(
       if (uv.u < uMin) uMin = uv.u;
       if (uv.u > uMax) uMax = uv.u;
     }
+  }
+
+  // On periodic surfaces, if the U range is degenerate (all samples at same U),
+  // the face likely covers the full period (e.g., seam-only boundary).
+  if (adapter.isUPeriodic && (uMax - uMin) < 1e-6) {
+    uMin = 0;
+    uMax = adapter.uPeriod;
   }
 
   return { uMin, uMax, vMin, vMax };
@@ -568,9 +597,13 @@ function computeBoundarySampledVolume(face: Face, samplesPerEdge: number): numbe
 }
 
 /**
- * Check if face has only linear edges.
+ * Check if a face can be volume-computed via simple linear triangulation.
+ * A face is "linear" only if both the surface is planar and all edges are lines.
+ * A curved surface (cylinder, sphere, etc.) with only straight edges (seam edges)
+ * still requires parametric integration.
  */
 function faceIsLinear(face: Face): boolean {
+  if (face.surface.type !== 'plane') return false;
   const wire = faceOuterWire(face);
   for (const oe of wire.edges) {
     if (oe.edge.curve.type !== 'line3d') return false;

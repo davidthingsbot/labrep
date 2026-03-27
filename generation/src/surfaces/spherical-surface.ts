@@ -56,15 +56,23 @@ function perpendicularTo(dir: Vector3D): Vector3D {
 /**
  * Create a spherical surface.
  *
+ * OCCT reference: Geom_SphericalSurface constructor takes gp_Ax3 which
+ * specifies the axis (pole direction) and XDirection (θ=0 reference).
+ * When created from a revolve, XDirection is set to the radial direction
+ * at the revolve's starting angle (GeomAdaptor_SurfaceOfRevolution::Load).
+ *
  * @param center - Center of the sphere
  * @param radius - Radius (must be positive)
  * @param sphereAxis - Optional axis defining orientation (defaults to Z-axis at center)
+ * @param refDir - Optional reference direction for θ=0 (must be perpendicular to axis).
+ *                 If omitted, computed from axis direction.
  * @returns SphericalSurface or failure
  */
 export function makeSphericalSurface(
   center: Point3D,
   radius: number,
   sphereAxis?: Axis,
+  refDir?: Vector3D,
 ): OperationResult<SphericalSurface> {
   if (radius <= 0 || isZero(radius)) {
     return failure('Radius must be positive');
@@ -74,7 +82,17 @@ export function makeSphericalSurface(
     ? { origin: center, direction: normalize(sphereAxis.direction) }
     : axis(center, vec3d(0, 0, 1));
 
-  const refDirection = perpendicularTo(actualAxis.direction);
+  let refDirection: Vector3D;
+  if (refDir) {
+    // Project out axial component and normalize (ensure perpendicularity)
+    const axd = actualAxis.direction;
+    const d = dot(refDir, axd);
+    const proj = vec3d(refDir.x - d * axd.x, refDir.y - d * axd.y, refDir.z - d * axd.z);
+    const len = Math.sqrt(proj.x * proj.x + proj.y * proj.y + proj.z * proj.z);
+    refDirection = len > 1e-10 ? normalize(proj) : perpendicularTo(actualAxis.direction);
+  } else {
+    refDirection = perpendicularTo(actualAxis.direction);
+  }
 
   return success({
     type: 'sphere',
