@@ -111,6 +111,34 @@ describe('CAD: Through-hole (cylinder through box)', () => {
 });
 
 // ═══════════════════════════════════════════════════════
+// TEST 2: Counterbore (large shallow + small deep cylinder)
+// Sequential boolean — second op on already-modified solid.
+// ═══════════════════════════════════════════════════════
+
+describe('CAD: Counterbore (sequential booleans)', () => {
+  it('succeeds with closed shell and correct volume', () => {
+    const block = makeBox(0, 0, 0, 20, 20, 10);
+    // Large recess: r=3, from z=4 to z=10 (top 6 units of block)
+    const largeCyl = makeCylinder(3, 8, 0, 0, 7); // z=3..11, extends beyond top
+    // Small through-hole: r=1, extends beyond both faces
+    const smallCyl = makeCylinder(1, 14, 0, 0, 5); // z=-2..12
+
+    const r1 = booleanSubtract(block.solid, largeCyl.solid);
+    expect(r1.success).toBe(true);
+    expect(r1.result!.solid.outerShell.isClosed).toBe(true);
+
+    const r2 = booleanSubtract(r1.result!.solid, smallCyl.solid);
+    expect(r2.success).toBe(true);
+    expect(r2.result!.solid.outerShell.isClosed).toBe(true);
+
+    const vol = solidVolume(r2.result!.solid);
+    // Block: 4000. Large cyl removes π*9*6=54π (z=4..10). Small cyl removes π*1*4=4π (z=0..4, the part not already removed).
+    const expected = 4000 - Math.PI * 9 * 6 - Math.PI * 1 * 4;
+    expect(volumeError(vol, expected)).toBeLessThan(0.03);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
 // TEST 3: Spherical pocket (sphere subtracted from box,
 //         sphere fully inside)
 // ═══════════════════════════════════════════════════════
@@ -355,5 +383,48 @@ describe('CAD: Sphere intersect box (truncated sphere)', () => {
     const planeCount = faces.filter(f => f.surface.type === 'plane').length;
     expect(sphereCount).toBeGreaterThan(0);
     expect(planeCount).toBeGreaterThan(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// TEST 9: T-pipe union (two perpendicular cylinders)
+// Cylinder-cylinder SSI produces Steinmetz curve.
+// ═══════════════════════════════════════════════════════
+
+describe('CAD: T-pipe union (perpendicular cylinders)', () => {
+  // Vertical cylinder along Z
+  const vertCyl = makeCylinder(3, 20);
+
+  // Horizontal cylinder along X (circle in YZ plane, extruded along X)
+  function makeHorizCylinder() {
+    const circlePlane = plane(point3d(-10, 0, 0), vec3d(1, 0, 0), vec3d(0, 1, 0));
+    const circle = makeCircle3D(circlePlane, 3).result!;
+    const edge = makeEdgeFromCurve(circle).result!;
+    const wire = makeWire([orientEdge(edge, true)]).result!;
+    return extrude(wire, vec3d(1, 0, 0), 20).result!;
+  }
+  const horizCyl = makeHorizCylinder();
+
+  it('succeeds with closed shell', () => {
+    const result = booleanUnion(vertCyl.solid, horizCyl.solid);
+    expect(result.success).toBe(true);
+    expect(result.result!.solid.outerShell.isClosed).toBe(true);
+  });
+
+  it('has correct volume (2 cylinders minus Steinmetz intersection)', () => {
+    const result = booleanUnion(vertCyl.solid, horizCyl.solid);
+    expect(result.success).toBe(true);
+    const vol = solidVolume(result.result!.solid);
+    // Each cylinder: π*9*20 = 180π. Intersection of two perpendicular
+    // cylinders of equal radius R: V = 16R³/3 = 16*27/3 = 144
+    const expected = 2 * Math.PI * 9 * 20 - 144;
+    expect(volumeError(vol, expected)).toBeLessThan(0.05);
+  });
+
+  it('tessellates', () => {
+    const result = booleanUnion(vertCyl.solid, horizCyl.solid);
+    expect(result.success).toBe(true);
+    const mesh = solidToMesh(result.result!.solid);
+    expect(mesh.success).toBe(true);
   });
 });
