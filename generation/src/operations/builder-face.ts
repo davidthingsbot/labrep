@@ -412,6 +412,48 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     }
   }
 
+  // ── Inner wire boundary half-edges (existing holes) ──
+  // OCCT ref: BOPAlgo_BuilderFace::PerformLoops processes ALL wire edges,
+  // not just the outer wire. When a face with holes gets re-split by a
+  // second boolean, the existing hole edges must be included.
+  for (const iw of face.innerWires) {
+    prevEndUV = null;
+    for (const oe of iw.edges) {
+      const eStart = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      const eEnd = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+
+      if (oe.edge.degenerate) continue;
+
+      const occurrence = edgeSeen.get(oe.edge) || 0;
+      edgeSeen.set(oe.edge, occurrence + 1);
+
+      let { start: edgeStartUV, end: edgeEndUV } = getBoundaryEdgeUV(
+        oe.edge, surface, adapter, oe.forward, occurrence, eStart, eEnd,
+      );
+
+      if (periodic && prevEndUV) {
+        const period = adapter.uPeriod;
+        const du = edgeStartUV.x - prevEndUV.x;
+        if (Math.abs(du) > period / 2) {
+          const shift = du > 0 ? -period : period;
+          edgeStartUV = { x: edgeStartUV.x + shift, y: edgeStartUV.y };
+          edgeEndUV = { x: edgeEndUV.x + shift, y: edgeEndUV.y };
+        }
+      }
+      prevEndUV = edgeEndUV;
+
+      // Inner wire edges are not split by intersection endpoints — they're
+      // existing topology. Just add as boundary half-edges.
+      const startIdx = findOrAddVertex(vertices, vertices2D, eStart, edgeStartUV, periodic);
+      const endIdx = findOrAddVertex(vertices, vertices2D, eEnd, edgeEndUV, periodic);
+      boundaryHalfEdges.push({
+        edge: oe.edge, forward: oe.forward,
+        startVtx: startIdx, endVtx: endIdx,
+        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true,
+      });
+    }
+  }
+
   // ── Intersection half-edges ──
   const intHalfEdges: HalfEdge[] = [];
   for (const e of splitEdges) {

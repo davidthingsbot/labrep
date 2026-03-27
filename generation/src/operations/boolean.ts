@@ -274,8 +274,16 @@ function findMatchingBoundaryEdge(edge: Edge, face: Face): Edge | null {
                             rel.z - nComp * bPlane.normal.z);
       const r = length(inPlane);
       if (Math.abs(r - bRadius) < tol) {
-        // For full circles (closed), any point at correct radius+plane is on boundary
-        if (bCurve.isClosed) return oe.edge;
+        // Full boundary circle: only match if FFI edge is also a full circle.
+        // Partial arcs on a boundary circle should just be skipped (not shared),
+        // because using the full circle as a replacement would be geometrically wrong.
+        if (bCurve.isClosed) {
+          if (edge.curve.isClosed) return oe.edge;  // Full circle → share
+          // Partial arc on a boundary circle → signal "on boundary" but don't share.
+          // Return a sentinel: the boundary edge, but caller must check edge.curve.isClosed
+          // to decide sharing vs skip-only.
+          return oe.edge;
+        }
         // For arcs, check angle range
         const yDir = cross(bPlane.normal, bPlane.xAxis);
         const yLen = length(yDir);
@@ -844,15 +852,20 @@ export function booleanOperation(
         const matchA = findMatchingBoundaryEdge(e, faceA);
         const matchB = findMatchingBoundaryEdge(e, faceB);
 
-        // For curved boundary matches: share the boundary edge object
-        // For line boundary matches: just skip (stitching handles it)
+        // Edge sharing logic (OCCT: shared topology via BOPDS_DS):
+        // - Full circle FFI edge matching full circle boundary → SHARE boundary edge
+        // - Partial arc on a circle boundary → SKIP for that face (arc is on boundary)
+        // - Line on line boundary → SKIP (stitching handles matching)
         const isCurvedA = matchA && (matchA.curve.type === 'circle3d' || matchA.curve.type === 'arc3d');
         const isCurvedB = matchB && (matchB.curve.type === 'circle3d' || matchB.curve.type === 'arc3d');
+        // Can share = both FFI edge and boundary are full closed circles
+        const canShareA = isCurvedA && e.curve.isClosed && matchA!.curve.isClosed;
+        const canShareB = isCurvedB && e.curve.isClosed && matchB!.curve.isClosed;
 
         if (!matchA) {
           let edgeToUse = e;
-          if (isCurvedB) {
-            // Use B's curved boundary edge for sharing. Copy PCurves from FFI edge.
+          if (canShareB) {
+            // Use B's boundary circle for sharing. Copy PCurves from FFI edge.
             edgeToUse = matchB!;
             for (const pc of e.pcurves) {
               if (!edgeToUse.pcurves.some(p => p.surface === pc.surface)) {
@@ -862,12 +875,12 @@ export function booleanOperation(
           }
           if (!edgesOnA.has(faceA)) edgesOnA.set(faceA, []);
           const listA = edgesOnA.get(faceA)!;
-          if (!listA.includes(edgeToUse)) listA.push(edgeToUse); // Dedup shared edges
+          if (!listA.includes(edgeToUse)) listA.push(edgeToUse);
         }
         if (!matchB) {
           let edgeToUse = e;
-          if (isCurvedA) {
-            // Use A's curved boundary edge for sharing. Copy PCurves from FFI edge.
+          if (canShareA) {
+            // Use A's boundary circle for sharing. Copy PCurves from FFI edge.
             edgeToUse = matchA!;
             for (const pc of e.pcurves) {
               if (!edgeToUse.pcurves.some(p => p.surface === pc.surface)) {
@@ -877,7 +890,7 @@ export function booleanOperation(
           }
           if (!edgesOnB.has(faceB)) edgesOnB.set(faceB, []);
           const listB = edgesOnB.get(faceB)!;
-          if (!listB.includes(edgeToUse)) listB.push(edgeToUse); // Dedup shared edges
+          if (!listB.includes(edgeToUse)) listB.push(edgeToUse);
         }
       }
     }
