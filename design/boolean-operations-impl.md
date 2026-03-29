@@ -383,3 +383,112 @@ The 2D polygon clipping approach from OCCT:
 2. **Face splitting precision** — Split faces have slight coordinate differences from originals, preventing exact edge matching. Vertex merging would fix this.
 
 3. **Side face splitting incomplete** — Transverse (non-coplanar) face splitting works for simple cases but may miss some configurations. A's front face (y=-2) is correctly kept whole when outside B, but more complex overlaps may need refinement.
+
+---
+
+## Phase 13H-J: Sphere Boolean Operations — OCCT Alignment
+
+### Session 2026-03-29: Box-Sphere-Corner + Hemisphere Splitting
+
+**Problem:** 4 hard failures — sphere-sphere SSI, box-sphere-at-corner, counterbore, T-pipe. Attacked box-sphere-at-corner and counterbore as they don't need new SSI.
+
+**Approach:** Bottom-up, test-driven, strict OCCT alignment. Each fix starts at the lowest-level function, tests confirm OCCT behavior, then moves outward.
+
+### Root Causes Identified and Fixed
+
+#### 1. FFI `clipCircleToFaces` — Missing Curved Face V-Range Clipping
+
+**OCCT ref:** `GeomInt_LineConstructor::TreatCircle` (GeomInt_LineConstructor.cxx:674)
+
+**Bug:** `clipCircleToFaces` clipped intersection arcs against the planar face's 2D polygon but completely ignored the curved face's UV domain. Both hemisphere faces received the same arcs.
+
+**Fix:** After clipping to the plane polygon, project each arc's midpoint to the curved surface UV and check against the face's V-range. Arcs outside the hemisphere's V-range are rejected.
+
+**Tests:** `face-face-intersection.test.ts` — "Plane-Sphere hemisphere clipping" (2 tests). Zero regressions.
+
+#### 2. `findMatchingBoundaryEdge` — Chord Midpoint for Arcs
+
+**Bug:** Used `(eStart + eEnd) / 2` for arc edges. The chord midpoint is NOT on the arc. For a quarter-circle, the chord midpoint is at `r*cos(π/4) ≈ 0.707r` from center instead of `r`, so the radius check fails and boundary-coincident arcs aren't detected.
+
+**Fix:** Evaluate arc curves at the mid-parameter to get the true curve midpoint.
+
+#### 3. `tangentAngle` — Incoming Direction Reversal (OCCT `Angle2D`)
+
+**OCCT ref:** `BOPAlgo_WireSplitter_1.cxx Angle2D()` lines 769-841
+
+**Bug:** For `atStart=false` (incoming angle at end of edge), the code computed the direction INTO the edge. OCCT's `bIsIN=true` reverses the vector to give the direction of ARRIVAL — the direction the edge was traveling when it reached the vertex.
+
+**Fix:** For `atStart=false`, reverse the UV direction vector: `(uv0 - uv1)` instead of `(uv1 - uv0)`. Also added vertex-UV-based angle computation for degenerate edges (matching OCCT's pcurve-based Angle2D for degenerate edges).
+
+**Tests:** `tangent-angle.test.ts` — 5 tests for seam/degen edges on sphere. All pass.
+
+#### 4. `builderFace` Pole UV — PCurve-Based U Parameter
+
+**OCCT ref:** `BOPAlgo_PaveFiller_8.cxx FillPaves()` lines 222-329
+
+**Bug:** When splitting degenerate edges at poles, `adapter.projectPoint(pole)` returns ambiguous U=0 (the pole is a UV singularity where all U values map to the same 3D point). The degenerate edge was split at the wrong U, making the sub-segments useless.
+
+**Fix:** Extract the U parameter from the intersection edge's PCurve endpoint, which knows the correct U at the pole. Fallback: sample the intersection edge slightly away from the pole to get a non-degenerate UV.
+
+#### 5. `builderFace` Boundary Split UV — `getIntEndpointUV`
+
+**Bug:** When splitting boundary edges (e.g., equatorial circle) at intersection endpoints, the UV was computed by linear interpolation from the boundary PCurve. On spheres where the circle's geometric direction is flipped relative to the surface parameterization, this gives the wrong UV.
+
+**Fix:** `getIntEndpointUV` function extracts the UV from the intersection edge's PCurve at the hit point. Guarded by `isSeamBoundary` — seam edges have correct constant-U interpolation and must NOT be overridden.
+
+#### 6. `builderFace` Backward Sub-Loop Scan with `bHasEdge`
+
+**OCCT ref:** `BOPAlgo_WireSplitter_1.cxx Path()` lines 426-524
+
+**Bug:** The original forward scan found the LONGEST sub-loop (farthest vertex match). OCCT scans BACKWARD and finds the SHORTEST (nearest vertex match). More critically, OCCT's `bHasEdge` flag gates the vertex-match check: degenerate-only tails are skipped entirely, preventing degenerate self-loops from being detected as sub-loops.
+
+**Fix:** Implemented OCCT's exact backward scan with `bHasEdge` gating.
+
+#### 7. `builderFace` Reverse Boundary Half-Edges
+
+**OCCT ref:** `BOPAlgo_WireSplitter SplitBlock()` lines 138-195 — SmartMap fills both orientations
+
+**Bug:** Boundary half-edges only had one direction (the wire direction). After splitting, the sub-wires may need to traverse boundary sub-edges in EITHER direction. Without reverse half-edges, the wire tracer dead-ends.
+
+**Fix:** On faces with degenerate edges (poles), add reverse half-edges for all boundary sub-edges. Guarded by `degeneratePts.length > 0` — cylinders (no poles) don't need this.
+
+#### 8. `builderFace` startUV Seam Filter
+
+**OCCT ref:** `Path()` lines 572-583 — `Coord2dVf` + `SquareDistance`
+
+**Bug:** The seam disambiguation filter used `getEdgeUV` to compute the candidate edge's start UV, then applied periodic modulo wrapping (`du % uPeriod`). For reverse boundary half-edges, `getEdgeUV` returned the wrong seam side (from the wrong PCurve occurrence), and the modulo reduced `|0 - 2π| = 2π` to `0`, making opposite-seam-side edges indistinguishable.
+
+**Fix:** Store `startUV` on each HalfEdge from the vertex pool (which correctly encodes the seam side). For reverse boundary half-edges on pole-bearing faces, compare `startUV` directly without periodic modulo. For all other edges, use the standard modulo-based comparison.
+
+#### 9. `builderFace` pathUVs (OCCT `aCoordVa`)
+
+**OCCT ref:** `Path()` lines 413-414, 434
+
+**Bug:** The backward scan's vertex-match UV comparison recomputed the UV from the scanned edge's PCurve. When the same vertex was reached from different seam sides, the recomputed UV could differ from the original arrival UV.
+
+**Fix:** Store UV at each path vertex in a `pathUVs` array (matching OCCT's `aCoordVa`). Use stored UVs for both the backward scan vertex match and the candidate edge seam filter.
+
+### Results
+
+**Before:** 72/78 passing (6 failures: sphere-sphere, box-sphere-corner, counterbore, T-pipe×3)
+
+**After:** 69/78 passing (9 failures)
+- **Fixed:** box-sphere-at-corner (was one of the 4 hard failures)
+- **32 new tests** all passing (tangentAngle, builderFace hemisphere/cylinder, FFI hemisphere, clockwiseAngle)
+- **3 regressions:** circle-on-full-sphere (1 face instead of 2), sphere-intersect-box (×2, cascading)
+
+### Remaining: SmartMap Full Redundancy
+
+The 3 regressions stem from one root cause: the wire tracer's half-edge graph lacks OCCT's full SmartMap redundancy. OCCT adds BOTH orientations of ALL edges to the SmartMap (lines 138-195 of `SplitBlock`). Our code only adds reverse half-edges for boundary sub-edges on pole-bearing faces. Without full redundancy, dead-end paths consume critical edges that prevent later paths from completing.
+
+**Next step:** Implement OCCT's SmartMap pattern where ALL boundary edges (not just pole-face sub-edges) get both orientations. This requires:
+1. Adding reverse half-edges for ALL boundary edges on ALL face types
+2. Verifying planar face splitting still works with the backward scan + Angle2D angles
+3. The `bHasEdge` backward scan and correct `Angle2D` angles should ensure the wire tracer picks correct edges even with the additional reverse half-edges
+
+**Key OCCT source files:**
+- `BOPAlgo_WireSplitter_1.cxx` — Wire tracing (`Path()`, `ClockWiseAngle`, `Angle2D`, `Coord2dVf`)
+- `BOPAlgo_BuilderFace.cxx` — Face splitting (`PerformShapesToAvoid`, `PerformAreas`)
+- `BOPAlgo_PaveFiller_8.cxx` — Degenerate edge paving (`FillPaves`, `MakeSplitEdge`)
+- `GeomInt_LineConstructor.cxx` — Intersection curve trimming (`TreatCircle`)
+- All located in `library/opencascade/src/ModelingAlgorithms/TKBO/`
