@@ -42,9 +42,10 @@ describe('volume: box (all-planar-linear)', () => {
 });
 
 describe('volume: box via diagonal extrude', () => {
-  it('10×10 square extruded 10 at 45°: V = 1000', () => {
-    const box = makeBox(0, 0, 0, 10, 10, 10);
-    // Diagonal extrude: 10×10 at z=0, extruded along (1,0,1)/sqrt(2) * 10
+  it('10×10 square extruded at 45°: V = 1000', () => {
+    // Diagonal extrude: 10×10 at z=0, extruded along (1,0,1) with distance 10√2
+    // extrude() normalizes direction → (1/√2,0,1/√2), offset = 10√2 × (1/√2,0,1/√2) = (10,0,10)
+    // Volume = base_area × z-height = 100 × 10 = 1000
     const hw = 5, hh = 5;
     const corners = [
       point3d(-hw, -hh, 0), point3d(hw, -hh, 0),
@@ -54,41 +55,13 @@ describe('volume: box via diagonal extrude', () => {
       makeEdgeFromCurve(makeLine3D(c, corners[(i + 1) % 4]).result!).result!,
     );
     const wire = makeWireFromEdges(edges).result!;
-    const d = 10;
-    const dir = vec3d(1 / Math.sqrt(2), 0, 1 / Math.sqrt(2));
+    const dir = vec3d(1, 0, 1);
+    const d = 10 * Math.sqrt(2);
     const result = extrude(wire, dir, d);
     expect(result.success).toBe(true);
     const vol = solidVolume(result.result!.solid);
-    // Extrusion vector = dir*d = (10/√2, 0, 10/√2). Perpendicular height = z component = 10/√2.
-    // But extrude creates a sheared box where volume = base_area × extrusion · base_normal
-    // = 100 × (1/√2, 0, 1/√2)·(0,0,1) × 10 = 100 × 10/√2 ≈ 707.1
-    // HOWEVER the actual extrude test expects 1000 (base × height where height = z_offset = 10)
-    // because the extrusion vector is (1,0,1)*10√2, giving offset (10,0,10), so z-height=10.
-    const expected = 100 * 10; // 10×10 base, height 10 in Z
-    const faces = shellFaces(result.result!.solid.outerShell);
-    (globalThis as any).__volDbg = [];
-    const vol2 = solidVolume(result.result!.solid);
-    for (const d of (globalThis as any).__volDbg) console.log('  ', JSON.stringify(d));
-    console.log('diagonal: faces=' + faces.length + ' vol=' + vol2.toFixed(2) + ' expected=' + expected);
-    for (let i = 0; i < faces.length; i++) {
-      const f = faces[i];
-      const p = f.surface.type === 'plane' ? f.surface.plane : null;
-      const nStr = p ? `n=(${p.normal.x.toFixed(2)},${p.normal.y.toFixed(2)},${p.normal.z.toFixed(2)}) o=(${p.origin.x.toFixed(1)},${p.origin.y.toFixed(1)},${p.origin.z.toFixed(1)})` : '';
-      // Check PCurves
-      let pcInfo = '';
-      for (const oe of f.outerWire.edges) {
-        const pc = oe.edge.pcurves.find((p2: any) => p2.surface === f.surface);
-        if (pc) {
-          const s = evaluateCurve2DHelper(pc.curve2d, pc.curve2d.startParam);
-          const e2 = evaluateCurve2DHelper(pc.curve2d, pc.curve2d.endParam);
-          pcInfo += ` [${s.x.toFixed(1)},${s.y.toFixed(1)}→${e2.x.toFixed(1)},${e2.y.toFixed(1)}]`;
-        } else {
-          pcInfo += ' [NO_PC]';
-        }
-      }
-      console.log(`  f[${i}] ${f.surface.type} fwd=${f.forward} ${nStr}${pcInfo}`);
-    }
-    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.05);
+    const expected = 1000;
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.01);
   });
 });
 

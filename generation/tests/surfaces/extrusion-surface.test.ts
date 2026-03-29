@@ -8,6 +8,7 @@ import {
   length,
   cross,
   normalize,
+  dot,
 } from '../../src/core';
 import { makeLine3D } from '../../src/geometry/line3d';
 import { makeCircle3D } from '../../src/geometry/circle3d';
@@ -20,6 +21,8 @@ import {
   getCanonicalSurfaceType,
   canonicalizeExtrusionSurface,
 } from '../../src/surfaces/extrusion-surface';
+import { evaluatePlaneSurface, projectToPlaneSurface } from '../../src/surfaces/plane-surface';
+import { toAdapter } from '../../src/surfaces';
 
 describe('ExtrusionSurface', () => {
   describe('makeExtrusionSurface', () => {
@@ -366,6 +369,126 @@ describe('ExtrusionSurface', () => {
         expect(canonical.axis.origin.z).toBeCloseTo(0, 10);
         expect(canonical.axis.direction.z).toBeCloseTo(1, 10);
       }
+    });
+
+    // ── Diagonal extrusion: plane yAxis must equal extrusion direction ──
+    // OCCT ref: gp_Ax2 double cross product ensures V-axis = extrusion direction.
+    // This guarantees the PCurve convention v1 = v0 + dist works for ALL side faces.
+
+    it('diagonal 45°: plane yAxis = extrusion direction (1/√2,0,1/√2)', () => {
+      const line = makeLine3D(point3d(0, 0, 0), point3d(10, 0, 0)).result!;
+      const dir = vec3d(1, 0, 1); // normalized to (1/√2, 0, 1/√2)
+      const surf = makeExtrusionSurface(line, dir).result!;
+      const canon = canonicalizeExtrusionSurface(surf);
+      expect(canon.type).toBe('plane');
+      if (canon.type !== 'plane') return;
+
+      const yAxis = normalize(cross(canon.plane.normal, canon.plane.xAxis));
+      const dirNorm = normalize(dir);
+      expect(dot(yAxis, dirNorm)).toBeCloseTo(1, 10);
+    });
+
+    it('diagonal 45°: Y-edge line also has yAxis = extrusion direction', () => {
+      const line = makeLine3D(point3d(0, -5, 0), point3d(0, 5, 0)).result!;
+      const dir = vec3d(1, 0, 1);
+      const surf = makeExtrusionSurface(line, dir).result!;
+      const canon = canonicalizeExtrusionSurface(surf);
+      expect(canon.type).toBe('plane');
+      if (canon.type !== 'plane') return;
+
+      const yAxis = normalize(cross(canon.plane.normal, canon.plane.xAxis));
+      const dirNorm = normalize(dir);
+      expect(dot(yAxis, dirNorm)).toBeCloseTo(1, 10);
+    });
+
+    it('diagonal: xAxis and yAxis are orthonormal', () => {
+      const line = makeLine3D(point3d(-5, -5, 0), point3d(5, -5, 0)).result!;
+      const dir = vec3d(1, 0, 1);
+      const surf = makeExtrusionSurface(line, dir).result!;
+      const canon = canonicalizeExtrusionSurface(surf);
+      expect(canon.type).toBe('plane');
+      if (canon.type !== 'plane') return;
+
+      const { normal, xAxis } = canon.plane;
+      const yAxis = normalize(cross(normal, xAxis));
+
+      // All unit vectors
+      expect(length(normal)).toBeCloseTo(1, 10);
+      expect(length(xAxis)).toBeCloseTo(1, 10);
+      expect(length(yAxis)).toBeCloseTo(1, 10);
+
+      // All mutually orthogonal
+      expect(dot(normal, xAxis)).toBeCloseTo(0, 10);
+      expect(dot(normal, yAxis)).toBeCloseTo(0, 10);
+      expect(dot(xAxis, yAxis)).toBeCloseTo(0, 10);
+    });
+
+    it('diagonal: projecting extruded point gives v = dist', () => {
+      // This is the PCurve contract: v1 = v0 + dist must hold
+      const origin = point3d(-5, -5, 0);
+      const line = makeLine3D(origin, point3d(5, -5, 0)).result!;
+      const dir = vec3d(1, 0, 1);
+      const dirNorm = normalize(dir);
+      const dist = 10 * Math.sqrt(2);
+      const surf = makeExtrusionSurface(line, dir).result!;
+      const canon = canonicalizeExtrusionSurface(surf);
+      expect(canon.type).toBe('plane');
+      if (canon.type !== 'plane') return;
+
+      const adapter = toAdapter(canon);
+      const v0 = adapter.projectPoint(origin).v;
+      const topPt = point3d(
+        origin.x + dirNorm.x * dist,
+        origin.y + dirNorm.y * dist,
+        origin.z + dirNorm.z * dist,
+      );
+      const vTop = adapter.projectPoint(topPt).v;
+      expect(vTop - v0).toBeCloseTo(dist, 8);
+    });
+
+    it('diagonal: canonicalized plane evaluates same 3D points as extrusion surface', () => {
+      const line = makeLine3D(point3d(-5, -5, 0), point3d(5, -5, 0)).result!;
+      const dir = vec3d(1, 0, 1);
+      const surf = makeExtrusionSurface(line, dir).result!;
+      const canon = canonicalizeExtrusionSurface(surf);
+      expect(canon.type).toBe('plane');
+      if (canon.type !== 'plane') return;
+
+      // Sample a grid of points on the extrusion surface, project to canon UV, evaluate canon
+      for (const u of [0, 3, 7, 10]) {
+        for (const v of [0, 5, 10]) {
+          const ptExt = evaluateExtrusionSurface(surf, u, v);
+          const uv = projectToPlaneSurface(canon, ptExt);
+          const ptPlane = evaluatePlaneSurface(canon, uv.u, uv.v);
+          expect(distance(ptExt, ptPlane)).toBeLessThan(1e-10);
+        }
+      }
+    });
+
+    it('axis-aligned extrusion: yAxis still equals direction', () => {
+      // Sanity check — axis-aligned case should also satisfy the invariant
+      const line = makeLine3D(point3d(0, 0, 0), point3d(10, 0, 0)).result!;
+      const dir = vec3d(0, 0, 1);
+      const surf = makeExtrusionSurface(line, dir).result!;
+      const canon = canonicalizeExtrusionSurface(surf);
+      expect(canon.type).toBe('plane');
+      if (canon.type !== 'plane') return;
+
+      const yAxis = normalize(cross(canon.plane.normal, canon.plane.xAxis));
+      expect(dot(yAxis, normalize(dir))).toBeCloseTo(1, 10);
+    });
+
+    it('30° extrusion: yAxis = extrusion direction', () => {
+      const line = makeLine3D(point3d(0, 0, 0), point3d(0, 10, 0)).result!;
+      const dir = vec3d(Math.sin(Math.PI / 6), 0, Math.cos(Math.PI / 6)); // 30° from Z
+      const surf = makeExtrusionSurface(line, dir).result!;
+      const canon = canonicalizeExtrusionSurface(surf);
+      expect(canon.type).toBe('plane');
+      if (canon.type !== 'plane') return;
+
+      const yAxis = normalize(cross(canon.plane.normal, canon.plane.xAxis));
+      const dirNorm = normalize(dir);
+      expect(dot(yAxis, dirNorm)).toBeCloseTo(1, 10);
     });
   });
 

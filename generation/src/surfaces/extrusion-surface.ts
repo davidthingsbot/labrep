@@ -255,9 +255,13 @@ export function canonicalizeExtrusionSurface(
 
     const unitNormal = normalize(normal);
 
-    // Plane origin is the line origin
-    // xAxis is the line direction
-    const planeData = plane(curve.origin, unitNormal, lineDir);
+    // OCCT ref: gp_Ax2 double cross product — ensures yAxis = extrusion direction.
+    // xAxis = direction × normal, so yAxis = cross(normal, xAxis) = direction.
+    // This keeps V = 0..dist aligned with the extrusion, matching the original
+    // ExtrusionSurface parametrization and the PCurve convention in extrude.ts.
+    const dirNormalized = normalize(direction);
+    const xAxis = cross(dirNormalized, unitNormal);
+    const planeData = plane(curve.origin, unitNormal, xAxis);
 
     return makePlaneSurface(planeData);
   }
