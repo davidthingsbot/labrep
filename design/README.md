@@ -1197,8 +1197,9 @@ Major architectural refactor (2026-03-26):
 - **BuilderFace seam UV normalization fix**: Intersection edge UV is no longer normalized to [0, period) when `seamSplit` is active. A circle PCurve from (0,v)→(2π,v) was being collapsed to (0,v)→(0,v), making it a self-loop. Matches OCCT `BOPAlgo_WireSplitter_1::Coord2d` which evaluates PCurves directly.
 - **Generic seamSplit detection**: Replaced hardcoded `surface.type === 'cylinder' || 'cone'` with runtime detection: any boundary edge with 2+ PCurves on the same surface triggers seamSplit. Matches OCCT `BRep_Tool::IsClosed(aE, myFace)`. Works for cylinders, cones, AND OCCT 1-face spheres.
 - **Both-pole sphere tessellation**: Fan+grid+fan mesh for faces with both vMin and vMax degenerate (full sphere). Matches OCCT `BRepMesh_SphereRangeSplitter`.
-- **OCCT boundary-curve volume integration**: `computeCurvedFaceVolume` uses Green's theorem boundary-curve-guided nested integration for trimmed curved faces. Outer integral along boundary edge PCurves, inner integral sweeps U from 0 to u(l). Matches OCCT `BRepGProp_Gauss::Compute` (lines 577-800). Natural-restriction and sphere faces still use rectangular UV grid with `orientSign`.
-- **Inner wire volume ADD**: Shell volume computation now ADDS inner wire fan-volumes (not subtracts). Inner wire CW winding naturally gives the correct sign. Matches OCCT `BRepGProp_Domain` which iterates ALL boundary edges without distinguishing outer/inner.
+- **Unified OCCT volume computation**: Single `computeFaceVolume` for ALL face types — no dispatch by surface type. Uses OCCT's boundary-curve Gauss integration (`BRepGProp_Gauss::Compute`). Green's theorem converts 2D surface integral to 1D boundary-curve integral. Outer loop iterates boundary edge PCurves; inner loop integrates P·J from BU1 to u(l). BU1 derived from face boundary PCurves (matching OCCT `BRepGProp_Face::Bounds`). All old non-OCCT methods deleted: computeQuadFaceVolume, computeTriFaceVolume, computeBoundarySampledVolume, computeParametricFaceVolume, computeLinearFaceVolume, computeWireSignedVolume. solid.ts reduced from ~730 to 277 lines.
+- **Arc2D PCurves on planes**: `buildPCurveForEdgeOnSurface` now creates proper Arc2D for arcs on non-periodic surfaces. Previously created Line2D (start→end), which gave wrong boundary-curve integral. Matches OCCT `ProjLib_Plane::Project(gp_Circ)`.
+- **Bottom face REVERSED**: `extrude` sets `face.forward=false` for bottom cap. Matches OCCT `BRepPrim_OneAxis::BottomFace` which calls `ReverseFace`.
 
 **Key OCCT patterns adopted:**
 - `BOPAlgo_PaveFiller::PerformFF`: coplanar detection + FFI-based splitting (no separate coplanar edge computation)
@@ -1208,13 +1209,15 @@ Major architectural refactor (2026-03-26):
 - `BOPAlgo_BuilderFace::PerformAreas`: loop classification via IsGrowthWire + IntTools_FClass2d
 - `BRep_CurveOnSurface`: PCurves stored per edge per surface, in edge geometric direction
 - `BRep_Builder::UpdateEdge`: in-place mutation of edge PCurves (mutable topology)
-- `BRepPrim_OneAxis`: full circles = single closed edges, parameter [0, 2π], Closed(true)
+- `BRepPrim_OneAxis`: full circles = single closed edges, parameter [0, 2π], Closed(true). Bottom face REVERSED.
 - `IntAna_QuadQuadGeo`: analytic plane-quadric intersections (circle, line, ellipse dispatch)
-- `ProjLib_Plane::Project(gp_Circ)`: circle-on-plane PCurve projection (Circle2D, same radius)
-- `BRepGProp_Gauss::Compute`: boundary-curve-guided nested volume integration (Green's theorem)
+- `ProjLib_Plane::Project(gp_Circ)`: circle-on-plane PCurve projection (Circle2D for circles, Arc2D for arcs)
+- `BRepGProp_Gauss::Compute`: unified boundary-curve Gauss integration for ALL face types (plane, cylinder, sphere, cone, etc). No dispatch by surface type.
+- `BRepGProp_Face::Bounds`: face UV bounds from BRepAdaptor_Surface (not infinite surface bounds)
 - `BRepGProp_Face::Load(Edge)`: reverses PCurve for reversed edges (`C->Reversed()`)
-- `BRepGProp_Face::Normal`: reverses Jacobian for reversed faces (`mySReverse`)
+- `BRepGProp_Face::Normal`: reverses Jacobian for reversed faces (`mySReverse`). Both corrections cancel — wire winding provides volume sign.
 - `BRepGProp_Domain`: iterates ALL boundary edges (outer + inner wires)
+- `BOPTools_AlgoTools::OrientFacesOnShell`: BFS orientation with canonicalized circle normals for edge matching
 
 ---
 
@@ -1265,30 +1268,35 @@ Key principle: **circles are single closed edges, never split into arcs.** OCCT'
 - **Both-poles tessellation**: Fan+grid+fan for full sphere faces. Matches OCCT's `BRepMesh_SphereRangeSplitter`.
 - **Plane-cylinder line FFI**: Analytic dispatch for parallel plane cases producing Line3D edges. Matches OCCT's `IntAna_QuadQuadGeo`.
 
-##### Remaining Work (9 failures, 2026-03-28)
+##### Remaining Work (2026-03-28)
 
-**RESOLVED: PCurve occurrence on flipped seam edges** — Fixed by detecting true seam edges (same edge object appearing twice) and swapping PCurve occurrence for reversed faces (`face.forward === false`). Matches OCCT's `BRep_Tool::CurveOnSurface` + `BRepGProp_Face::Load(Edge)` line 172-178. Pipe fitting, nested cylinders, and through-hole volume all pass.
+**RESOLVED in this session:**
+- **PCurve occurrence on flipped seam edges** — Detect true seam edges (same object appearing twice), swap occurrence for reversed faces. Matches OCCT `BRep_Tool::CurveOnSurface` + `BRepGProp_Face::Load(Edge)`.
+- **Negative U in boundary-curve integral** — PCurves from BuilderFace may have negative U on periodic surfaces. Added normalization: `while (u2 < BU1) u2 += uPeriod`.
+- **Circle edge normal in BFS** — Canonicalized normal direction for circle geometry keys. Matches OCCT topological edge identity.
+- **Unified volume computation** — Purged ALL non-OCCT volume methods. Single `computeFaceVolume` for all face types. Arc2D PCurves for arcs on planes. Bottom face REVERSED.
 
-**RESOLVED: Negative U in boundary-curve integral** — PCurves from BuilderFace may have negative U values on periodic surfaces (e.g., angle -0.795 instead of 5.488 on cylinder). Added normalization: `while (u2 < BU1) u2 += uPeriod`. Fixes cylinder-with-flat volume (was 73% off).
+**Low-level volume tests (`volume-computation.test.ts`)** — 14/15 passing:
+| Test | Status |
+|------|--------|
+| Box (unit, offset, 2×3×4) | ✅ 3/3 |
+| Cylinder (r=1,2,5) | ✅ 3/3 |
+| Sphere (r=1,5) | ✅ 2/2 |
+| Cone (revolve) | ✅ 1/1 |
+| Partial revolve (90°, 180°) | ✅ 2/2 |
+| Extrude along Z | ✅ 1/1 |
+| Sign consistency (cylinder, offset) | ✅ 2/2 |
+| Diagonal extrude (45°) | ❌ | PCurve issue on tilted plane side faces |
 
-**RESOLVED: Circle edge normal in BFS** — `orientFacesOnShell` BFS used full normal vector in circle geometry keys, so two faces sharing a circle with opposite plane normals (+z vs -z) weren't matched. Canonicalized normal direction (first nonzero component positive). Matches OCCT's topological edge identity matching.
+**Remaining higher-level failures** — now dominated by the volume algorithm transition (old tests calibrated to non-OCCT code). These need investigation with the new unified algorithm:
 
-| Category | Tests | What's needed |
-|----------|-------|---------------|
-| T-pipe union | 3 | Cylinder-cylinder SSI (algorithmic) |
-| Volume: sphere faces | 2 | Sphere intersect box, sphere partial — cap face sign issue (2-hemisphere sphere topology gap at equator) |
-| Sphere at corner | 1 | Multi-face intersection |
-| Counterbore | 1 | Sequential boolean shell stitching with concentric circles |
-| Non-OCCT hemisphere | 2 | Legacy 2-hemisphere tests affected by seamSplit |
-
-##### Legacy Exit Criteria Tests
-- **F1: Box − sphere (fully inside)** ✅ — all 5 tests
-- **F2: Sphere partially outside** ✅ 4/5 — volume slightly off (cap face sign)
-- **F3: Box − cylinder (through-hole)** ✅ 10/10 — all tests pass
-- **F4: L-bracket − sphere** ✅ — all 4 tests
-- **F5: Volume invariant** ✅ — all tests
-- **F6: Edge cases** ✅ — sphere outside, sphere inside
-- **F7: Known limitations** ❌ 0/2 — intersect + concave not yet supported
+| Category | What's needed |
+|----------|---------------|
+| Diagonal/offset extrude volume | PCurve accuracy on tilted planes — `buildPCurveForEdgeOnSurface` creates Line2D from projected endpoints but tilted planes may need more samples or analytic projection |
+| Boolean volume (through-hole, pipe, etc) | Re-validate with unified algorithm — some may just pass, others may need PCurve fixes |
+| T-pipe union | Cylinder-cylinder SSI (algorithmic, unrelated to volume) |
+| Counterbore | Sequential boolean shell stitching |
+| 2-hemisphere sphere tests | Need migration to OCCT 1-face sphere |
 
 ---
 
