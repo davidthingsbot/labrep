@@ -426,13 +426,14 @@ function areFacesCoplanar(faceA: Face, faceB: Face): boolean {
  */
 function coplanarSameNormal(faceA: Face, faceB: Face): boolean {
   if (faceA.surface.type !== 'plane' || faceB.surface.type !== 'plane') return false;
-  const pl = faceA.surface.plane;
-  const areaA = polygonArea2D(faceToPolygon2DRaw(faceA, pl));
-  const areaB = polygonArea2D(faceToPolygon2DRaw(faceB, pl));
-  // Effective outward direction: area sign * forward flag
-  const effectiveA = (areaA > 0) === faceA.forward;
-  const effectiveB = (areaB > 0) === faceB.forward;
-  return effectiveA === effectiveB;
+  // Effective outward normal = forward ? plane.normal : -plane.normal
+  // Two faces have the same effective outward when:
+  //   same stored normal + same forward flag, or
+  //   opposite stored normal + opposite forward flag
+  const nA = faceA.surface.plane.normal;
+  const nB = faceB.surface.plane.normal;
+  const storedSame = dot(nA, nB) > 0;
+  return (faceA.forward === faceB.forward) === storedSame;
 }
 
 /** Evaluate a surface at (u,v). */
