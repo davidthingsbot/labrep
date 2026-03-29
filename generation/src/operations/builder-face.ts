@@ -714,25 +714,32 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   // result edges that coincide with face boundary edges are not duplicated.
   // Skip if vertex pair AND curve type match. Different geometry connecting
   // OCCT ref: BOPAlgo_WireSplitter fills the SmartMap with both FORWARD and
-  // REVERSED orientations of each edge. On faces with poles (degenerate edges),
-  // split boundary sub-edges may need to be traversed in either direction.
-  // Add reverse half-edges for ALL boundary sub-edges (not original edges).
-  if (degeneratePts.length > 0) {
-    const boundaryReverse: HalfEdge[] = [];
-    for (const bhe of boundaryHalfEdges) {
-      if (bhe.startVtx === bhe.endVtx) continue;
-      // Only sub-edges (not original boundary)
-      const isOriginal = faceOuterWire(face).edges.some(oe => oe.edge === bhe.edge);
-      if (isOriginal) continue;
-      boundaryReverse.push({
-        edge: bhe.edge, forward: !bhe.forward,
-        startVtx: bhe.endVtx, endVtx: bhe.startVtx,
-        angleAtStart: 0, angleAtEnd: 0,
-        used: false, isBoundary: true, pcurveOccurrence: bhe.pcurveOccurrence,
-      });
-    }
-    boundaryHalfEdges.push(...boundaryReverse);
+  // REVERSED orientations of each edge. In OCCT the SmartMap adds each edge
+  // once per input occurrence — seam edges appear twice (both orientations),
+  // but regular boundary edges appear once (forward only).
+  //
+  // For boundary SUB-EDGES (created by splitting at intersection endpoints),
+  // add reverse half-edges so the wire tracer can traverse them in either
+  // direction at intersection junctions. Original wire edges (including seam
+  // edges, which already have both orientations) are skipped.
+  //
+  // Reverse boundary half-edges participate in the outgoing map (available
+  // during traversal) but are NOT used as trace starting points and are
+  // deprioritized during angle-based selection.
+  const boundaryReverse: HalfEdge[] = [];
+  for (const bhe of boundaryHalfEdges) {
+    if (bhe.startVtx === bhe.endVtx) continue;
+    // Skip original wire edges — only sub-edges get reverses
+    const isOriginal = faceOuterWire(face).edges.some(oe => oe.edge === bhe.edge);
+    if (isOriginal) continue;
+    boundaryReverse.push({
+      edge: bhe.edge, forward: !bhe.forward,
+      startVtx: bhe.endVtx, endVtx: bhe.startVtx,
+      angleAtStart: 0, angleAtEnd: 0,
+      used: false, isBoundary: true, pcurveOccurrence: bhe.pcurveOccurrence,
+    });
   }
+  const reverseBndSet = new Set<HalfEdge>(boundaryReverse);
 
   // the same vertices (e.g., line chord vs boundary arc) must be kept.
   const boundaryEdgePairs = new Map<string, string>(); // "v1-v2" → curve type
@@ -800,27 +807,34 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     }
   }
 
+  // Forward boundary + intersection half-edges: these can start wire traces.
   const allHalfEdges = [...boundaryHalfEdges, ...intHalfEdges];
+  // All half-edges including reverse boundary: used for angles + outgoing map.
+  const allWithReverse = [...allHalfEdges, ...boundaryReverse];
 
   // ── Compute tangent angles and start UVs ──
   // OCCT ref: Angle2D computes the angle. Coord2dVf provides the UV at the
   // start vertex for seam disambiguation. We store startUV from the vertex
   // pool, which encodes the correct seam side (u≈0 vs u≈2π).
-  for (const he of allHalfEdges) {
+  for (const he of allWithReverse) {
     he.angleAtStart = tangentAngle(he, true, surface, adapter, vertices2D);
     he.angleAtEnd = tangentAngle(he, false, surface, adapter, vertices2D);
     he.startUV = vertices2D[he.startVtx];
   }
 
   // ── Build vertex → outgoing map ──
+  // Include reverse boundary half-edges so the tracer can pick them mid-path.
   const outgoing: Map<number, HalfEdge[]> = new Map();
-  for (const he of allHalfEdges) {
+  for (const he of allWithReverse) {
     const list = outgoing.get(he.startVtx) || [];
     list.push(he);
     outgoing.set(he.startVtx, list);
   }
 
   // ── Trace wire loops ──
+  // Only start traces from forward boundary + intersection half-edges.
+  // Reverse boundary half-edges participate during traversal but never
+  // initiate a trace (prevents spurious reversed-winding boundary loops).
   const loops: HalfEdge[][] = [];
   for (const he of allHalfEdges) {
     if (he.used) continue;
@@ -917,30 +931,23 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
 
         // OCCT: Path() lines 572-583 — Coord2dVf(aE, myFace) gives the UV at
         // the candidate edge's forward vertex. Compare with aPb by 2D distance.
-        // Use stored startUV (from vertex pool, which encodes seam side) instead
-        // of recomputing from PCurve (which can give the wrong seam side for
-        // reverse boundary half-edges).
-        // OCCT: Path() lines 572-583 — seam disambiguation.
-        // Use startUV WITHOUT modulo for reverse boundary half-edges on
-        // pole-bearing faces (these can be on the wrong seam side and the
-        // modulo would hide the difference). For all other edges, use the
-        // standard modulo-based comparison.
+        // Use PCurve UV when available (standard modulo wrapping for periodic
+        // surfaces). Fall back to vertex pool startUV without modulo for edges
+        // lacking PCurves (e.g. pole sub-edges where modulo hides seam side).
         if (periodic && currentUV && cand.startVtx !== cand.endVtx) {
           let du: number, dv: number;
-          // Reverse boundary half-edges are the ones we added for pole-bearing faces.
-          // They have isBoundary=true and their edge is NOT in the original face wire.
-          const isReverseBoundary = cand.isBoundary && degeneratePts.length > 0 &&
-            !faceOuterWire(face).edges.some(oe => oe.edge === cand.edge);
-          if (isReverseBoundary && cand.startUV) {
-            du = Math.abs(cand.startUV.x - currentUV.x);
-            dv = Math.abs(cand.startUV.y - currentUV.y);
-          } else {
-            const candUV = getEdgeUV(cand.edge, surface, cand.forward, cand.pcurveOccurrence);
-            if (!candUV) { viable.push(cand); continue; }
+          const candUV = getEdgeUV(cand.edge, surface, cand.forward, cand.pcurveOccurrence);
+          if (candUV) {
             du = Math.abs(candUV.start.x - currentUV.x);
             if (adapter.isUPeriodic) du = du % adapter.uPeriod;
             if (du > adapter.uPeriod / 2) du = adapter.uPeriod - du;
             dv = Math.abs(candUV.start.y - currentUV.y);
+          } else if (cand.startUV) {
+            // No PCurve — use vertex pool UV without modulo wrapping
+            du = Math.abs(cand.startUV.x - currentUV.x);
+            dv = Math.abs(cand.startUV.y - currentUV.y);
+          } else {
+            viable.push(cand); continue;
           }
           if (du > adapter.uPeriod / 4 || dv > 0.5) continue;
         }
@@ -957,8 +964,16 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         if (interiorViable.length === 1 && lastEdge.isBoundary) {
           bestHE = interiorViable[0];
         } else {
+          // Deprioritize reverse boundary sub-edges: only consider them
+          // when no forward alternative exists at this vertex. This
+          // prevents the clockwise angle selection from picking a reverse
+          // boundary edge over the correct forward path.
+          let candidates = viable;
+          const nonReverse = viable.filter(h => !reverseBndSet.has(h));
+          if (nonReverse.length > 0) candidates = nonReverse;
+
           let bestAngle = Infinity;
-          for (const cand of viable) {
+          for (const cand of candidates) {
             const cw = clockwiseAngle(lastEdge.angleAtEnd, cand.angleAtStart);
             if (cw < bestAngle) { bestAngle = cw; bestHE = cand; }
           }

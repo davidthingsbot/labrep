@@ -537,3 +537,149 @@ describe('BuilderFace: sphere hemisphere with 3 octant arcs', () => {
     }
   });
 });
+
+// ═══════════════════════════════════════════════
+// REVERSE BOUNDARY SUB-EDGE BEHAVIOR
+// ═══════════════════════════════════════════════
+// OCCT ref: BOPAlgo_WireSplitter SmartMap pattern. Boundary sub-edges (created
+// by splitting at intersection endpoints) get both forward and reverse
+// half-edges. Original wire edges keep forward-only orientation. Reverse
+// sub-edges participate in traversal but are deprioritized during angle
+// selection and never initiate traces.
+
+describe('BuilderFace: reverse boundary sub-edge behavior', () => {
+  it('forward path preferred over reverse at intersection vertex (planar)', () => {
+    // Two meeting edges on a 4×4 rectangle form an L-split.
+    // At the intersection vertex, both forward and reverse boundary sub-edges
+    // exist. The tracer must prefer the forward path to produce exactly 2 faces.
+    const face = makeRectFace(-1, -1, 3, 3);
+    const edge1 = lineEdge(2, -1, 2, 2, face.surface);
+    const edge2 = lineEdge(2, 2, -1, 2, face.surface);
+
+    const result = builderFace(face, [edge1, edge2]);
+    expect(result.length).toBe(2);
+
+    const areas = result.map(faceArea);
+    expect(areas[0] + areas[1]).toBeCloseTo(16, 0);
+    // L-shape (area 7) + rectangle (area 9) — min must be 7
+    expect(Math.min(...areas)).toBeCloseTo(7, 0);
+    for (const f of result) {
+      expect(f.outerWire.isClosed).toBe(true);
+    }
+  });
+
+  it('single line split: no spurious faces from reverse sub-edges', () => {
+    // Even with reverse boundary sub-edges available in the outgoing map,
+    // the tracer must produce exactly 2 faces (no extra reversed loops).
+    const face = makeRectFace(0, 0, 6, 4);
+    const splitEdge = lineEdge(3, 0, 3, 4, face.surface);
+
+    const result = builderFace(face, [splitEdge]);
+    expect(result.length).toBe(2);
+
+    const areas = result.map(faceArea);
+    expect(areas[0] + areas[1]).toBeCloseTo(24, 0);
+    expect(Math.min(...areas)).toBeCloseTo(12, 0);
+  });
+
+  it('crossing lines: 4 faces with reverse sub-edges at cross vertex', () => {
+    // Two crossing lines create 4 sub-edges at the cross point.
+    // Each boundary edge through the cross point has reverse sub-edges.
+    // The tracer must still produce exactly 4 faces.
+    const face = makeRectFace(0, 0, 4, 4);
+    const result = builderFace(face, [
+      lineEdge(2, 0, 2, 4, face.surface),
+      lineEdge(0, 2, 4, 2, face.surface),
+    ]);
+    expect(result.length).toBe(4);
+    for (const f of result) {
+      expect(f.outerWire.isClosed).toBe(true);
+      expect(faceArea(f)).toBeCloseTo(4, 0);
+    }
+  });
+
+  it('diagonal split: unsplit boundary edges have no reverses', () => {
+    // Diagonal split connects two boundary vertices directly. The boundary
+    // edges meeting at those vertices are NOT split (the intersection endpoint
+    // coincides with the boundary vertex). So no reverse sub-edges exist for
+    // those edges. The tracer produces exactly 2 triangles.
+    const face = makeRectFace(0, 0, 4, 4);
+    const result = builderFace(face, [lineEdge(0, 0, 4, 4, face.surface)]);
+    expect(result.length).toBe(2);
+    for (const f of result) {
+      expect(faceArea(f)).toBeCloseTo(8, 0);
+    }
+  });
+
+  it('sphere hemisphere: seam edges keep forward-only (no ear loops)', () => {
+    // On a sphere hemisphere, seam edges already have both orientations in
+    // the boundary wire. The isOriginal filter prevents adding reverses for
+    // them, which would create spurious "ear" loops (seam up + degen at pole
+    // + seam reverse down).
+    const { faces } = makeSphereHemispheres(1.5);
+    const topHemi = faces.filter(f => f.surface.type === 'sphere').find(f => {
+      return f.outerWire.edges.some(oe => {
+        if (oe.edge.degenerate) return false;
+        return edgeStartPoint(oe.edge).z > 0.1 || edgeEndPoint(oe.edge).z > 0.1;
+      });
+    })!;
+    expect(topHemi).toBeDefined();
+
+    // Arc from equator to pole — splits hemisphere into 2
+    const arcPlane = plane(point3d(0, 0, 0), vec3d(1, 0, 0), vec3d(0, 1, 0));
+    const arc = makeArc3D(arcPlane, 1.5, 0, Math.PI / 2).result!;
+    const edge = makeEdgeFromCurve(arc).result!;
+    const pc = buildPCurveForEdgeOnSurface(edge, topHemi.surface, true);
+    if (pc) addPCurveToEdge(edge, pc);
+
+    const result = builderFace(topHemi, [edge]);
+    expect(result.length).toBe(2);
+    for (const f of result) {
+      expect(f.outerWire.isClosed).toBe(true);
+      const nonDegen = f.outerWire.edges.filter(oe => !oe.edge.degenerate);
+      expect(nonDegen.length).toBeGreaterThan(1);
+    }
+  });
+
+  it('extruded face L-split: reverse sub-edges with real extrude geometry', () => {
+    // Uses actual extruded box face (not hand-made rectangle) to verify
+    // reverse sub-edges work with real pipeline geometry where the surface
+    // may have a non-standard orientation.
+    const hw = 2, hh = 2;
+    const corners = [
+      point3d(1 - hw, 1 - hh, 1), point3d(1 + hw, 1 - hh, 1),
+      point3d(1 + hw, 1 + hh, 1), point3d(1 - hw, 1 + hh, 1),
+    ];
+    const bEdges = corners.map((c, i) =>
+      makeEdgeFromCurve(makeLine3D(c, corners[(i + 1) % 4]).result!).result!,
+    );
+    const wire = makeWireFromEdges(bEdges).result!;
+    const extResult = extrude(wire, vec3d(0, 0, 1), 4);
+    expect(extResult.success).toBe(true);
+
+    const faces = shellFaces(extResult.result!.solid.outerShell);
+    const bottomFace = faces.find(f => {
+      if (f.surface.type !== 'plane') return false;
+      const verts = f.outerWire.edges.map(oe => edgeStartPoint(oe.edge));
+      return verts.every(v => Math.abs(v.z - 1) < 0.01);
+    })!;
+    expect(bottomFace).toBeDefined();
+
+    const edge1 = makeEdgeFromCurve(makeLine3D(
+      point3d(2, -1, 1), point3d(2, 2, 1),
+    ).result!).result!;
+    const pc1 = buildPCurveForEdgeOnSurface(edge1, bottomFace.surface, true);
+    if (pc1) addPCurveToEdge(edge1, pc1);
+    const edge2 = makeEdgeFromCurve(makeLine3D(
+      point3d(2, 2, 1), point3d(-1, 2, 1),
+    ).result!).result!;
+    const pc2 = buildPCurveForEdgeOnSurface(edge2, bottomFace.surface, true);
+    if (pc2) addPCurveToEdge(edge2, pc2);
+
+    const result = builderFace(bottomFace, [edge1, edge2]);
+    expect(result.length).toBe(2);
+    const areas = result.map(faceArea);
+    expect(areas[0] + areas[1]).toBeCloseTo(16, 0);
+    expect(Math.min(...areas)).toBeCloseTo(7, 0);
+  });
+});
