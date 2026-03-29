@@ -19,6 +19,7 @@ import { solidVolume } from '../../src/topology/solid';
 import { evaluateCurve2D as evaluateCurve2DHelper } from '../../src/topology/pcurve';
 import { extrude } from '../../src/operations/extrude';
 import { revolve } from '../../src/operations/revolve';
+import { booleanSubtract } from '../../src/operations/boolean';
 
 // ═══════════════════════════════════════════════════════
 // PRIMITIVE SOLIDS — known exact volumes
@@ -222,3 +223,45 @@ function makeSphere(r: number) {
     makeEdgeFromCurve(arc).result!, makeEdgeFromCurve(line).result!,
   ]).result!, Z_AXIS_3D, 2 * Math.PI).result!;
 }
+
+// ═══════════════════════════════════════════════════════
+// REVERSED FACE VOLUME — the seam occurrence test
+//
+// When booleanSubtract creates a cavity, the subtracted face is reversed
+// (forward=false). The volume computation must handle seam PCurve selection
+// correctly for reversed faces from BOTH extrude (occ 0=U=2π) and
+// revolve (occ 0=U=0) surfaces.
+// ═══════════════════════════════════════════════════════
+
+describe('volume: box minus sphere (reversed revolve face)', () => {
+  it('sphere cavity subtracts volume correctly', () => {
+    const box = makeBox(0, 0, -5, 10, 10, 10);
+    const sphere = makeSphere(2);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    const vol = solidVolume(result.result!.solid);
+    const expected = 1000 - (4 / 3) * Math.PI * 8;
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.02);
+  });
+
+  it('reversed sphere face has forward=false', () => {
+    const box = makeBox(0, 0, -5, 10, 10, 10);
+    const sphere = makeSphere(2);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    const faces = shellFaces(result.result!.solid.outerShell);
+    const sphereFaces = faces.filter(f => f.surface.type === 'sphere');
+    expect(sphereFaces.length).toBe(1);
+    expect(sphereFaces[0].forward).toBe(false);
+  });
+
+  it('larger sphere r=3: still correct', () => {
+    const box = makeBox(0, 0, -5, 10, 10, 10);
+    const sphere = makeSphere(3);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    const vol = solidVolume(result.result!.solid);
+    const expected = 1000 - (4 / 3) * Math.PI * 27;
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.02);
+  });
+});

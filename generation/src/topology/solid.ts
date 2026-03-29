@@ -155,12 +155,30 @@ function computeFaceVolume(face: Face): number {
   for (const oe of allEdges) {
     if (oe.edge.degenerate) continue;
 
-    // PCurve selection — OCCT BRep_Tool::CurveOnSurface + seam occurrence
+    // PCurve selection — OCCT BRep_Tool::CurveOnSurface + seam occurrence.
+    // For forward faces, rawOcc pairs each visit with the correct PCurve
+    // regardless of storage order.
+    // For reversed faces (flipFace reverses wire but not PCurve order), we
+    // swap occurrences ONLY when occ 0 is the "far" PCurve (U≈period,
+    // nonzero integral). This handles both extrude (occ 0=U=2π → swap)
+    // and revolve (occ 0=U=0 → no swap) without depending on storage order.
     const rawOcc = edgeSeen.get(oe.edge) || 0;
     edgeSeen.set(oe.edge, rawOcc + 1);
-    const isTrueSeam = (edgeAppearances.get(oe.edge) || 0) >= 2;
-    const targetOcc = (isTrueSeam && face.forward === false)
-      ? (1 - rawOcc) : rawOcc;
+
+    const matchingPCs: any[] = [];
+    for (const p of oe.edge.pcurves) {
+      if (p.surface === surface) matchingPCs.push(p);
+    }
+
+    let targetOcc = rawOcc;
+    if (face.forward === false && matchingPCs.length >= 2) {
+      const midU0 = evaluateCurve2D(matchingPCs[0].curve2d,
+        (matchingPCs[0].curve2d.startParam + matchingPCs[0].curve2d.endParam) / 2).x;
+      const farFromBU1 = Math.abs(midU0 - BU1) > (adapter.isUPeriodic ? adapter.uPeriod / 4 : 1);
+      if (farFromBU1) {
+        targetOcc = 1 - rawOcc;
+      }
+    }
 
     let pcIdx = 0;
     let pc = null as any;

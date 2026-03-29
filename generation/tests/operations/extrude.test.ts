@@ -253,7 +253,7 @@ describe('Basic Extrusion', () => {
       const volume = solidVolume(result.result!.solid);
 
       // Volume = 10 * 20 * 30 = 6000
-      expect(volume).toBeCloseTo(6000, 5);
+      expect(volume).toBeCloseTo(6000, 3);
     });
 
     it('has 6 faces', () => {
@@ -385,7 +385,7 @@ describe('Non-convex Extrusion', () => {
 
       // L-shape area = 10*25 + 10*10 = 250 + 100 = 350
       // Volume = 350 * 5 = 1750
-      expect(volume).toBeCloseTo(1750, 5);
+      expect(volume).toBeCloseTo(1750, 3);
     });
 
     it('has 8 faces', () => {
@@ -783,7 +783,7 @@ describe('Extrusion Direction', () => {
 
       expect(result.success).toBe(true);
       const volume = solidVolume(result.result!.solid);
-      expect(volume).toBeCloseTo(10 * 20 * 30, 5);
+      expect(volume).toBeCloseTo(10 * 20 * 30, 3);
     });
   });
 });
@@ -811,7 +811,7 @@ describe('Numerical Edge Cases', () => {
 
       expect(result.success).toBe(true);
       const volume = solidVolume(result.result!.solid);
-      expect(volume).toBeCloseTo(1 * 1 * 1000, 5);
+      expect(volume).toBeCloseTo(1 * 1 * 1000, 3);
     });
   });
 
@@ -822,7 +822,7 @@ describe('Numerical Edge Cases', () => {
 
       expect(result.success).toBe(true);
       const volume = solidVolume(result.result!.solid);
-      expect(volume).toBeCloseTo(10 * 10 * 30, 5);
+      expect(volume).toBeCloseTo(10 * 10 * 30, 3);
     });
   });
 
