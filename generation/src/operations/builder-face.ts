@@ -37,6 +37,7 @@ export interface HalfEdge {
   used: boolean;
   isBoundary: boolean;
   pcurveOccurrence: number;  // Which PCurve to use (0=first, 1=second for seam edges)
+  startUV?: Pt2;  // UV at start vertex (OCCT Coord2dVf equivalent for seam filter)
 }
 
 // ═══════════════════════════════════════════════
@@ -801,10 +802,14 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
 
   const allHalfEdges = [...boundaryHalfEdges, ...intHalfEdges];
 
-  // ── Compute tangent angles ──
+  // ── Compute tangent angles and start UVs ──
+  // OCCT ref: Angle2D computes the angle. Coord2dVf provides the UV at the
+  // start vertex for seam disambiguation. We store startUV from the vertex
+  // pool, which encodes the correct seam side (u≈0 vs u≈2π).
   for (const he of allHalfEdges) {
     he.angleAtStart = tangentAngle(he, true, surface, adapter, vertices2D);
     he.angleAtEnd = tangentAngle(he, false, surface, adapter, vertices2D);
+    he.startUV = vertices2D[he.startVtx];
   }
 
   // ── Build vertex → outgoing map ──
@@ -910,19 +915,32 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         // Prevent immediate U-turn on same edge
         if (cand.edge === lastEdge.edge && cand.forward !== lastEdge.forward) continue;
 
-        // Seam disambiguation (OCCT: Path() lines 572-583)
-        // Skip edges whose PCurve start UV is far from the current UV position.
-        // Exception: self-loop edges (closed curves) span the full U range and
-        // should never be filtered — they're valid from either seam side.
+        // OCCT: Path() lines 572-583 — Coord2dVf(aE, myFace) gives the UV at
+        // the candidate edge's forward vertex. Compare with aPb by 2D distance.
+        // Use stored startUV (from vertex pool, which encodes seam side) instead
+        // of recomputing from PCurve (which can give the wrong seam side for
+        // reverse boundary half-edges).
+        // OCCT: Path() lines 572-583 — seam disambiguation.
+        // On faces with poles (reverse boundary half-edges exist), use startUV
+        // from the vertex pool WITHOUT periodic modulo — the UV encodes the seam
+        // side directly. On other periodic faces (cylinders), use PCurve-based UV
+        // WITH modulo wrapping for proper periodic handling.
         if (periodic && currentUV && cand.startVtx !== cand.endVtx) {
-          const candUV = getEdgeUV(cand.edge, surface, cand.forward, cand.pcurveOccurrence);
-          if (candUV) {
-            let du = Math.abs(candUV.start.x - currentUV.x);
+          let du: number, dv: number;
+          if (degeneratePts.length > 0 && cand.startUV) {
+            // Vertex pool UV — no modulo (seam side encoded)
+            du = Math.abs(cand.startUV.x - currentUV.x);
+            dv = Math.abs(cand.startUV.y - currentUV.y);
+          } else {
+            // PCurve UV with periodic wrapping
+            const candUV = getEdgeUV(cand.edge, surface, cand.forward, cand.pcurveOccurrence);
+            if (!candUV) { viable.push(cand); continue; }
+            du = Math.abs(candUV.start.x - currentUV.x);
             if (adapter.isUPeriodic) du = du % adapter.uPeriod;
             if (du > adapter.uPeriod / 2) du = adapter.uPeriod - du;
-            const dv = Math.abs(candUV.start.y - currentUV.y);
-            if (du > adapter.uPeriod / 4 || dv > 0.5) continue; // Wrong seam side
+            dv = Math.abs(candUV.start.y - currentUV.y);
           }
+          if (du > adapter.uPeriod / 4 || dv > 0.5) continue;
         }
 
         viable.push(cand);
