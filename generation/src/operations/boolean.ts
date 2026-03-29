@@ -383,13 +383,10 @@ function flipFace(face: Face): OperationResult<Face> {
     if (iwResult.success) flippedInnerWires.push(iwResult.result!);
   }
 
-  if (face.surface.type === 'plane') {
-    const p = face.surface.plane;
-    const flippedPlane = plane(p.origin, vec3d(-p.normal.x, -p.normal.y, -p.normal.z), p.xAxis);
-    const flippedSurface = makePlaneSurface(flippedPlane);
-    return makeFace(flippedSurface, wireResult.result!, flippedInnerWires);
-  }
-
+  // OCCT ref: TopoDS_Shape::Reverse() only flips the orientation flag.
+  // It NEVER creates a new surface — the same surface, PCurves, and edges
+  // are reused. The forward flag tells downstream code how to interpret
+  // the surface normal direction.
   return makeFace(face.surface, wireResult.result!, flippedInnerWires, !face.forward);
 }
 

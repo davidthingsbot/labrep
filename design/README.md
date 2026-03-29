@@ -1106,7 +1106,7 @@ App Examples:
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Status (2026-03-28):** OCCT-aligned boolean pipeline. 1395/1412 tests passing. Through-hole (box−cylinder), spherical pocket, spherical cavity, mounting plate all work end-to-end. Sphere is OCCT 1-face with both-pole tessellation. OCCT boundary-curve volume integration (BRepGProp_Gauss) implemented for trimmed curved faces. 5 volume regressions from PCurve occurrence issue on flipped seam edges (see Remaining Work).
+**Status (2026-03-28):** OCCT-aligned boolean pipeline. 1424/1440 tests passing (12 remaining). Volume computation fully OCCT-aligned: unified boundary-curve Gauss integration with order-independent seam PCurve selection by edge orientation. Diagonal extrusion, reversed sphere/cylinder cavities all correct. Through-hole, spherical pocket, mounting plate all work end-to-end.
 
 **Architecture:**
 
@@ -1134,8 +1134,15 @@ booleanOperation(A, B, op)
   │   ├─ IsInternalFace: intersection-edge binormal + nudge test
   │   └─ Fallback: farthest-edge midpoint, then centroid + normal nudge
   ├─ Stage 5: Select faces per operation rules
-  ├─ Stage 6: Orient faces on shell (BFS edge-winding consistency)
-  └─ Stage 7: Stitch edges and assemble
+  ├─ Stage 6: IsSplitToReverse orientation (OCCT BOPTools_AlgoTools)
+  │   ├─ Each split face compared against its original parent face
+  │   ├─ Same surface: compare forward flags
+  │   └─ Different surface: compare effective normals at sample point
+  ├─ Stage 7: Edge sharing (OCCT CommonBlock equivalent)
+  │   ├─ Merge coincident edges from different solids into shared objects
+  │   ├─ Copy PCurves from duplicate to canonical edge
+  │   └─ Set oe.forward for manifold: opposite directions in adjacent faces
+  └─ Stage 8: Assemble shell and solid
 ```
 
 **Why this matters:** The old approach had ~15 special-case functions (`splitFaceByAllFaces`, `splitPlanarFaceByCircle`, `splitPlanarFaceByPartialCircle`, `trimCurvedFaceByPlanes`, `buildTrimmedCurvedFace`, etc.). Every new surface type (fillets = torus, BSpline sweeps, etc.) would need new code. The general approach handles any surface pair through the same FFI → BuilderFace path. Adding a new surface type means implementing `evaluate`, `normal`, and `projectTo*Surface` — the boolean pipeline just works.
@@ -1213,6 +1220,30 @@ Major architectural refactor (2026-03-26):
 - `IntAna_QuadQuadGeo`: analytic plane-quadric intersections (circle, line, ellipse dispatch)
 - `ProjLib_Plane::Project(gp_Circ)`: circle-on-plane PCurve projection (Circle2D for circles, Arc2D for arcs)
 - `BRepGProp_Gauss::Compute`: unified boundary-curve Gauss integration for ALL face types (plane, cylinder, sphere, cone, etc). No dispatch by surface type.
+- `BOPTools_AlgoTools::IsSplitToReverse`: face orientation by normal comparison against original face (NOT BFS edge-winding)
+- `BRep_Tool::CurveOnSurface`: seam PCurve selection by edge orientation (FORWARD → occ 0, REVERSED → occ 1)
+- `BOPDS_CommonBlock`: topological edge sharing between faces from different solids (replaces coordinate-based stitching)
+
+**Volume computation fixes (2026-03-28):**
+- **Plane yAxis = extrusion direction**: `canonicalizeExtrusionSurface` uses `xAxis = cross(direction, normal)` (OCCT gp_Ax2 double cross product) so V=0..dist matches extrusion parametrization. Fixes diagonal extrude volume (was off by 1/√2).
+- **Order-independent seam PCurve selection**: True seam edges (same object 2x in wire) use farFromBU1 detection to swap occurrence for reversed faces. Works for both extrude (occ 0=U=2π) and revolve (occ 0=U=0). Split seam edges (from boolean, separate objects) use rawOcc=0.
+- **Seam PCurve by edge orientation**: For `computeFaceVolume`, seam PCurve selected by `oe.forward` (OCCT `BRep_Tool::CurveOnSurface` line 342). No `face.forward`-based swapping.
+- **BU1 sampling for closed curves**: BU1 computed by sampling N=8 points along each PCurve (not just start/end). Inner wires included. Fixes closed-curve extrema missed by start=end.
+- **Coplanar normal comparison**: `coplanarSameNormal` compares effective outward normals via `forward` flags and plane normal dot product (not polygon area sign). Fixes stacked-box union.
+
+**Remaining: BuilderFace winding + IsSplitToReverse (next):**
+
+The BFS `orientFacesOnShell` overcorrects: it flips bottom caps (intentionally `forward=false`) which creates new plane surfaces, breaking PCurve references. This causes annular caps in pipe fittings to contribute zero volume (1/3 error).
+
+OCCT uses `IsSplitToReverse` (normal comparison against original face) instead of BFS. This requires:
+1. **BuilderFace winding fix**: Sub-faces from `builderFace` must preserve the parent face's edge winding so that shared intra-solid edges have opposite `oe.forward` in adjacent sub-faces. Currently, builderFace produces sub-faces with same-direction shared edges — the BFS masked this bug.
+2. **IsSplitToReverse**: Replace BFS with per-face normal comparison against original. Track `original` face through the split/classify/select pipeline. OCCT ref: `BOPAlgo_Builder_3::BuildDraftSolid` calls `IsSplitToReverse` per face.
+3. **Edge sharing**: Merge coincident edges from different solids into shared objects (OCCT `CommonBlock`). Copy PCurves, set opposite `oe.forward`.
+
+OCCT refs:
+- `BOPAlgo_BuilderFace::PerformLoops` (wire tracing preserves winding via angle-based next-edge selection)
+- `BOPTools_AlgoTools::IsSplitToReverse` (BOPTools_AlgoTools.cxx:1286-1388)
+- `BOPDS_CommonBlock` + `BOPAlgo_PaveFiller_6::MakeBlocks` (edge sharing)
 - `BRepGProp_Face::Bounds`: face UV bounds from BRepAdaptor_Surface (not infinite surface bounds)
 - `BRepGProp_Face::Load(Edge)`: reverses PCurve for reversed edges (`C->Reversed()`)
 - `BRepGProp_Face::Normal`: reverses Jacobian for reversed faces (`mySReverse`). Both corrections cancel — wire winding provides volume sign.
