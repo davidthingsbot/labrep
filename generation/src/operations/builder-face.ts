@@ -572,13 +572,14 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         }
 
         // OCCT ref: FillPaves uses 2D curve intersection to determine split UVs.
-        // For hit points (intersection edge endpoints) on faces with poles, use
-        // the intersection edge's PCurve UV — linear interpolation from the boundary
-        // PCurve gives wrong UV when the circle's geometric direction is flipped.
-        // On cylinder faces (no poles), linear interpolation works correctly.
-        const usePCurveUV = degeneratePts.length > 0;
+        // Use the intersection edge's PCurve UV for hit points UNLESS the boundary
+        // edge being split is a seam edge (which has correct constant-U interpolation).
+        // Seam edges have constant U throughout their PCurve; overriding with the
+        // intersection edge's UV (which may span the full U range) would break the
+        // seam-side PCurve.
+        const isSeamBoundary = Math.abs(edgeStartUV.x - edgeEndUV.x) < 0.01;
         let sUV: Pt2;
-        if (usePCurveUV && i > 0 && i - 1 < hitsOnEdge.length) {
+        if (!isSeamBoundary && i > 0 && i - 1 < hitsOnEdge.length) {
           const hitPt = hitsOnEdge[i - 1].pt3d;
           const hitUV = getIntEndpointUV(hitPt, splitEdges, surface, adapter);
           sUV = hitUV ?? {
@@ -592,7 +593,7 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
           };
         }
         let eUV: Pt2;
-        if (usePCurveUV && i + 1 > 0 && i + 1 - 1 < hitsOnEdge.length) {
+        if (!isSeamBoundary && i + 1 > 0 && i + 1 - 1 < hitsOnEdge.length) {
           const hitPt = hitsOnEdge[i + 1 - 1].pt3d;
           const hitUV = getIntEndpointUV(hitPt, splitEdges, surface, adapter);
           eUV = hitUV ?? {
