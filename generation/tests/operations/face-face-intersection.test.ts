@@ -10,8 +10,8 @@
 import { describe, it, expect } from 'vitest';
 import { point3d, vec3d, plane, distance, Z_AXIS_3D } from '../../src/core';
 import { makeLine3D } from '../../src/geometry/line3d';
-import { makeArc3D } from '../../src/geometry/arc3d';
-import { makeCircle3D } from '../../src/geometry/circle3d';
+import { makeArc3D, evaluateArc3D } from '../../src/geometry/arc3d';
+import { makeCircle3D, evaluateCircle3D } from '../../src/geometry/circle3d';
 import { makeEdgeFromCurve, edgeStartPoint, edgeEndPoint } from '../../src/topology/edge';
 import { makeWire, makeWireFromEdges, orientEdge } from '../../src/topology/wire';
 import { shellFaces } from '../../src/topology/shell';
@@ -252,6 +252,86 @@ describe('FFI: Analytic edge dispatch', () => {
       const r = (result!.edges[0].edge.curve as any).radius;
       expect(r).toBeCloseTo(0.5, 1);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════
+// PLANE-SPHERE: HEMISPHERE DISCRIMINATION
+// (OCCT ref: GeomInt_LineConstructor::TreatCircle
+//  classifies arc midpoints in UV against both face domains)
+// ═══════════════════════════════════════════════
+
+describe('FFI: Plane-Sphere hemisphere clipping', () => {
+  // Sphere at origin, R=1.5, two hemisphere faces split at z=0 equator.
+  // Box from (0,0,0) to (4,4,4). The x=0 box face intersects the sphere.
+  // The intersection is a great circle in the YZ plane.
+  // Only the upper hemisphere (z≥0) portion is within the box face (z∈[0,4]).
+  // FFI(x=0 face, upper hemisphere) should produce an arc.
+  // FFI(x=0 face, lower hemisphere) should produce NO arc (arc is at z>0).
+
+  const sphere = makeSphere(1.5);
+  const sphereFaces = shellFaces(sphere.solid.outerShell);
+  // The sphere has 2 faces (upper and lower hemispheres from revolving 2 quarter-arcs).
+  // Identify them by sampling boundary edge midpoints — seam edges go from equator
+  // to pole, so their midpoint reveals which hemisphere the face belongs to.
+  function faceMaxZ(f: typeof sphereFaces[0]): number {
+    let maxZ = -Infinity;
+    for (const oe of f.outerWire.edges) {
+      if (oe.edge.degenerate) continue;
+      const c = oe.edge.curve;
+      // Sample at midpoint of the curve
+      const t = (c.startParam + c.endParam) / 2;
+      let pt: ReturnType<typeof edgeStartPoint> | null = null;
+      if (c.type === 'arc3d') pt = evaluateArc3D(c, t);
+      else if (c.type === 'circle3d') pt = evaluateCircle3D(c, t);
+      else { pt = edgeStartPoint(oe.edge); }
+      if (pt && pt.z > maxZ) maxZ = pt.z;
+    }
+    return maxZ;
+  }
+  // Upper hemisphere has points up to z=1.5 (pole), lower has points down to z=-1.5
+  const sorted = [...sphereFaces].sort((a, b) => faceMaxZ(b) - faceMaxZ(a));
+  const upperHemi = sorted[0];
+  const lowerHemi = sorted[1];
+
+  // Build a planar face at x=0 that covers y∈[0,4], z∈[0,4]
+  // (Use the x=0 face from a box starting at origin)
+  const box = makeBox(2, 2, 0, 4, 4, 4); // box from (0,0,0) to (4,4,4)
+  const boxFaces = shellFaces(box.solid.outerShell);
+  const xFace = boxFaces.find(f => {
+    if (f.surface.type !== 'plane') return false;
+    const verts = f.outerWire.edges.map(oe => edgeStartPoint(oe.edge));
+    return verts.every(v => Math.abs(v.x) < 0.01);
+  })!;
+
+  it('upper hemisphere + x=0 plane → arc in first octant', () => {
+    expect(upperHemi).toBeDefined();
+    expect(xFace).toBeDefined();
+
+    const result = intersectFaceFace(xFace, upperHemi);
+    expect(result).not.toBeNull();
+    expect(result!.edges.length).toBeGreaterThanOrEqual(1);
+
+    // Arc endpoints should be on the sphere (distance from origin ≈ 1.5)
+    // and at z≥0 (upper hemisphere)
+    for (const ffiEdge of result!.edges) {
+      const sp = edgeStartPoint(ffiEdge.edge);
+      const ep = edgeEndPoint(ffiEdge.edge);
+      expect(sp.z).toBeGreaterThanOrEqual(-0.01);
+      expect(ep.z).toBeGreaterThanOrEqual(-0.01);
+      expect(Math.abs(sp.x)).toBeLessThan(0.01); // on x=0 plane
+    }
+  });
+
+  it('lower hemisphere + x=0 plane → NO arc (intersection is above equator)', () => {
+    expect(lowerHemi).toBeDefined();
+    expect(xFace).toBeDefined();
+
+    const result = intersectFaceFace(xFace, lowerHemi);
+    // The x=0 box face covers z∈[0,4]. The lower hemisphere covers z∈[-1.5, 0].
+    // The intersection arc would be at z>0 — outside the lower hemisphere.
+    // FFI should produce null or empty.
+    expect(!result || result.edges.length === 0).toBe(true);
   });
 });
 

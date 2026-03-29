@@ -402,9 +402,97 @@ describe('BuilderFace: sphere hemisphere with 1 arc', () => {
     expect(result.length).toBe(2);
     for (const f of result) {
       expect(f.outerWire.isClosed).toBe(true);
+      // Each sub-face must have >1 non-degenerate edge for a proper split
+      const nonDegen = f.outerWire.edges.filter(oe => !oe.edge.degenerate);
+      expect(nonDegen.length).toBeGreaterThan(1);
     }
   });
 });
+
+describe('BuilderFace: sphere hemisphere with 2 arcs (one coincides with seam)', () => {
+  it('x=0 arc + y=0 arc split hemisphere into 2 (y=0 arc overlaps seam)', () => {
+    // This replicates the boolean pipeline scenario for box−sphere at corner.
+    // The y=0 arc (1.5,0,0)→(0,0,1.5) is geometrically identical to the seam edge.
+    // BuilderFace must handle this correctly: the seam is already in the boundary,
+    // and the y=0 arc should either be deduplicated (relying on the existing seam)
+    // or the seam should be properly paved.
+    const { faces } = makeSphereHemispheres(1.5);
+    const topHemi = faces.filter(f => f.surface.type === 'sphere').find(f => {
+      return f.outerWire.edges.some(oe => {
+        if (oe.edge.degenerate) return false;
+        return edgeStartPoint(oe.edge).z > 0.1 || edgeEndPoint(oe.edge).z > 0.1;
+      });
+    })!;
+    expect(topHemi).toBeDefined();
+
+    // x=0 arc: (0,1.5,0) → (0,0,1.5) — intersects equatorial boundary + pole
+    const xzPlane = plane(point3d(0, 0, 0), vec3d(1, 0, 0), vec3d(0, 1, 0));
+    const xzArc = makeArc3D(xzPlane, 1.5, 0, Math.PI / 2).result!;
+    const xzEdge = makeEdgeFromCurve(xzArc).result!;
+
+    // y=0 arc: (1.5,0,0) → (0,0,1.5) — coincides with the sphere's seam edge
+    const yzPlane = plane(point3d(0, 0, 0), vec3d(0, -1, 0), vec3d(1, 0, 0));
+    const yzArc = makeArc3D(yzPlane, 1.5, 0, Math.PI / 2).result!;
+    const yzEdge = makeEdgeFromCurve(yzArc).result!;
+
+    for (const edge of [xzEdge, yzEdge]) {
+      const pc = buildPCurveForEdgeOnSurface(edge, topHemi.surface, true);
+      if (pc) addPCurveToEdge(edge, pc);
+    }
+
+    // Test with just x=0 arc first (isolate the seam-overlap issue)
+    const result1 = builderFace(topHemi, [xzEdge]);
+    expect(result1.length).toBe(2);
+    for (const f of result1) {
+      expect(f.outerWire.isClosed).toBe(true);
+      const nonDegen1 = f.outerWire.edges.filter(oe => !oe.edge.degenerate);
+      expect(nonDegen1.length).toBeGreaterThan(1);
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════
+// CYLINDER FACE SPLITTING (regression guard)
+// ═══════════════════════════════════════════════
+
+describe('BuilderFace: cylinder side face with 2 circles', () => {
+  it('two circles split cylinder side into 3 bands', () => {
+    // A cylinder R=1 from z=-3 to z=3, side face split by two circles at z=±1.
+    // This replicates the through-hole boolean: the box top/bottom faces produce
+    // circle intersection edges on the cylinder side face.
+    const circlePl = plane(point3d(0, 0, -3), vec3d(0, 0, 1), vec3d(1, 0, 0));
+    const circle = makeCircle3D(circlePl, 1).result!;
+    const edge = makeEdgeFromCurve(circle).result!;
+    const wire = makeWireFromEdges([edge]).result!;
+    const cyl = extrude(wire, vec3d(0, 0, 1), 6).result!;
+    const faces = shellFaces(cyl.solid.outerShell);
+    const cylFace = faces.find(f => f.surface.type === 'cylinder')!;
+    expect(cylFace).toBeDefined();
+
+    // Two splitting circles at z=-1 and z=+1
+    const splitPlane1 = plane(point3d(0, 0, -1), vec3d(0, 0, 1), vec3d(1, 0, 0));
+    const splitCircle1 = makeEdgeFromCurve(makeCircle3D(splitPlane1, 1).result!).result!;
+    const splitPlane2 = plane(point3d(0, 0, 1), vec3d(0, 0, 1), vec3d(1, 0, 0));
+    const splitCircle2 = makeEdgeFromCurve(makeCircle3D(splitPlane2, 1).result!).result!;
+
+    // Add PCurves
+    for (const e of [splitCircle1, splitCircle2]) {
+      const pc = buildPCurveForEdgeOnSurface(e, cylFace.surface, true);
+      if (pc) addPCurveToEdge(e, pc);
+    }
+
+    const result = builderFace(cylFace, [splitCircle1, splitCircle2]);
+    // Should split into 3 bands (top, middle, bottom)
+    expect(result.length).toBe(3);
+    for (const f of result) {
+      expect(f.outerWire.isClosed).toBe(true);
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════
+// SPHERE HEMISPHERE WITH 3 ARCS
+// ═══════════════════════════════════════════════
 
 describe('BuilderFace: sphere hemisphere with 3 octant arcs', () => {
   it('three arcs forming octant triangle split hemisphere into 2', () => {

@@ -27,7 +27,7 @@ const TOL = 1e-6;
 
 type Pt2 = { x: number; y: number };
 
-interface HalfEdge {
+export interface HalfEdge {
   edge: Edge;
   forward: boolean;
   startVtx: number;
@@ -95,7 +95,7 @@ function evalCurve(curve: Curve3D, t: number): Point3D {
   }
 }
 
-function tangentAngle(he: HalfEdge, atStart: boolean, surface: Surface, adapter: SurfaceAdapter): number {
+export function tangentAngle(he: HalfEdge, atStart: boolean, surface: Surface, adapter: SurfaceAdapter, vertices2D?: Pt2[]): number {
   // OCCT reference: BOPAlgo_WireSplitter_1.cxx Angle2D()
   // Uses the edge's PCurve (2D curve on face) for tangent direction.
   // This is critical for seam edges on periodic surfaces: the PCurve gives
@@ -120,15 +120,36 @@ function tangentAngle(he: HalfEdge, atStart: boolean, surface: Surface, adapter:
 
     const uv0 = evaluateCurve2D(c, t0);
     const uv1 = evaluateCurve2D(c, t1);
-    const dx = uv1.x - uv0.x;
-    const dy = uv1.y - uv0.y;
+    // OCCT ref: Angle2D uses bIsIN to control direction.
+    // atStart=true (outgoing): vector from vertex into edge = (uv1 - uv0)
+    // atStart=false (incoming): vector from interior to vertex = (uv0 - uv1)
+    // This gives the direction of travel at the vertex in both cases.
+    const dx = atStart ? (uv1.x - uv0.x) : (uv0.x - uv1.x);
+    const dy = atStart ? (uv1.y - uv0.y) : (uv0.y - uv1.y);
     let angle = Math.atan2(dy, dx);
     if (angle < 0) angle += 2 * Math.PI;
     return angle;
   }
 
   // Fallback: project 3D curve samples to UV (for edges without PCurves).
-  if (he.edge.degenerate) return 0;
+  // OCCT ref: Angle2D() computes degenerate edge tangents from their pcurve
+  // direction. Without a pcurve, use the half-edge's vertex UV coordinates
+  // to determine the tangent direction along the degenerate edge.
+  if (he.edge.degenerate) {
+    // Degenerate edges at poles have constant V, varying U. The tangent is along U.
+    const startUV = vertices2D?.[he.startVtx];
+    const endUV = vertices2D?.[he.endVtx];
+    if (startUV && endUV) {
+      const du = endUV.x - startUV.x;
+      const dv = endUV.y - startUV.y;
+      if (Math.abs(du) > 1e-10 || Math.abs(dv) > 1e-10) {
+        let angle = Math.atan2(dv, du);
+        if (angle < 0) angle += 2 * Math.PI;
+        return angle;
+      }
+    }
+    return 0;
+  }
 
   const curve = he.edge.curve;
   const tRange = curve.endParam - curve.startParam;
@@ -148,7 +169,9 @@ function tangentAngle(he: HalfEdge, atStart: boolean, surface: Surface, adapter:
     while (uv1.x - uv0.x > half) uv1 = { x: uv1.x - adapter.uPeriod, y: uv1.y };
     while (uv0.x - uv1.x > half) uv1 = { x: uv1.x + adapter.uPeriod, y: uv1.y };
   }
-  let angle = Math.atan2(uv1.y - uv0.y, uv1.x - uv0.x);
+  const fdx = atStart ? (uv1.x - uv0.x) : (uv0.x - uv1.x);
+  const fdy = atStart ? (uv1.y - uv0.y) : (uv0.y - uv1.y);
+  let angle = Math.atan2(fdy, fdx);
   if (angle < 0) angle += 2 * Math.PI;
   return angle;
 }
@@ -194,6 +217,39 @@ function findOrAddVertex(
   vertices.push(pt3d);
   vertices2D.push(pt2d);
   return vertices.length - 1;
+}
+
+/**
+ * Get the UV of a 3D point from the intersection edge's PCurve on the surface.
+ * OCCT ref: FillPaves uses 2D curve intersection to find split parameters.
+ * The intersection edge's PCurve gives the authoritative UV at the endpoint.
+ */
+function getIntEndpointUV(
+  pt: Point3D, intEdges: Edge[], surface: Surface, adapter: SurfaceAdapter,
+): Pt2 | null {
+  for (const ie of intEdges) {
+    const s = edgeStartPoint(ie), e = edgeEndPoint(ie);
+    const pcs = ie.pcurves.filter(p => p.surface === surface);
+    if (pcs.length !== 1) continue;
+    const c2 = pcs[0].curve2d;
+    if (distance(pt, s) < TOL) {
+      const uv = evaluateCurve2D(c2, c2.startParam);
+      if (uv) {
+        let u = uv.x;
+        if (adapter.isUPeriodic && u < 0) u += adapter.uPeriod;
+        return { x: u, y: uv.y };
+      }
+    }
+    if (distance(pt, e) < TOL) {
+      const uv = evaluateCurve2D(c2, c2.endParam);
+      if (uv) {
+        let u = uv.x;
+        if (adapter.isUPeriodic && u < 0) u += adapter.uPeriod;
+        return { x: u, y: uv.y };
+      }
+    }
+  }
+  return null;
 }
 
 // ═══════════════════════════════════════════════
@@ -303,6 +359,14 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     intEndpoints.push(edgeEndPoint(e));
   }
 
+  // Collect degenerate edge positions (poles) for poleSplit vertex handling
+  const degeneratePts: Point3D[] = [];
+  for (const oe of faceOuterWire(face).edges) {
+    if (oe.edge.degenerate) {
+      degeneratePts.push(oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge));
+    }
+  }
+
   // ── Boundary half-edges ──
   const boundaryHalfEdges: HalfEdge[] = [];
   const outerWire = faceOuterWire(face);
@@ -332,11 +396,48 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       // Find intersection endpoints at the same 3D position as this degenerate edge
       const degPt = eStart; // all points on degenerate edge are the same 3D point
       const hitsOnDeg: { pt3d: Point3D; uParam: number }[] = [];
-      for (const pt of intEndpoints) {
+      for (let iep = 0; iep < intEndpoints.length; iep++) {
+        const pt = intEndpoints[iep];
         if (distance(pt, degPt) < TOL) {
-          // Project to get the U parameter on the degenerate edge
-          const uv = adapter.projectPoint(pt);
-          if (uv) hitsOnDeg.push({ pt3d: pt, uParam: uv.u });
+          // At a pole, projectPoint returns ambiguous U (the pole is a UV singularity).
+          // OCCT ref: FillPaves (PaveFiller_8.cxx) uses the edge's PCurve to determine
+          // the correct U at the pole. Find the intersection edge that has this endpoint
+          // and extract U from its PCurve on this surface.
+          let u: number | null = null;
+          const edgeIdx = Math.floor(iep / 2); // intEndpoints has pairs (start, end)
+          const isStart = iep % 2 === 0;
+          if (edgeIdx < splitEdges.length) {
+            const ie = splitEdges[edgeIdx];
+            const pcsOnSurf = ie.pcurves.filter(p => p.surface === surface);
+            if (pcsOnSurf.length === 1) {
+              const pc = pcsOnSurf[0];
+              const t = isStart ? pc.curve2d.startParam : pc.curve2d.endParam;
+              const uv2d = evaluateCurve2D(pc.curve2d, t);
+              if (uv2d) u = uv2d.x;
+            }
+          }
+          // Fallback: sample the intersection edge slightly away from the pole
+          // to get a non-degenerate UV (avoids atan2(0,0) at the pole).
+          if (u === null) {
+            const ie = splitEdges[edgeIdx];
+            if (ie) {
+              const eps = 0.02;
+              const t = isStart
+                ? ie.curve.startParam + eps * (ie.curve.endParam - ie.curve.startParam)
+                : ie.curve.endParam - eps * (ie.curve.endParam - ie.curve.startParam);
+              const nearby = evalCurve(ie.curve, t);
+              if (nearby) {
+                const uv = adapter.projectPoint(nearby);
+                u = uv.u;
+              }
+            }
+          }
+          if (u === null) {
+            const uv = adapter.projectPoint(pt);
+            u = uv.u;
+          }
+          if (adapter.isUPeriodic && u < 0) u += adapter.uPeriod;
+          hitsOnDeg.push({ pt3d: pt, uParam: u });
         }
       }
 
@@ -470,15 +571,40 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
           subEdge = er.result!;
         }
 
-        // Interpolate UV from boundary edge PCurve endpoints
-        const sUV: Pt2 = {
-          x: edgeStartUV.x + segTs[i] * (edgeEndUV.x - edgeStartUV.x),
-          y: edgeStartUV.y + segTs[i] * (edgeEndUV.y - edgeStartUV.y),
-        };
-        const eUV: Pt2 = {
-          x: edgeStartUV.x + segTs[i + 1] * (edgeEndUV.x - edgeStartUV.x),
-          y: edgeStartUV.y + segTs[i + 1] * (edgeEndUV.y - edgeStartUV.y),
-        };
+        // OCCT ref: FillPaves uses 2D curve intersection to determine split UVs.
+        // For hit points (intersection edge endpoints) on faces with poles, use
+        // the intersection edge's PCurve UV — linear interpolation from the boundary
+        // PCurve gives wrong UV when the circle's geometric direction is flipped.
+        // On cylinder faces (no poles), linear interpolation works correctly.
+        const usePCurveUV = degeneratePts.length > 0;
+        let sUV: Pt2;
+        if (usePCurveUV && i > 0 && i - 1 < hitsOnEdge.length) {
+          const hitPt = hitsOnEdge[i - 1].pt3d;
+          const hitUV = getIntEndpointUV(hitPt, splitEdges, surface, adapter);
+          sUV = hitUV ?? {
+            x: edgeStartUV.x + segTs[i] * (edgeEndUV.x - edgeStartUV.x),
+            y: edgeStartUV.y + segTs[i] * (edgeEndUV.y - edgeStartUV.y),
+          };
+        } else {
+          sUV = {
+            x: edgeStartUV.x + segTs[i] * (edgeEndUV.x - edgeStartUV.x),
+            y: edgeStartUV.y + segTs[i] * (edgeEndUV.y - edgeStartUV.y),
+          };
+        }
+        let eUV: Pt2;
+        if (usePCurveUV && i + 1 > 0 && i + 1 - 1 < hitsOnEdge.length) {
+          const hitPt = hitsOnEdge[i + 1 - 1].pt3d;
+          const hitUV = getIntEndpointUV(hitPt, splitEdges, surface, adapter);
+          eUV = hitUV ?? {
+            x: edgeStartUV.x + segTs[i + 1] * (edgeEndUV.x - edgeStartUV.x),
+            y: edgeStartUV.y + segTs[i + 1] * (edgeEndUV.y - edgeStartUV.y),
+          };
+        } else {
+          eUV = {
+            x: edgeStartUV.x + segTs[i + 1] * (edgeEndUV.x - edgeStartUV.x),
+            y: edgeStartUV.y + segTs[i + 1] * (edgeEndUV.y - edgeStartUV.y),
+          };
+        }
 
         // Attach PCurve(s) to sub-edge.
         // For seam edges (2 PCurves at u=0 and u=2π), create both PCurves.
@@ -585,6 +711,66 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   // OCCT ref: BOPAlgo_PaveFiller handles edge-on-face detection so that FFI
   // result edges that coincide with face boundary edges are not duplicated.
   // Skip if vertex pair AND curve type match. Different geometry connecting
+  // OCCT ref: BOPAlgo_WireSplitter fills the SmartMap with both FORWARD and
+  // REVERSED orientations of each edge. After splitting, the sub-wires may
+  // traverse boundary sub-edges in either direction. Only add reverse
+  // half-edges for boundary edges that were SPLIT (sub-edges from split
+  // boundary edges may need to be traversed in either direction in the new
+  // sub-wires). Original unsplit boundary edges keep only the wire direction.
+  // OCCT ref: BOPAlgo_WireSplitter fills the SmartMap with both orientations.
+  // On faces with poles, sub-edges from split NON-SEAM boundaries may need
+  // reverse half-edges. Seam sub-edges already have both directions (the seam
+  // appears twice in the original wire: forward and reversed).
+  if (degeneratePts.length > 0) {
+    // Identify seam edges: those appearing 2+ times in the wire
+    const seamEdges = new Set<Edge>();
+    const wireEdgeCounts = new Map<Edge, number>();
+    for (const oe of faceOuterWire(face).edges) {
+      wireEdgeCounts.set(oe.edge, (wireEdgeCounts.get(oe.edge) || 0) + 1);
+    }
+    for (const [e, count] of wireEdgeCounts) {
+      if (count >= 2) seamEdges.add(e);
+    }
+
+    const boundaryReverse: HalfEdge[] = [];
+    for (const bhe of boundaryHalfEdges) {
+      if (bhe.startVtx === bhe.endVtx) continue;
+      // Only sub-edges (not original boundary)
+      const isOriginal = faceOuterWire(face).edges.some(oe => oe.edge === bhe.edge);
+      if (isOriginal) continue;
+      // Skip sub-edges from seam parents. A seam sub-edge's pcurveOccurrence
+      // tells us which seam traversal it came from; occurrence >= 1 means it's
+      // from the reverse seam (definitely a seam). Occurrence 0 could be seam
+      // or non-seam. Check if ANY seam edge's 3D curve contains this sub-edge.
+      let isSeamDerived = false;
+      if (bhe.pcurveOccurrence >= 1) {
+        isSeamDerived = true;
+      } else {
+        // Check if sub-edge midpoint lies on a seam edge
+        const mid = (bhe.edge.curve.type === 'arc3d' || bhe.edge.curve.type === 'circle3d')
+          ? evalCurve(bhe.edge.curve, (bhe.edge.curve.startParam + bhe.edge.curve.endParam) / 2)
+          : edgeStartPoint(bhe.edge);
+        for (const seamE of seamEdges) {
+          if (seamE.curve.type === 'arc3d' && 'plane' in seamE.curve) {
+            const sc = seamE.curve as any;
+            const rel = vec3d(mid.x - sc.plane.origin.x, mid.y - sc.plane.origin.y, mid.z - sc.plane.origin.z);
+            const nComp = Math.abs(rel.x * sc.plane.normal.x + rel.y * sc.plane.normal.y + rel.z * sc.plane.normal.z);
+            const r = Math.sqrt(rel.x * rel.x + rel.y * rel.y + rel.z * rel.z);
+            if (nComp < 0.01 && Math.abs(r - sc.radius) < 0.01) { isSeamDerived = true; break; }
+          }
+        }
+      }
+      if (isSeamDerived) continue;
+      boundaryReverse.push({
+        edge: bhe.edge, forward: !bhe.forward,
+        startVtx: bhe.endVtx, endVtx: bhe.startVtx,
+        angleAtStart: 0, angleAtEnd: 0,
+        used: false, isBoundary: true, pcurveOccurrence: bhe.pcurveOccurrence,
+      });
+    }
+    boundaryHalfEdges.push(...boundaryReverse);
+  }
+
   // the same vertices (e.g., line chord vs boundary arc) must be kept.
   const boundaryEdgePairs = new Map<string, string>(); // "v1-v2" → curve type
   for (const bhe of boundaryHalfEdges) {
@@ -655,8 +841,8 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
 
   // ── Compute tangent angles ──
   for (const he of allHalfEdges) {
-    he.angleAtStart = tangentAngle(he, true, surface, adapter);
-    he.angleAtEnd = tangentAngle(he, false, surface, adapter);
+    he.angleAtStart = tangentAngle(he, true, surface, adapter, vertices2D);
+    he.angleAtEnd = tangentAngle(he, false, surface, adapter, vertices2D);
   }
 
   // ── Build vertex → outgoing map ──
@@ -688,9 +874,9 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     for (let safety = 0; safety < 10000; safety++) {
       const vtx = pathVertices[pathVertices.length - 1];
 
-      // Check for sub-loop (revisited vertex).
-      // OCCT ref: Path() lines 448-468 — at seam vertices, also check UV
-      // distance to avoid premature closure across the seam.
+      // OCCT ref: BOPAlgo_WireSplitter_1.cxx Path() lines 426-524.
+      // Scan BACKWARDS through path to find sub-loop. bHasEdge gates the
+      // vertex-match check: degenerate-only tails are skipped entirely.
       let loopStartIdx = -1;
       const lastEdgeForClosure = pathEdges[pathEdges.length - 1];
       let endUVForClosure: Pt2 | null = null;
@@ -698,19 +884,22 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         const uv = getEdgeUV(lastEdgeForClosure.edge, surface, lastEdgeForClosure.forward, lastEdgeForClosure.pcurveOccurrence);
         if (uv) endUVForClosure = uv.end;
       }
-      for (let k = 0; k < pathVertices.length - 1; k++) {
+      let bHasEdge = false;
+      for (let k = pathVertices.length - 2; k >= 0; k--) {
+        const edgeAtK = pathEdges[k];
+        if (!bHasEdge) {
+          bHasEdge = !edgeAtK.edge.degenerate;
+          if (!bHasEdge) continue;
+        }
         if (pathVertices[k] !== vtx) continue;
-        // Same 3D vertex — now check UV if on a periodic surface
         if (periodic && endUVForClosure) {
-          // Get the UV at the start of the path at index k
-          const pathEdgeAtK = pathEdges[k];
-          const uvAtK = getEdgeUV(pathEdgeAtK.edge, surface, pathEdgeAtK.forward, pathEdgeAtK.pcurveOccurrence);
+          const uvAtK = getEdgeUV(edgeAtK.edge, surface, edgeAtK.forward, edgeAtK.pcurveOccurrence);
           if (uvAtK) {
             let du = Math.abs(uvAtK.start.x - endUVForClosure.x);
             if (adapter.isUPeriodic) du = du % adapter.uPeriod;
             if (du > adapter.uPeriod / 2) du = adapter.uPeriod - du;
             const dv = Math.abs(uvAtK.start.y - endUVForClosure.y);
-            if (du > adapter.uPeriod / 4 || dv > 0.5) continue; // Wrong seam side
+            if (du > adapter.uPeriod / 4 || dv > 0.5) continue;
           }
         }
         loopStartIdx = k;
@@ -720,8 +909,8 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       if (loopStartIdx >= 0) {
         const subLoop = pathEdges.splice(loopStartIdx);
         pathVertices.splice(loopStartIdx + 1);
-        const isDegenerate = subLoop.length === 2 && subLoop[0].edge === subLoop[1].edge;
-        if (subLoop.length >= 1 && !isDegenerate) {
+        const isUturn = subLoop.length === 2 && subLoop[0].edge === subLoop[1].edge;
+        if (subLoop.length >= 1 && !isUturn) {
           loops.push(subLoop);
         } else {
           for (const h of subLoop) h.used = false;

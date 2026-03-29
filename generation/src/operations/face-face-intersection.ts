@@ -950,7 +950,16 @@ function clipCircleToFaces(
   // Sort by angle
   hits.sort((a, b) => a.angle - b.angle);
 
-  // For each arc between consecutive hits, check if midpoint is inside the polygon
+  // Compute curved face's V-range for hemisphere discrimination.
+  // OCCT ref: GeomInt_LineConstructor::TreatCircle classifies arc midpoints
+  // in UV against both face domains. We use the V-range from the curved face's
+  // wire boundary to reject arcs outside this face's portion of the surface.
+  const curvedAdapter = toAdapter(curvedFace.surface);
+  const natRest = isNaturalRestriction(curvedFace);
+  const curvedVRange = natRest ? null : getCurvedFaceVRange(curvedFace, curvedAdapter);
+
+  // For each arc between consecutive hits, check if midpoint is inside BOTH faces.
+  // OCCT ref: GeomInt_LineConstructor::TreatCircle (GeomInt_LineConstructor.cxx:674)
   const arcs: Edge[] = [];
   for (let i = 0; i < hits.length; i++) {
     const a1 = hits[i].angle;
@@ -964,9 +973,23 @@ function clipCircleToFaces(
       y: center2d.y + r * Math.sin(midAngle),
     };
 
+    // Check 1: midpoint inside the planar face polygon
     if (!pointInPoly2D(midPt, poly)) continue;
 
-    // This arc segment is inside the face — create an Arc3D edge
+    // Check 2: midpoint inside the curved face's UV domain
+    if (curvedVRange) {
+      const xDir = cross(circlePlane.normal, circlePlane.xAxis);
+      const mid3d = point3d(
+        circlePlane.origin.x + r * Math.cos(midAngle) * circlePlane.xAxis.x + r * Math.sin(midAngle) * xDir.x,
+        circlePlane.origin.y + r * Math.cos(midAngle) * circlePlane.xAxis.y + r * Math.sin(midAngle) * xDir.y,
+        circlePlane.origin.z + r * Math.cos(midAngle) * circlePlane.xAxis.z + r * Math.sin(midAngle) * xDir.z,
+      );
+      const uv = curvedAdapter.projectPoint(mid3d);
+      const vTol = (curvedVRange.vMax - curvedVRange.vMin) * 0.02;
+      if (uv.v < curvedVRange.vMin - vTol || uv.v > curvedVRange.vMax + vTol) continue;
+    }
+
+    // This arc segment is inside both faces — create an Arc3D edge
     const startAngle = a1;
     const endAngle = a1 < a2 ? a2 : a2 + 2 * Math.PI;
 
