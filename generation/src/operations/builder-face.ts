@@ -324,16 +324,72 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     // encode the correct seam side. No UV continuity shifting needed —
     // vertex identity is based on 3D position, not UV.
 
-    // Degenerate edges (pole connectors): no intersection endpoints can lie on them.
-    // Just add as a boundary half-edge and continue.
+    // Degenerate edges (pole connectors): intersection endpoints at the pole
+    // must split the degenerate edge in UV space (OCCT FillPaves, PaveFiller_8.cxx:222-329).
+    // The degenerate edge spans a U range at constant V (the pole latitude).
+    // An intersection edge ending at the pole creates a split at its U value.
     if (oe.edge.degenerate) {
-      const startIdx = findOrAddVertex(vertices, vertices2D, eStart, edgeStartUV, seamSplit, adapter.uPeriod);
-      const endIdx = findOrAddVertex(vertices, vertices2D, eEnd, edgeEndUV, seamSplit, adapter.uPeriod);
-      boundaryHalfEdges.push({
-        edge: oe.edge, forward: oe.forward,
-        startVtx: startIdx, endVtx: endIdx,
-        angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true, pcurveOccurrence: occurrence,
-      });
+      // Find intersection endpoints at the same 3D position as this degenerate edge
+      const degPt = eStart; // all points on degenerate edge are the same 3D point
+      const hitsOnDeg: { pt3d: Point3D; uParam: number }[] = [];
+      for (const pt of intEndpoints) {
+        if (distance(pt, degPt) < TOL) {
+          // Project to get the U parameter on the degenerate edge
+          const uv = adapter.projectPoint(pt);
+          if (uv) hitsOnDeg.push({ pt3d: pt, uParam: uv.u });
+        }
+      }
+
+      if (hitsOnDeg.length === 0) {
+        // No intersection at this pole — add as single half-edge
+        const startIdx = findOrAddVertex(vertices, vertices2D, eStart, edgeStartUV, seamSplit, adapter.uPeriod);
+        const endIdx = findOrAddVertex(vertices, vertices2D, eEnd, edgeEndUV, seamSplit, adapter.uPeriod);
+        boundaryHalfEdges.push({
+          edge: oe.edge, forward: oe.forward,
+          startVtx: startIdx, endVtx: endIdx,
+          angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true, pcurveOccurrence: occurrence,
+        });
+      } else {
+        // Split the degenerate edge at intersection U values.
+        // Sort hits by U parameter between edgeStartUV.x and edgeEndUV.x.
+        const uStart = edgeStartUV.x;
+        const uEnd = edgeEndUV.x;
+        const vConst = edgeStartUV.y; // constant V for degenerate edge
+
+        // Normalize hit U values to be between uStart and uEnd
+        const sortedUs: number[] = [];
+        for (const h of hitsOnDeg) {
+          let u = h.uParam;
+          if (periodic) {
+            while (u < Math.min(uStart, uEnd) - 0.01) u += adapter.uPeriod;
+            while (u > Math.max(uStart, uEnd) + 0.01) u -= adapter.uPeriod;
+          }
+          // Skip if at start/end
+          const tNorm = (u - uStart) / (uEnd - uStart);
+          if (tNorm > TOL && tNorm < 1 - TOL) sortedUs.push(u);
+        }
+        sortedUs.sort((a, b) => a - b);
+
+        // Create sub-edges for each segment
+        let currentU = uStart;
+        let currentPt = eStart;
+        let currentUV: Pt2 = edgeStartUV;
+        const allPoints = [...sortedUs, uEnd];
+        for (const nextU of allPoints) {
+          const nextUV: Pt2 = { x: nextU, y: vConst };
+          const nextPt = degPt; // all degenerate points are the same 3D point
+          const sIdx = findOrAddVertex(vertices, vertices2D, currentPt, currentUV, seamSplit, adapter.uPeriod);
+          const eIdx = findOrAddVertex(vertices, vertices2D, nextPt, nextUV, seamSplit, adapter.uPeriod);
+          boundaryHalfEdges.push({
+            edge: oe.edge, forward: oe.forward,
+            startVtx: sIdx, endVtx: eIdx,
+            angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: true, pcurveOccurrence: occurrence,
+          });
+          currentU = nextU;
+          currentUV = nextUV;
+          currentPt = nextPt;
+        }
+      }
       continue;
     }
 
