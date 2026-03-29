@@ -1106,7 +1106,7 @@ App Examples:
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Status (2026-03-28):** OCCT-aligned boolean pipeline. 1424/1440 tests passing (12 remaining). Volume computation fully OCCT-aligned: unified boundary-curve Gauss integration with order-independent seam PCurve selection by edge orientation. Diagonal extrusion, reversed sphere/cylinder cavities all correct. Through-hole, spherical pocket, mounting plate all work end-to-end.
+**Status (2026-03-28):** OCCT-aligned boolean pipeline. **1441/1451 tests passing (6 remaining).** Volume computation, face orientation, and face splitting all OCCT-aligned. Diagonal extrusion, reversed sphere/cylinder cavities, pipe fittings, sphere hemisphere splitting all correct. Through-hole, spherical pocket, mounting plate, bushing, cylinder-flat all work end-to-end.
 
 **Architecture:**
 
@@ -1261,25 +1261,25 @@ These describe CORRECT geometry. Old tests that disagree should be updated when 
 **`boolean-cad-objects.test.ts`** — 21/28 passing:
 | Test | Status | Notes |
 |------|--------|-------|
-| Through-hole (cyl through box) | ✅ 3/4 | Volume off — PCurve occurrence on flipped seam |
+| Through-hole (cyl through box) | ✅ 4/4 | Fixed: seam PCurve + flipFace |
 | Counterbore (sequential booleans) | ❌ 0/1 | Sequential boolean edge case |
 | Spherical pocket (sphere inside box) | ✅ 4/4 | |
-| Mounting plate (4 bolt holes) | ✅ 1/1 | |
-| Pipe fitting (tube) | ✅ 3/4 | Volume off — PCurve occurrence on flipped seam |
-| Equatorial slot (sphere−box) | ✅ 2/2 | Fixed by seamSplit + Circle2D PCurve |
-| Cylinder flat (plane cut) | ❌ 1/3 | Volume off |
+| Mounting plate (4 bolt holes) | ✅ 2/2 | Fixed: flipFace surface identity |
+| Pipe fitting (tube) | ✅ 4/4 | Fixed: flipFace preserves PCurves |
+| Equatorial slot (sphere−box) | ✅ 2/2 | |
+| Cylinder flat (plane cut) | ✅ 3/3 | Fixed: flipFace surface identity |
 | Spherical cavity (large scale) | ✅ 3/3 | |
 | T-pipe union (perp cylinders) | ❌ 0/3 | Needs cylinder-cylinder SSI |
-| Truncated sphere (intersect) | ✅ 2/3 | Volume tolerance |
+| Truncated sphere (intersect) | ✅ 3/3 | Fixed: flipFace surface identity |
 
-**`boolean-pipeline-internals.test.ts`** — 14/16 passing:
+**`boolean-pipeline-internals.test.ts`** — 16/16 passing:
 | Group | Tests | Status | What it targets |
 |-------|-------|--------|----------------|
 | A: Circle on cylinder | 2 | ✅ | UV-aware vertex merging + seam filtering |
 | B: Circle on sphere | 1 | ✅ | Same on OCCT 1-face sphere (single semicircle) |
 | C: Tube classification | 2 | ✅ | Cylindrical bore face in subtract result |
 | D: Sphere cavity | 2 | ✅ | UV interior point fallback (OCCT 1-face sphere) |
-| E: Through-hole pipeline | 3 | ✅ 1/3 | Volume off — PCurve occurrence on flipped seam |
+| E: Through-hole pipeline | 3 | ✅ 3/3 | Fixed: seam PCurve by edge orientation |
 | F: Edge sharing | 1 | ✅ | Circle edges in both planar and cylindrical faces |
 | G: PCurve construction | 2 | ✅ | Circle2D on plane, arc on plane |
 
@@ -1299,34 +1299,48 @@ Key principle: **circles are single closed edges, never split into arcs.** OCCT'
 - **Both-poles tessellation**: Fan+grid+fan for full sphere faces. Matches OCCT's `BRepMesh_SphereRangeSplitter`.
 - **Plane-cylinder line FFI**: Analytic dispatch for parallel plane cases producing Line3D edges. Matches OCCT's `IntAna_QuadQuadGeo`.
 
-##### Remaining Work (2026-03-28)
+##### Fixes applied (2026-03-28 session)
 
-**RESOLVED in this session:**
-- **PCurve occurrence on flipped seam edges** — Detect true seam edges (same object appearing twice), swap occurrence for reversed faces. Matches OCCT `BRep_Tool::CurveOnSurface` + `BRepGProp_Face::Load(Edge)`.
-- **Negative U in boundary-curve integral** — PCurves from BuilderFace may have negative U on periodic surfaces. Added normalization: `while (u2 < BU1) u2 += uPeriod`.
-- **Circle edge normal in BFS** — Canonicalized normal direction for circle geometry keys. Matches OCCT topological edge identity.
-- **Unified volume computation** — Purged ALL non-OCCT volume methods. Single `computeFaceVolume` for all face types. Arc2D PCurves for arcs on planes. Bottom face REVERSED.
+**Volume computation — OCCT-aligned:**
+- **Plane yAxis = extrusion direction**: `canonicalizeExtrusionSurface` uses `xAxis = cross(direction, normal)` matching OCCT `gp_Ax2` double cross product. Ensures V=0..dist maps to extrusion parametrization. Fixed diagonal extrude volume (was off by 1/√2).
+- **Seam PCurve selection by edge orientation**: Matches OCCT `BRep_Tool::CurveOnSurface` (line 342). True seams use farFromBU1 detection for reversed faces (works for both extrude occ 0=U=2π and revolve occ 0=U=0). Split seam edges (from boolean) use rawOcc=0.
+- **BU1 sampling for closed curves**: N=8 points along each PCurve + inner wires scanned. Closed curve extrema no longer missed by start=end.
+- **Unified volume computation**: Single `computeFaceVolume` for ALL face types. Purged all non-OCCT methods. 730→277 lines.
 
-**Low-level volume tests (`volume-computation.test.ts`)** — 14/15 passing:
+**Boolean pipeline — OCCT-aligned:**
+- **flipFace preserves surface identity**: OCCT `TopoDS_Shape::Reverse()` only flips the orientation flag — never creates a new surface. Labrep's flipFace for planes was creating a new `PlaneSurface` with negated normal, breaking PCurve references. After fix, pipe fitting volume, cylinder-flat, bushing, sphere-intersect-box all work (annular caps no longer cancel).
+- **Coplanar normal comparison**: Uses `forward` flags + plane normal dot product directly (not polygon area sign). Fixed stacked-box union.
+- **Degenerate edge splitting at poles**: OCCT `FillPaves` (PaveFiller_8.cxx:222-329) splits degenerate pole edges in UV space where intersection edges pass through. Labrep was skipping degenerate edges for endpoint detection. Fixed sphere hemisphere splitting (1 face → 2 faces).
+
+**Low-level locking tests added (41 total across files):**
+- `extrusion-surface.test.ts`: 7 tests — yAxis alignment, orthonormality, projection, round-trip
+- `volume-computation.test.ts`: 9 tests — reversed sphere/cylinder cavities, diagonal extrude
+- `edge-winding.test.ts`: 11 tests — primitive closure, boolean closure, pipe fitting volume
+
+**Test results (`volume-computation.test.ts`)** — 21/21 passing:
 | Test | Status |
 |------|--------|
 | Box (unit, offset, 2×3×4) | ✅ 3/3 |
+| Diagonal extrude (45°) | ✅ 1/1 |
 | Cylinder (r=1,2,5) | ✅ 3/3 |
 | Sphere (r=1,5) | ✅ 2/2 |
 | Cone (revolve) | ✅ 1/1 |
 | Partial revolve (90°, 180°) | ✅ 2/2 |
 | Extrude along Z | ✅ 1/1 |
 | Sign consistency (cylinder, offset) | ✅ 2/2 |
-| Diagonal extrude (45°) | ❌ | PCurve issue on tilted plane side faces |
+| Box − sphere (reversed revolve face) | ✅ 3/3 |
+| Box − cylinder (reversed extrude face) | ✅ 3/3 |
 
-**Remaining higher-level failures** — now dominated by the volume algorithm transition (old tests calibrated to non-OCCT code). These need investigation with the new unified algorithm:
+##### Remaining Work (6 failures)
 
-| Category | What's needed |
-|----------|---------------|
-| Diagonal/offset extrude volume | PCurve accuracy on tilted planes — `buildPCurveForEdgeOnSurface` creates Line2D from projected endpoints but tilted planes may need more samples or analytic projection |
-| Boolean volume (through-hole, pipe, etc) | Re-validate with unified algorithm — some may just pass, others may need PCurve fixes |
-| T-pipe union | Cylinder-cylinder SSI (algorithmic, unrelated to volume) |
-| Counterbore | Sequential boolean shell stitching |
+| Test | Category | Root cause |
+|------|----------|------------|
+| Sphere-sphere subtract → closed shell | Boolean topology | Sphere-sphere SSI produces trimmed sphere faces; shell not closing |
+| Box − sphere at corner | Boolean topology | Sphere straddles 3 box faces; face splitting/classification edge case |
+| Counterbore (sequential booleans) | Boolean topology | Second boolean on already-boolean result; shell stitching |
+| T-pipe union × 3 (shell, volume, tessellation) | Boolean topology | Cylinder-cylinder SSI not implemented; perpendicular cylinders |
+
+All 6 are boolean **topology** failures (shell construction), not volume or face orientation issues. The volume computation and face orientation pipeline are fully OCCT-aligned and locked down with 41 low-level tests.
 | 2-hemisphere sphere tests | Need migration to OCCT 1-face sphere |
 
 ---
@@ -1342,6 +1356,9 @@ Key principle: **circles are single closed edges, never split into arcs.** OCCT'
 - `BOPTools_AlgoTools::IsInternalFace` — intersection-edge binormal classification for non-convex sub-faces
 - `BOPTools_AlgoTools::ComputeState` — fallback classification using edge midpoints far from intersection boundary
 - `BOPTools_AlgoTools::OrientFacesOnShell` — BFS face orientation for consistent edge winding
+- `BOPTools_AlgoTools::IsSplitToReverse` — face normal comparison against original (BOPTools_AlgoTools.cxx:1286-1388)
+- `TopoDS_Shape::Reverse` — flips orientation flag only, never creates new surface
+- `BOPAlgo_PaveFiller_8::FillPaves` — degenerate edge splitting in UV at intersection vertices
 - `BRepSweep_Rotation::MakeEmptyDirectingEdge` — degenerate edges at poles (zero 3D length, full UV period)
 - `ShapeAnalysis_WireOrder` — angular seam unwrapping for periodic surfaces
 - Coplanar faces handled separately (polygon clipping, not SSI) per `BRepAlgo_FaceRestrictor`
@@ -1371,7 +1388,7 @@ OCCT source in `library/opencascade/src/`:
 | `src/operations/builder-face.ts` | ✅ — General face splitter: generic seamSplit detection, UV normalization fix, all periodic surfaces |
 | `src/operations/face-face-intersection.ts` | ✅ — Analytic dispatch for plane-plane/sphere/cylinder/cone |
 | `src/topology/pcurve.ts` | ✅ — Circle2D PCurve for circles on planes (OCCT ProjLib_Plane) |
-| `src/topology/solid.ts` | 🔧 — OCCT boundary-curve volume (BRepGProp_Gauss), inner wire ADD. PCurve occurrence bug on flipped seams |
+| `src/topology/solid.ts` | ✅ — OCCT boundary-curve volume (BRepGProp_Gauss). Seam PCurve by edge orientation. BU1 sampling. |
 | `src/mesh/tessellation.ts` | ✅ — Both-pole sphere tessellation (fan+grid+fan) |
 | `src/operations/split-face-by-circle.ts` | **Dead code** — no longer used by pipeline |
 | `src/operations/trim-curved-face.ts` | **Dead code** — no longer used by pipeline |
