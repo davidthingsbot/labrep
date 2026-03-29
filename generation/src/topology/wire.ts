@@ -76,8 +76,17 @@ export function makeWire(edges: OrientedEdge[]): OperationResult<Wire> {
     return failure('Cannot create wire from empty edge list');
   }
 
-  // Validate connectivity
+  // Validate connectivity.
+  // OCCT ref: BRep_Builder::Add(wire, edge) does NOT check connectivity —
+  // wires are ordered edge collections. But we validate where possible.
+  // Exception: closed (self-loop) edges always connect because start=end.
   for (let i = 0; i < edges.length - 1; i++) {
+    const currentClosed = edges[i].edge.curve.isClosed;
+    const nextClosed = edges[i + 1].edge.curve.isClosed;
+
+    // Skip connectivity check if either edge is a self-loop (start=end)
+    if (currentClosed || nextClosed) continue;
+
     const endOfCurrent = orientedEdgeEndPoint(edges[i]);
     const startOfNext = orientedEdgeStartPoint(edges[i + 1]);
 
@@ -87,9 +96,17 @@ export function makeWire(edges: OrientedEdge[]): OperationResult<Wire> {
   }
 
   // Check if closed
-  const start = orientedEdgeStartPoint(edges[0]);
-  const end = orientedEdgeEndPoint(edges[edges.length - 1]);
-  const isClosed = distance(start, end) <= TOLERANCE;
+  const firstNonClosed = edges.find(e => !e.edge.curve.isClosed);
+  const lastNonClosed = [...edges].reverse().find(e => !e.edge.curve.isClosed);
+  let isClosed: boolean;
+  if (!firstNonClosed || !lastNonClosed) {
+    // All edges are self-loops → wire is closed
+    isClosed = true;
+  } else {
+    const start = orientedEdgeStartPoint(edges[0]);
+    const end = orientedEdgeEndPoint(edges[edges.length - 1]);
+    isClosed = distance(start, end) <= TOLERANCE;
+  }
 
   return success({
     edges: [...edges],

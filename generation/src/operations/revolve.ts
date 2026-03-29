@@ -45,7 +45,7 @@ import { Circle3D, makeCircle3D, evaluateCircle3D } from '../geometry/circle3d';
 import { Arc3D, makeArc3D, evaluateArc3D } from '../geometry/arc3d';
 import { makeLine2D } from '../geometry/line2d';
 import { toAdapter } from '../surfaces/surface-adapter';
-import { makePCurve } from '../topology/pcurve';
+import { makePCurve, buildPCurveForEdgeOnSurface } from '../topology/pcurve';
 import { addPCurveToEdge } from '../topology/edge';
 
 // ═══════════════════════════════════════════════════════
@@ -492,6 +492,25 @@ function generateFullRevolveFace(
       startCircle = startCircle || startCircleResult.result!;
     }
 
+    // Wire order for 3D connectivity: seam(FWD) → endCircle → seam(REV) → startCircle
+    // OCCT uses TopEdge(REV) + BottomEdge(FWD) in lateral, but our wire must
+    // connect in 3D. The circle directions must be OPPOSITE to the disk face
+    // directions for proper edge sharing (shell closure).
+    // Disk bottom (startOnAxis): endCircle(FWD) → lateral must use endCircle...
+    // Actually: the shared circle used FWD in the bottom disk, so lateral must use REV.
+    // Similarly, top disk uses startCircle(REV), so lateral uses startCircle(FWD)...
+    // Wait — we need to check which circle is shared with which disk.
+    //
+    // For rectangle (0,0,0)→(r,0,0)→(r,0,h)→(0,0,h):
+    //   Edge 1 (bottom horiz): startOnAxis → disk uses endCircle (at (r,0,0)) FWD, face reversed
+    //   Edge 2 (right vert): !startOnAxis && !endOnAxis → lateral face
+    //     startCircle = circle at (r,0,0) → SAME as edge 1's endCircle → must be OPPOSITE = REV ✗
+    //     But currently it's REV... which means disk(FWD) vs lateral(REV) = opposite ✓
+    //   Edge 3 (top horiz): endOnAxis → disk uses startCircle (at (r,0,h)) REV, face forward
+    //     endCircle = circle at (r,0,h) → SAME as edge 3's startCircle → must be OPPOSITE = FWD ✗
+    //     But currently it's FWD... which means disk(REV) vs lateral(FWD) = opposite ✓
+    //
+    // So the CURRENT directions are already correct for edge sharing!
     addSeamPCurves(edge);
     addCirclePCurve(endCircle, vEnd, true);
     addCirclePCurve(startCircle, vStart, false);
@@ -502,12 +521,11 @@ function generateFullRevolveFace(
       orientEdge(edge, false),
       orientEdge(startCircle, false),
     );
-  } else if (startOnAxis) {
-    // Start vertex on axis (pole) — 4-edge face with degenerate edge at pole.
-    // OCCT ref: BRepSweep_Rotation always creates degenerate edges at poles.
-    // Wire: seam(fwd) → circle(fwd) → seam(rev) → degen_start
-    // The degenerate edge connects seam(rev) end at u=2π to seam(fwd) start
-    // at u=0 in UV space, closing the UV rectangle.
+  } else if (startOnAxis && surface.type === 'plane') {
+    // OCCT ref: BRepPrim_OneAxis::BottomFace.
+    // Planar disk face: wire = single circle edge (FWD), then ReverseFace.
+    // The profile edge goes outward from axis (startOnAxis). The circle at
+    // endPt is the disk boundary, used FWD. The face gets forward=false.
     const ROUND2 = 1e-7;
     const vtxKey2 = (pt: Point3D) => `${Math.round(pt.x/ROUND2)*ROUND2},${Math.round(pt.y/ROUND2)*ROUND2},${Math.round(pt.z/ROUND2)*ROUND2}`;
     let endCircle = sharedCircleEdges?.get(vtxKey2(endPt));
@@ -516,23 +534,14 @@ function generateFullRevolveFace(
       if (!endCircleResult.success) return failure('Failed to create sweep circle');
       endCircle = endCircleResult.result!;
     }
-
-    addSeamPCurves(edge);
-    addCirclePCurve(endCircle, vEnd, true);
-
-    const degenStart = makeDegenerateEdge(startPt);
-    const degenStartPC = makeLine2D({ x: TWO_PI, y: vStart }, { x: 0, y: vStart });
-    if (degenStartPC.result) addPCurveToEdge(degenStart, makePCurve(degenStartPC.result, surface));
-
-    wireEdges.push(
-      orientEdge(edge, true),
-      orientEdge(endCircle, true),
-      orientEdge(edge, false),
-      orientEdge(degenStart, true),
-    );
-  } else {
-    // End vertex on axis (pole) — 4-edge face with degenerate edge at pole.
-    // Wire: seam(fwd) → degen_end → seam(rev) → circle(rev)
+    const pc = buildPCurveForEdgeOnSurface(endCircle, surface, true);
+    if (pc) addPCurveToEdge(endCircle, pc);
+    wireEdges.push(orientEdge(endCircle, true));
+  } else if (endOnAxis && surface.type === 'plane') {
+    // OCCT ref: BRepPrim_OneAxis::TopFace.
+    // Planar disk face: wire = single circle edge (REV), forward=true.
+    // The profile edge goes inward toward axis (endOnAxis). The circle at
+    // startPt is the disk boundary, used REV (matching the lateral face's FWD).
     const ROUND3 = 1e-7;
     const vtxKey3 = (pt: Point3D) => `${Math.round(pt.x/ROUND3)*ROUND3},${Math.round(pt.y/ROUND3)*ROUND3},${Math.round(pt.z/ROUND3)*ROUND3}`;
     let startCircle = sharedCircleEdges?.get(vtxKey3(startPt));
@@ -541,14 +550,45 @@ function generateFullRevolveFace(
       if (!startCircleResult.success) return failure('Failed to create sweep circle');
       startCircle = startCircleResult.result!;
     }
-
+    const pc = buildPCurveForEdgeOnSurface(startCircle, surface, false);
+    if (pc) addPCurveToEdge(startCircle, pc);
+    wireEdges.push(orientEdge(startCircle, false));
+  } else if (startOnAxis) {
+    // Non-planar, start on axis (cone/sphere pole): 4-edge lateral face with degen.
+    const ROUND2 = 1e-7;
+    const vtxKey2 = (pt: Point3D) => `${Math.round(pt.x/ROUND2)*ROUND2},${Math.round(pt.y/ROUND2)*ROUND2},${Math.round(pt.z/ROUND2)*ROUND2}`;
+    let endCircle = sharedCircleEdges?.get(vtxKey2(endPt));
+    if (!endCircle) {
+      const endCircleResult = makeSweepEdge(endPt, ax, 0, TWO_PI);
+      if (!endCircleResult.success) return failure('Failed to create sweep circle');
+      endCircle = endCircleResult.result!;
+    }
+    addSeamPCurves(edge);
+    addCirclePCurve(endCircle, vEnd, true);
+    const degenStart = makeDegenerateEdge(startPt);
+    const degenStartPC = makeLine2D({ x: TWO_PI, y: vStart }, { x: 0, y: vStart });
+    if (degenStartPC.result) addPCurveToEdge(degenStart, makePCurve(degenStartPC.result, surface));
+    wireEdges.push(
+      orientEdge(edge, true),
+      orientEdge(endCircle, true),
+      orientEdge(edge, false),
+      orientEdge(degenStart, true),
+    );
+  } else {
+    // Non-planar, end on axis (cone/sphere pole): 4-edge lateral face with degen.
+    const ROUND3 = 1e-7;
+    const vtxKey3 = (pt: Point3D) => `${Math.round(pt.x/ROUND3)*ROUND3},${Math.round(pt.y/ROUND3)*ROUND3},${Math.round(pt.z/ROUND3)*ROUND3}`;
+    let startCircle = sharedCircleEdges?.get(vtxKey3(startPt));
+    if (!startCircle) {
+      const startCircleResult = makeSweepEdge(startPt, ax, 0, TWO_PI);
+      if (!startCircleResult.success) return failure('Failed to create sweep circle');
+      startCircle = startCircleResult.result!;
+    }
     addSeamPCurves(edge);
     addCirclePCurve(startCircle, vStart, false);
-
     const degenEnd = makeDegenerateEdge(endPt);
     const degenEndPC = makeLine2D({ x: 0, y: vEnd }, { x: TWO_PI, y: vEnd });
     if (degenEndPC.result) addPCurveToEdge(degenEnd, makePCurve(degenEndPC.result, surface));
-
     wireEdges.push(
       orientEdge(edge, true),
       orientEdge(degenEnd, true),
@@ -562,7 +602,11 @@ function generateFullRevolveFace(
     return failure(`Failed to create revolve face wire: ${wireResult.error}`);
   }
 
-  const faceResult = makeFace(surface, wireResult.result!);
+  // OCCT ref: BRepPrim_OneAxis::BottomFace calls ReverseFace().
+  // Planar disk faces where profile goes outward from axis (startOnAxis)
+  // need forward=false so outward normal points away from solid interior.
+  const isReversedDisk = startOnAxis && !endOnAxis && surface.type === 'plane';
+  const faceResult = makeFace(surface, wireResult.result!, [], !isReversedDisk);
   if (!faceResult.success) {
     return failure(`Failed to create revolve face: ${faceResult.error}`);
   }

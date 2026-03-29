@@ -617,26 +617,64 @@ function classifySubFace(
         const t = tStart + frac * (tEnd - tStart);
         const pt = evaluateCurveAt(curve, t);
         if (pt) {
-          // Prefer PCurve UV (correct seam side) over projection
-          const pc = oe.edge.pcurves.find(p => p.surface === face.surface);
+          // Prefer PCurve UV over projection. Skip seam edges (2+ PCurves on same
+          // surface) — we can't determine the correct seam side in this context.
+          const pcsOnSurf = oe.edge.pcurves.filter(p => p.surface === face.surface);
+          const pc = pcsOnSurf.length === 1 ? pcsOnSurf[0] : null;
           if (pc) {
             const c2 = pc.curve2d;
             const t2d = oe.forward
               ? c2.startParam + frac * (c2.endParam - c2.startParam)
               : c2.endParam - frac * (c2.endParam - c2.startParam);
             const uv2d = evaluateCurve2D(c2, t2d);
-            if (uv2d) { uvSamples.push({ u: uv2d.x, v: uv2d.y }); continue; }
+            if (uv2d) {
+              let u = uv2d.x;
+              // Normalize to [0, period] for consistent centroid on periodic surfaces
+              if (adapter.isUPeriodic && u < 0) u += adapter.uPeriod;
+              uvSamples.push({ u, v: uv2d.y });
+              continue;
+            }
           }
-          const uv = adapter.projectPoint(pt);
+          let uv = adapter.projectPoint(pt);
+          // Normalize to [0, period] to avoid centroid errors from atan2 wrapping
+          if (adapter.isUPeriodic && uv.u < 0) uv = { u: uv.u + adapter.uPeriod, v: uv.v };
           uvSamples.push(uv);
         }
       }
     }
     if (uvSamples.length >= 3) {
-      let uSum = 0, vSum = 0;
-      for (const uv of uvSamples) { uSum += uv.u; vSum += uv.v; }
-      const uCentroid = uSum / uvSamples.length;
+      let vSum = 0;
+      for (const uv of uvSamples) { vSum += uv.v; }
       const vCentroid = vSum / uvSamples.length;
+
+      // Compute u centroid handling periodic wraparound.
+      // If u values span the seam (e.g., 5.5, 5.8, 0.1, 0.4), a naive average
+      // would give ~3.0 (wrong side). Instead, shift values so they're contiguous:
+      // find the largest gap in sorted u values and use the gap's end as the
+      // "virtual zero". OCCT ref: IntTools_FClass2d handles this internally.
+      let uCentroid: number;
+      if (adapter.isUPeriodic) {
+        const period = adapter.uPeriod;
+        const sorted = uvSamples.map(uv => uv.u).sort((a, b) => a - b);
+        let maxGap = 0, gapEnd = 0;
+        for (let i = 0; i < sorted.length; i++) {
+          const next = (i + 1 < sorted.length) ? sorted[i + 1] : sorted[0] + period;
+          const gap = next - sorted[i];
+          if (gap > maxGap) { maxGap = gap; gapEnd = next % period; }
+        }
+        // Shift all u values so gapEnd becomes 0, then average, then shift back
+        let uShiftedSum = 0;
+        for (const uv of uvSamples) {
+          let u = uv.u - gapEnd;
+          if (u < 0) u += period;
+          uShiftedSum += u;
+        }
+        uCentroid = (uShiftedSum / uvSamples.length + gapEnd) % period;
+      } else {
+        let uSum = 0;
+        for (const uv of uvSamples) uSum += uv.u;
+        uCentroid = uSum / uvSamples.length;
+      }
       const interiorPt3D = adapter.evaluate(uCentroid, vCentroid);
       const result = pointInSolid(interiorPt3D, otherSolid);
       if (result !== 'on') return result;
@@ -657,12 +695,20 @@ function classifySubFace(
 
   // Score edges by distance from intersection endpoints.
   // Use the edge whose midpoint is farthest from any intersection endpoint.
+  // For curved edges, evaluate at mid-parameter (not chord midpoint).
   let bestDist = -1;
   let bestMid: Point3D | null = null;
   for (const oe of face.outerWire.edges) {
-    const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-    const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
-    const mid = point3d((s.x + e.x) / 2, (s.y + e.y) / 2, (s.z + e.z) / 2);
+    const curve = oe.edge.curve;
+    let mid: Point3D;
+    if (curve.type === 'circle3d' || curve.type === 'arc3d' || curve.type === 'ellipse3d') {
+      const midT = (curve.startParam + curve.endParam) / 2;
+      mid = evaluateCurveAt(curve, midT) || edgeStartPoint(oe.edge);
+    } else {
+      const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+      mid = point3d((s.x + e.x) / 2, (s.y + e.y) / 2, (s.z + e.z) / 2);
+    }
 
     let minDist = Infinity;
     for (const ip of intEndpoints) {
@@ -1124,8 +1170,10 @@ export function booleanOperation(
     const bad: string[] = [];
     for (const [key, dirs] of eu) {
       if (dirs.length !== 2 || dirs[0] === dirs[1])
-        bad.push(`${key} x${dirs.length} ${dirs.join(' / ')}`);
+        bad.push(`${key} x${dirs.length} [${dirs.join(' | ')}]`);
     }
+    // Diagnostic: uncomment to debug stitching
+    // if (bad.length > 0) console.log(`[STITCH-ERR] ${bad.length} bad edges:\n${bad.join('\n')}`);
     // Quick edge diagnostic
     const T = 1e-7;
     const R = (n: number) => Math.round(n / T) * T;
@@ -1401,8 +1449,30 @@ function orientFacesOnShell(faces: Face[]): Face[] {
       const c = curve as any;
       const ctr = c.plane.origin;
       const n = c.plane.normal;
-      const geoKey = `C:${round(ctr.x)},${round(ctr.y)},${round(ctr.z)}|r=${round(c.radius)}|n=${round(n.x)},${round(n.y)},${round(n.z)}`;
-      return { key: geoKey, directed: `${geoKey}|${oe.forward ? 'F' : 'R'}` };
+      // Canonicalize normal direction: pick the half-space where the first
+      // nonzero component is positive. Two circles at the same location with
+      // opposite normals (+z vs -z) are the SAME geometric edge — OCCT matches
+      // them by topological identity; we match by canonical geometry.
+      let nx = round(n.x), ny = round(n.y), nz = round(n.z);
+      const firstNonZero = nx !== 0 ? nx : ny !== 0 ? ny : nz;
+      if (firstNonZero < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      const geoKey = `C:${round(ctr.x)},${round(ctr.y)},${round(ctr.z)}|r=${round(c.radius)}|n=${nx},${ny},${nz}`;
+      // When the normal is flipped, the circle's forward/reversed sense also
+      // flips (a CCW circle viewed from +z is CW viewed from -z). Encode the
+      // effective direction so the BFS can detect same-vs-opposite winding.
+      const normalFlipped = firstNonZero < 0;
+      const effectiveFwd = normalFlipped ? !oe.forward : oe.forward;
+      return { key: geoKey, directed: `${geoKey}|${effectiveFwd ? 'F' : 'R'}` };
+    }
+    // Open arcs: include midpoint to disambiguate from lines with same endpoints
+    if (curve.type === 'arc3d' && 'plane' in curve) {
+      const midT = (curve.startParam + curve.endParam) / 2;
+      const mid = evaluateCurveAt(curve, midT);
+      if (mid) {
+        const mk = `M:${round(mid.x)},${round(mid.y)},${round(mid.z)}`;
+        const key = k1 < k2 ? `${k1}|${k2}|${mk}` : `${k2}|${k1}|${mk}`;
+        return { key, directed: `${k1}->${k2}|${mk}` };
+      }
     }
     const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
     const directed = curve.isClosed ? `${k1}|${oe.forward ? 'F' : 'R'}` : `${k1}->${k2}`;

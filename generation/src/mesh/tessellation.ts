@@ -460,8 +460,83 @@ function tessellateCurvedFace(face: Face, opts: Required<TessellationOptions>): 
   const indices: number[] = [];
 
   if (vMinDegenerate && vMaxDegenerate) {
-    // Both ends degenerate — very thin sliver, skip
-    return null;
+    // Both poles degenerate — full sphere (OCCT BRepPrim_Sphere).
+    // OCCT ref: BRepMesh_SphereRangeSplitter generates a UV grid between poles,
+    // then BRepMesh Delaunay creates fan triangles at each pole naturally.
+    // We do: south pole fan + grid strips + north pole fan.
+    const vStep = (vMax - vMin) / nV;
+    const cols = nU + 1;
+
+    // South pole apex
+    const southPt = fns.evaluate(uMin, vMin);
+    vertices.push(southPt.x, southPt.y, southPt.z);
+    normals.push(0, 0, 0); // placeholder
+    const southIdx = 0;
+
+    // Grid rows from vMin+vStep to vMax-vStep (avoiding pole singularities)
+    for (let j = 1; j < nV; j++) {
+      const v = vMin + vStep * j;
+      for (let i = 0; i <= nU; i++) {
+        const u = uMin + (uMax - uMin) * i / nU;
+        const pt = fns.evaluate(u, v);
+        const n = fns.normal(u, v);
+        vertices.push(pt.x, pt.y, pt.z);
+        pushNormal(normals, n);
+      }
+    }
+
+    // North pole apex
+    const northPt = fns.evaluate(uMin, vMax);
+    const northIdx = vertices.length / 3;
+    vertices.push(northPt.x, northPt.y, northPt.z);
+    normals.push(0, 0, 0); // placeholder
+
+    // South pole normal: average of first ring
+    const firstRing = 1; // first grid row starts at vertex index 1
+    let snx = 0, sny = 0, snz = 0;
+    for (let i = 0; i < nU; i++) {
+      const ni = (firstRing + i) * 3;
+      snx += normals[ni]; sny += normals[ni + 1]; snz += normals[ni + 2];
+    }
+    let sLen = Math.sqrt(snx * snx + sny * sny + snz * snz);
+    if (sLen > 1e-8) { snx /= sLen; sny /= sLen; snz /= sLen; }
+    normals[0] = snx; normals[1] = sny; normals[2] = snz;
+
+    // North pole normal: average of last ring
+    const lastRing = firstRing + (nV - 2) * cols;
+    let nnx = 0, nny = 0, nnz = 0;
+    for (let i = 0; i < nU; i++) {
+      const ni = (lastRing + i) * 3;
+      nnx += normals[ni]; nny += normals[ni + 1]; nnz += normals[ni + 2];
+    }
+    let nLen = Math.sqrt(nnx * nnx + nny * nny + nnz * nnz);
+    if (nLen > 1e-8) { nnx /= nLen; nny /= nLen; nnz /= nLen; }
+    normals[northIdx * 3] = nnx; normals[northIdx * 3 + 1] = nny; normals[northIdx * 3 + 2] = nnz;
+
+    // South pole fan
+    for (let i = 0; i < nU; i++) {
+      indices.push(southIdx, firstRing + i, firstRing + i + 1);
+    }
+
+    // Grid strips between rows
+    const nRows = nV - 1; // number of grid rows
+    for (let j = 0; j < nRows - 1; j++) {
+      for (let i = 0; i < nU; i++) {
+        const a = firstRing + j * cols + i;
+        const b = a + 1;
+        const c = a + cols;
+        const d = c + 1;
+        indices.push(a, c, b);
+        indices.push(b, c, d);
+      }
+    }
+
+    // North pole fan
+    for (let i = 0; i < nU; i++) {
+      indices.push(lastRing + i, northIdx, lastRing + i + 1);
+    }
+
+    return { vertices, normals, indices };
   }
 
   if (vMinDegenerate) {

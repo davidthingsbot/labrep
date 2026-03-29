@@ -167,11 +167,29 @@ function tangentAngle(he: HalfEdge, atStart: boolean, surface: Surface, adapter:
 function findOrAddVertex(
   vertices: Point3D[], vertices2D: Pt2[],
   pt3d: Point3D, pt2d: Pt2,
-  _useUV: boolean,
+  seamSplit: boolean,
+  uPeriod: number = 0,
 ): number {
-  // Always merge by 3D distance, matching OCCT's vertex identity approach
+  // OCCT ref: On periodic surfaces, vertices at U≈0 and U≈2π are kept SEPARATE
+  // (same 3D but different seam side). This converts self-loop circles into proper
+  // v_left→v_right edges that connect to split seam edges.
+  // seamSplit should be true for surfaces where the seam creates distinct UV regions
+  // (cylinders, cones) but false where it doesn't matter (spheres with pole degeneracies).
   for (let i = 0; i < vertices.length; i++) {
-    if (distance(vertices[i], pt3d) < TOL) return i;
+    if (distance(vertices[i], pt3d) < TOL) {
+      if (seamSplit && uPeriod > 0) {
+        const uA = vertices2D[i].x, uB = pt2d.x;
+        const seamThreshold = uPeriod * 0.05;
+        const nearLeftA = uA < seamThreshold;
+        const nearRightA = uA > uPeriod - seamThreshold;
+        const nearLeftB = uB < seamThreshold;
+        const nearRightB = uB > uPeriod - seamThreshold;
+        if ((nearLeftA && nearRightB) || (nearRightA && nearLeftB)) {
+          continue; // Opposite seam sides → keep separate
+        }
+      }
+      return i;
+    }
   }
   vertices.push(pt3d);
   vertices2D.push(pt2d);
@@ -260,6 +278,24 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   const vertices: Point3D[] = [];
   const vertices2D: Pt2[] = [];
 
+  // Seam splitting: on periodic surfaces, the seam at U=0/2π creates distinct UV regions.
+  // Vertices at opposite seam sides must be kept separate for proper wire tracing.
+  // OCCT ref: BRep_Tool::IsClosed(aE, myFace) returns true when a boundary edge has
+  // 2 PCurves on the same face (seam edge). Detect this from the wire rather than
+  // hardcoding surface types — works for cylinders, cones, spheres, and any periodic
+  // surface whose boundary wire includes a seam edge.
+  let seamSplit = false;
+  if (periodic) {
+    const wire = faceOuterWire(face);
+    for (const oe of wire.edges) {
+      let pcCount = 0;
+      for (const pc of oe.edge.pcurves) {
+        if (pc.surface === surface) pcCount++;
+      }
+      if (pcCount >= 2) { seamSplit = true; break; }
+    }
+  }
+
   // Collect intersection endpoints for boundary splitting
   const intEndpoints: Point3D[] = [];
   for (const e of splitEdges) {
@@ -291,8 +327,8 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     // Degenerate edges (pole connectors): no intersection endpoints can lie on them.
     // Just add as a boundary half-edge and continue.
     if (oe.edge.degenerate) {
-      const startIdx = findOrAddVertex(vertices, vertices2D, eStart, edgeStartUV, periodic);
-      const endIdx = findOrAddVertex(vertices, vertices2D, eEnd, edgeEndUV, periodic);
+      const startIdx = findOrAddVertex(vertices, vertices2D, eStart, edgeStartUV, seamSplit, adapter.uPeriod);
+      const endIdx = findOrAddVertex(vertices, vertices2D, eEnd, edgeEndUV, seamSplit, adapter.uPeriod);
       boundaryHalfEdges.push({
         edge: oe.edge, forward: oe.forward,
         startVtx: startIdx, endVtx: endIdx,
@@ -330,7 +366,10 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         const nComp = rel.x * arcPlane.normal.x + rel.y * arcPlane.normal.y + rel.z * arcPlane.normal.z;
         if (Math.abs(nComp) > 0.05) continue;
         if (Math.abs(Math.sqrt(xComp * xComp + yComp * yComp) - arcCurve.radius) > 0.05) continue;
-        const angle = Math.atan2(yComp, xComp);
+        let angle = Math.atan2(yComp, xComp);
+        // OCCT ref: ElCLib::InPeriod — normalize atan2 [-π,π] to curve range [0,2π].
+        while (angle < curve.startParam - 0.01) angle += 2 * Math.PI;
+        while (angle > curve.endParam + 0.01) angle -= 2 * Math.PI;
         if (angle < curve.startParam - 0.01 || angle > curve.endParam + 0.01) continue;
         const wireT = oe.forward
           ? (angle - curve.startParam) / tRange
@@ -341,8 +380,8 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     }
 
     if (hitsOnEdge.length === 0) {
-      const startIdx = findOrAddVertex(vertices, vertices2D, eStart, edgeStartUV, periodic);
-      const endIdx = findOrAddVertex(vertices, vertices2D, eEnd, edgeEndUV, periodic);
+      const startIdx = findOrAddVertex(vertices, vertices2D, eStart, edgeStartUV, seamSplit, adapter.uPeriod);
+      const endIdx = findOrAddVertex(vertices, vertices2D, eEnd, edgeEndUV, seamSplit, adapter.uPeriod);
       boundaryHalfEdges.push({
         edge: oe.edge, forward: oe.forward,
         startVtx: startIdx, endVtx: endIdx,
@@ -418,8 +457,8 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         // traversal was reversed, the sub-edge's geometric direction may be opposite
         // to the wire direction. Check by comparing the edge's start point to pts3d[i].
         const subFwd = distance(edgeStartPoint(subEdge), pts3d[i]) < TOL * 100;
-        const startIdx = findOrAddVertex(vertices, vertices2D, pts3d[i], sUV, periodic);
-        const endIdx = findOrAddVertex(vertices, vertices2D, pts3d[i + 1], eUV, periodic);
+        const startIdx = findOrAddVertex(vertices, vertices2D, pts3d[i], sUV, seamSplit, adapter.uPeriod);
+        const endIdx = findOrAddVertex(vertices, vertices2D, pts3d[i + 1], eUV, seamSplit, adapter.uPeriod);
 
         // PCurves must be in edge geometric direction. If subFwd=false, the PCurves
         // we just attached go in wire direction — reverse them all.
@@ -476,8 +515,8 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
 
       // Inner wire edges are not split by intersection endpoints — they're
       // existing topology. Just add as boundary half-edges.
-      const startIdx = findOrAddVertex(vertices, vertices2D, eStart, edgeStartUV, periodic);
-      const endIdx = findOrAddVertex(vertices, vertices2D, eEnd, edgeEndUV, periodic);
+      const startIdx = findOrAddVertex(vertices, vertices2D, eStart, edgeStartUV, seamSplit, adapter.uPeriod);
+      const endIdx = findOrAddVertex(vertices, vertices2D, eEnd, edgeEndUV, seamSplit, adapter.uPeriod);
       boundaryHalfEdges.push({
         edge: oe.edge, forward: oe.forward,
         startVtx: startIdx, endVtx: endIdx,
@@ -489,11 +528,11 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   // ── Intersection half-edges ──
   // OCCT ref: BOPAlgo_PaveFiller handles edge-on-face detection so that FFI
   // result edges that coincide with face boundary edges are not duplicated.
-  // We detect this here: if an intersection edge connects the same vertex pair
-  // as an existing boundary half-edge, skip it — it's redundant.
-  const boundaryEdgePairs = new Set<string>();
+  // Skip if vertex pair AND curve type match. Different geometry connecting
+  // the same vertices (e.g., line chord vs boundary arc) must be kept.
+  const boundaryEdgePairs = new Map<string, string>(); // "v1-v2" → curve type
   for (const bhe of boundaryHalfEdges) {
-    boundaryEdgePairs.add(`${bhe.startVtx}-${bhe.endVtx}`);
+    boundaryEdgePairs.set(`${bhe.startVtx}-${bhe.endVtx}`, bhe.edge.curve.type);
   }
 
   const intHalfEdges: HalfEdge[] = [];
@@ -521,16 +560,33 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       endUV = projectToUV(adapter, endPt);
     }
 
+    // On periodic surfaces, normalize intersection edge UVs to [0, period)
+    // so they merge correctly with boundary vertices.
+    // OCCT ref: BOPAlgo_WireSplitter_1::Coord2d evaluates PCurves directly
+    // and does NOT normalize — seam vertices at u≈0 vs u≈2π stay separate.
+    // We only normalize when seamSplit is OFF. When seamSplit is ON, the
+    // full-period span (0 → 2π) must be preserved so the circle connects
+    // to separate seam-side vertices, splitting the face properly.
+    if (!isSelfLoop && periodic && adapter.uPeriod > 0 && !seamSplit) {
+      const period = adapter.uPeriod;
+      while (startUV.x < 0) startUV = { x: startUV.x + period, y: startUV.y };
+      while (startUV.x >= period) startUV = { x: startUV.x - period, y: startUV.y };
+      while (endUV.x < 0) endUV = { x: endUV.x + period, y: endUV.y };
+      while (endUV.x >= period) endUV = { x: endUV.x - period, y: endUV.y };
+    }
+
     if (isSelfLoop) {
-      const idx = findOrAddVertex(vertices, vertices2D, startPt, startUV, periodic);
+      const idx = findOrAddVertex(vertices, vertices2D, startPt, startUV, seamSplit, adapter.uPeriod);
       intHalfEdges.push({ edge: e, forward: true, startVtx: idx, endVtx: idx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false, pcurveOccurrence: 0 });
       intHalfEdges.push({ edge: e, forward: false, startVtx: idx, endVtx: idx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false, pcurveOccurrence: 0 });
     } else {
-      const startIdx = findOrAddVertex(vertices, vertices2D, startPt, startUV, periodic);
-      const endIdx = findOrAddVertex(vertices, vertices2D, endPt, endUV, periodic);
+      const startIdx = findOrAddVertex(vertices, vertices2D, startPt, startUV, seamSplit, adapter.uPeriod);
+      const endIdx = findOrAddVertex(vertices, vertices2D, endPt, endUV, seamSplit, adapter.uPeriod);
 
-      // Skip if this edge coincides with a boundary half-edge (same vertex pair)
-      if (boundaryEdgePairs.has(`${startIdx}-${endIdx}`) || boundaryEdgePairs.has(`${endIdx}-${startIdx}`)) {
+      // Skip if same vertex pair AND same curve type as a boundary edge
+      const pFwd = `${startIdx}-${endIdx}`, pRev = `${endIdx}-${startIdx}`;
+      const tFwd = boundaryEdgePairs.get(pFwd), tRev = boundaryEdgePairs.get(pRev);
+      if ((tFwd && tFwd === e.curve.type) || (tRev && tRev === e.curve.type)) {
         continue;
       }
 

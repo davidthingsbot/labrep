@@ -528,6 +528,10 @@ function analyticPlanePlane(faceA: Face, faceB: Face): FFIResult | null {
 /**
  * Clip an infinite line (origin + t*direction) to a planar face boundary.
  * Returns the parameter range [tMin, tMax] where the line is inside the face.
+ *
+ * For disk faces (single circle boundary), uses analytic line-circle intersection
+ * to produce exact endpoints consistent with analytic plane-cylinder FFI.
+ * OCCT ref: IntAna_IntConicQuad for analytic line-quadric intersection.
  */
 function clipInfiniteLineToFace(
   origin: Point3D,
@@ -543,11 +547,18 @@ function clipInfiniteLineToFace(
   const far2d = worldToSketch(pl, farPt);
   const dir2d = { x: far2d.x - origin2d.x, y: far2d.y - origin2d.y };
 
-  // Get face boundary as 2D polygon
+  // Disk face (single closed circle boundary) → analytic line-circle intersection
+  const nonDegen = face.outerWire.edges.filter(oe => !oe.edge.degenerate);
+  if (nonDegen.length === 1 && nonDegen[0].edge.curve.type === 'circle3d' && nonDegen[0].edge.curve.isClosed) {
+    const circle = nonDegen[0].edge.curve as any;
+    const center2d = worldToSketch(pl, circle.plane.origin);
+    return clipLineToCircle2D(origin2d, dir2d, center2d, circle.radius);
+  }
+
+  // General case: polygon approximation
   const poly = faceBoundaryPolygon2D(face, pl);
   if (poly.length < 3) return null;
 
-  // Find all intersections of the infinite 2D line with the polygon edges
   const hits: number[] = [];
   for (let i = 0; i < poly.length; i++) {
     const j = (i + 1) % poly.length;
@@ -561,6 +572,27 @@ function clipInfiniteLineToFace(
 
   hits.sort((a, b) => a - b);
   return { tMin: hits[0], tMax: hits[hits.length - 1] };
+}
+
+/**
+ * Analytic 2D line-circle intersection.
+ * OCCT ref: IntAna_IntConicQuad::Perform (line-quadric via polynomial roots).
+ */
+function clipLineToCircle2D(
+  origin: Pt2, dir: Pt2, center: Pt2, radius: number,
+): { tMin: number; tMax: number } | null {
+  const dx = origin.x - center.x;
+  const dy = origin.y - center.y;
+  const a = dir.x * dir.x + dir.y * dir.y;
+  const b = 2 * (dx * dir.x + dy * dir.y);
+  const c = dx * dx + dy * dy - radius * radius;
+  const disc = b * b - 4 * a * c;
+  if (disc < -1e-10) return null;
+  const sqrtDisc = Math.sqrt(Math.max(0, disc));
+  const t1 = (-b - sqrtDisc) / (2 * a);
+  const t2 = (-b + sqrtDisc) / (2 * a);
+  if (t2 - t1 < 1e-10) return null;
+  return { tMin: t1, tMax: t2 };
 }
 
 /**
@@ -628,7 +660,13 @@ function analyticPlaneCurved(planeFace: Face, curvedFace: Face): FFIResult | nul
     if (res.success && res.result) circleInfo = res.result;
   } else if (curvedSurf.type === 'cylinder') {
     const res = intersectPlaneCylinder(pl, curvedSurf);
-    if (res.success && res.result && res.result.type === 'circle') circleInfo = res.result;
+    if (res.success && res.result) {
+      if (res.result.type === 'circle') {
+        circleInfo = res.result;
+      } else if (res.result.type === 'lines') {
+        return analyticPlaneCylinderLines(planeFace, curvedFace, pl, res.result.lines);
+      }
+    }
   } else if (curvedSurf.type === 'cone') {
     const res = intersectPlaneCone(pl, curvedSurf);
     if (res.success && res.result && res.result.type === 'circle') circleInfo = res.result;
@@ -697,6 +735,105 @@ function analyticPlaneCurved(planeFace: Face, curvedFace: Face): FFIResult | nul
     ffiEdges.push({ edge: arc, startIdx: 0, endIdx: 0, ssiCurve: dummySSI });
   }
   return { edges: ffiEdges };
+}
+
+/**
+ * Handle plane-cylinder intersection that produces lines (plane parallel to axis).
+ * OCCT ref: IntAna_QuadQuadGeo → IntAna_Line result.
+ */
+function analyticPlaneCylinderLines(
+  planeFace: Face, curvedFace: Face, pl: Plane,
+  lines: { origin: Point3D; direction: Vector3D }[],
+): FFIResult | null {
+  const ffiEdges: FFIEdge[] = [];
+  const dummySSI: SSICurve = { points: [], isClosed: false };
+
+  const cylAdapter = toAdapter(curvedFace.surface);
+  const cylBounds = getCurvedFaceVRange(curvedFace, cylAdapter);
+  if (!cylBounds) return null;
+
+  const polyA = faceBoundaryPolygon2D(planeFace, pl);
+  if (polyA.length < 3) return null;
+
+  for (const line of lines) {
+    const dir = normalize(line.direction);
+    const axDir = (curvedFace.surface as any).axis.direction;
+    const dVdT = dot(dir, axDir);
+
+    let tMin = -1e6, tMax = 1e6;
+    if (Math.abs(dVdT) > 1e-12) {
+      const v0 = dot(vec3d(line.origin.x - (curvedFace.surface as any).axis.origin.x,
+        line.origin.y - (curvedFace.surface as any).axis.origin.y,
+        line.origin.z - (curvedFace.surface as any).axis.origin.z), axDir);
+      const t1 = (cylBounds.vMin - v0) / dVdT;
+      const t2 = (cylBounds.vMax - v0) / dVdT;
+      tMin = Math.max(tMin, Math.min(t1, t2));
+      tMax = Math.min(tMax, Math.max(t1, t2));
+    }
+    if (tMin >= tMax - 1e-10) continue;
+
+    const nSample = 100;
+    const tStep = (tMax - tMin) / nSample;
+    let insideStart = -1;
+    let segments: { tStart: number; tEnd: number }[] = [];
+    let wasInside = false;
+
+    for (let i = 0; i <= nSample; i++) {
+      const t = tMin + i * tStep;
+      const pt = point3d(line.origin.x + t * dir.x, line.origin.y + t * dir.y, line.origin.z + t * dir.z);
+      const pt2d = worldToSketch(pl, pt);
+      const inside = pointInPoly2D(pt2d, polyA);
+      if (inside && !wasInside) insideStart = t;
+      if (!inside && wasInside && insideStart >= 0) {
+        segments.push({ tStart: insideStart, tEnd: t - tStep });
+      }
+      wasInside = inside;
+    }
+    if (wasInside && insideStart >= 0) {
+      segments.push({ tStart: insideStart, tEnd: tMax });
+    }
+
+    for (const seg of segments) {
+      const p1 = point3d(line.origin.x + seg.tStart * dir.x, line.origin.y + seg.tStart * dir.y, line.origin.z + seg.tStart * dir.z);
+      const p2 = point3d(line.origin.x + seg.tEnd * dir.x, line.origin.y + seg.tEnd * dir.y, line.origin.z + seg.tEnd * dir.z);
+      if (distance(p1, p2) < 1e-6) continue;
+      const lineRes = makeLine3D(p1, p2);
+      if (!lineRes.success || !lineRes.result) continue;
+      const edgeRes = makeEdgeFromCurve(lineRes.result);
+      if (!edgeRes.success || !edgeRes.result) continue;
+      const edge = edgeRes.result;
+      const pcPlane = buildPCurveForEdgeOnSurface(edge, planeFace.surface, true);
+      if (pcPlane) addPCurveToEdge(edge, pcPlane);
+      const pcCurved = buildPCurveForEdgeOnSurface(edge, curvedFace.surface, true);
+      if (pcCurved) addPCurveToEdge(edge, pcCurved);
+      ffiEdges.push({ edge, startIdx: 0, endIdx: 0, ssiCurve: dummySSI });
+    }
+  }
+  return ffiEdges.length > 0 ? { edges: ffiEdges } : null;
+}
+
+/** Get V-range of a curved face from its wire boundary. */
+function getCurvedFaceVRange(face: Face, adapter: ReturnType<typeof toAdapter>): { vMin: number; vMax: number } | null {
+  let vMin = Infinity, vMax = -Infinity;
+  for (const oe of face.outerWire.edges) {
+    const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+    const uvS = adapter.projectPoint(s);
+    const uvE = adapter.projectPoint(e);
+    vMin = Math.min(vMin, uvS.v, uvE.v);
+    vMax = Math.max(vMax, uvS.v, uvE.v);
+    const c = oe.edge.curve;
+    if (c.type === 'circle3d' || c.type === 'arc3d') {
+      for (let i = 1; i < 8; i++) {
+        const t = c.startParam + (i / 8) * (c.endParam - c.startParam);
+        const pt = c.type === 'circle3d' ? evaluateCircle3D(c as any, t) : evaluateArc3D(c as any, t);
+        const uv = adapter.projectPoint(pt);
+        vMin = Math.min(vMin, uv.v);
+        vMax = Math.max(vMax, uv.v);
+      }
+    }
+  }
+  return (vMin < vMax) ? { vMin, vMax } : null;
 }
 
 /**

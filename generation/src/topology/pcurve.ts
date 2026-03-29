@@ -1,12 +1,14 @@
 import { Point3D, point3d, Vector3D } from '../core';
 import {
   Curve2D, evaluateLine2D, evaluateArc2D, evaluateCircle2D,
-  makeLine2D, makeCircle2D,
+  makeLine2D, makeCircle2D, makeArc2D,
 } from '../geometry';
 import type { PlaneCircleIntersection } from '../geometry/intersections3d';
 import type { Line2D } from '../geometry/line2d';
 import type { Arc2D } from '../geometry/arc2d';
 import type { Circle2D } from '../geometry/circle2d';
+import type { Circle3D } from '../geometry/circle3d';
+import { evaluateArc3D as evalArc3D } from '../geometry/arc3d';
 import { Surface } from './face';
 import { type SurfaceAdapter, toAdapter } from '../surfaces/surface-adapter';
 import type { Edge } from './edge';
@@ -196,6 +198,18 @@ export function buildPCurveForEdgeOnSurface(
     return makePCurve(line2d.result, surface);
   }
 
+  if (!adapter.isUPeriodic && edge.curve.isClosed && edge.curve.type === 'circle3d') {
+    // Closed circle on non-periodic surface (e.g., circle on plane):
+    // PCurve is a Circle2D in the surface's UV space.
+    // OCCT ref: ProjLib_Plane::Project(gp_Circ) — projects 3D circle center
+    // to 2D via dot products with plane axes, uses SAME radius (unchanged
+    // for normal-to-plane projection since xAxis/yAxis are orthonormal).
+    const circ3d = edge.curve as Circle3D;
+    const circle2d = makeCircle2D({ x: startUV.u, y: startUV.v }, circ3d.radius);
+    if (!circle2d.result) return null;
+    return makePCurve(circle2d.result, surface);
+  }
+
   if (adapter.isUPeriodic) {
     // Open edge on periodic surface: unwrap U for continuity
     // Ensure endUV.u is within π of startUV.u
@@ -207,6 +221,40 @@ export function buildPCurveForEdgeOnSurface(
       startUV = { u: startUV.u + adapter.uPeriod, v: startUV.v };
       endUV = { u: endUV.u + adapter.uPeriod, v: endUV.v };
     }
+  }
+
+  // Arc on non-periodic surface (e.g., arc on plane): project to Arc2D.
+  // OCCT ref: ProjLib_Plane::Project(gp_Circ) — projects center, preserves radius.
+  // For arcs, the angular parametrization maps from 3D arc angles to 2D arc angles.
+  if (!adapter.isUPeriodic && !edge.curve.isClosed
+      && (edge.curve.type === 'arc3d') && 'plane' in edge.curve) {
+    const arc3d = edge.curve as any;
+    const centerUV = adapter.projectPoint(arc3d.plane.origin);
+    // Compute start/end angles in 2D UV space from the projected points
+    const startAngle = Math.atan2(startUV.v - centerUV.v, startUV.u - centerUV.u);
+    let endAngle = Math.atan2(endUV.v - centerUV.v, endUV.u - centerUV.u);
+    // Ensure the arc goes in the same direction as the 3D arc
+    // (startAngle → endAngle should sweep the same way as the 3D arc)
+    if (endAngle <= startAngle) endAngle += 2 * Math.PI;
+    // Check if the 3D arc goes CCW or CW by testing midpoint
+    const midT3d = (arc3d.startParam + arc3d.endParam) / 2;
+    const mid3d = adapter.projectPoint(evalArc3D(arc3d, midT3d));
+    {
+      const midAngle = Math.atan2(mid3d.v - centerUV.v, mid3d.u - centerUV.u);
+      // If midpoint angle is not between start and end (going CCW), reverse direction
+      const inRange = (midAngle > startAngle && midAngle < endAngle)
+        || (midAngle + 2 * Math.PI > startAngle && midAngle + 2 * Math.PI < endAngle);
+      if (!inRange) {
+        // Arc goes the other way: swap and adjust
+        const tmp = startAngle;
+        const newStart = endAngle - 2 * Math.PI;
+        endAngle = tmp;
+        const arc2d = makeArc2D({ x: centerUV.u, y: centerUV.v }, arc3d.radius, newStart, endAngle);
+        if (arc2d.result) return makePCurve(arc2d.result, surface);
+      }
+    }
+    const arc2d = makeArc2D({ x: centerUV.u, y: centerUV.v }, arc3d.radius, startAngle, endAngle);
+    if (arc2d.result) return makePCurve(arc2d.result, surface);
   }
 
   // PCurve always goes in edge geometric direction (startVertex → endVertex).

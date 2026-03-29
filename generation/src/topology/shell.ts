@@ -2,6 +2,7 @@ import { OperationResult, success, failure } from '../mesh/mesh';
 import { Face, faceOuterWire, faceInnerWires } from './face';
 import { Wire } from './wire';
 import { edgeStartPoint, edgeEndPoint } from './edge';
+import { evaluateArc3D } from '../geometry/arc3d';
 import { distance, TOLERANCE } from '../core';
 
 /**
@@ -68,6 +69,14 @@ function collectWireEdges(wire: Wire): Array<{ key: string; directed: string }> 
     } else if (isClosed) {
       key = `${k1}|${k1}`;
       directed = `${k1}|${oe.forward ? 'fwd' : 'rev'}`;
+    } else if (curve.type === 'arc3d' && 'plane' in curve) {
+      // Open arcs: include midpoint to disambiguate from lines with same endpoints.
+      // An arc and a line can share endpoints but traverse different paths.
+      const midT = (curve.startParam + curve.endParam) / 2;
+      const mid = evaluateArc3D(curve as any, midT);
+      const midKey = `M:${round(mid.x)},${round(mid.y)},${round(mid.z)}`;
+      key = k1 < k2 ? `${k1}|${k2}|${midKey}` : `${k2}|${k1}|${midKey}`;
+      directed = `${k1}->${k2}|${midKey}`;
     } else {
       key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
       directed = `${k1}->${k2}`;

@@ -41,8 +41,6 @@ function makeBox(cx: number, cy: number, cz: number, w: number, h: number, d: nu
 }
 
 function makeSphere(r: number, cx = 0, cy = 0, cz = 0) {
-  // Build sphere at origin, then note: our revolve always creates at origin
-  // For offset spheres, we'd need transforms — for now, only origin-centered
   const arcPlane = plane(point3d(cx, cy, cz), vec3d(0, -1, 0), vec3d(1, 0, 0));
   const arc1 = makeArc3D(arcPlane, r, -Math.PI / 2, 0).result!;
   const arc2 = makeArc3D(arcPlane, r, 0, Math.PI / 2).result!;

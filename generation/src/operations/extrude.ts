@@ -754,7 +754,8 @@ export function generateCapFaces(
     }
   }
 
-  const bottomFaceResult = makeFace(bottomSurface, reversedOuterResult.result!, reversedInners);
+  // OCCT: bottom face is REVERSED (surface normal +z but outward normal -z)
+  const bottomFaceResult = makeFace(bottomSurface, reversedOuterResult.result!, reversedInners, false);
   if (!bottomFaceResult.success) {
     return failure(`Failed to create bottom cap: ${bottomFaceResult.error}`);
   }
