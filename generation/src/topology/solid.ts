@@ -170,8 +170,13 @@ function computeFaceVolume(face: Face): number {
       if (p.surface === surface) matchingPCs.push(p);
     }
 
+    // Only swap for TRUE seams (same edge object 2+ times in wire).
+    // Split seams (boolean creates separate edges with 2 PCurves each) use
+    // rawOcc=0 — their PCurve directions are already correct for the volume sign.
+    // OCCT ref: IsCurveOnClosedSurface() distinguishes true seams from split edges.
+    const isTrueSeam = (edgeAppearances.get(oe.edge) || 0) >= 2;
     let targetOcc = rawOcc;
-    if (face.forward === false && matchingPCs.length >= 2) {
+    if (face.forward === false && isTrueSeam && matchingPCs.length >= 2) {
       const midU0 = evaluateCurve2D(matchingPCs[0].curve2d,
         (matchingPCs[0].curve2d.startParam + matchingPCs[0].curve2d.endParam) / 2).x;
       const farFromBU1 = Math.abs(midU0 - BU1) > (adapter.isUPeriodic ? adapter.uPeriod / 4 : 1);

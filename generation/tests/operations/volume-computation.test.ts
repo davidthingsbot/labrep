@@ -265,3 +265,44 @@ describe('volume: box minus sphere (reversed revolve face)', () => {
     expect(Math.abs(vol - expected) / expected).toBeLessThan(0.02);
   });
 });
+
+describe('volume: box minus contained cylinder (reversed extrude face)', () => {
+  // The cylinder bore wall is a reversed face with split seam edges
+  // (boolean creates separate edge objects that retain both PCurves).
+  // OCCT ref: BRep_Tool::CurveOnSurface selects PCurve by edge orientation,
+  // not by visit count — handles both true seams and split seams.
+
+  it('contained cylinder subtracts volume correctly', () => {
+    // Cylinder fully inside box (no through-hole)
+    const box = makeBox(0, 0, -5, 10, 10, 10);
+    const cyl = makeCylinder(1, 6);
+    const result = booleanSubtract(box.solid, cyl.solid);
+    expect(result.success).toBe(true);
+    const vol = solidVolume(result.result!.solid);
+    const expected = 1000 - Math.PI * 1 * 6;
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.02);
+  });
+
+  it('reversed cylinder face has forward=false', () => {
+    const box = makeBox(0, 0, -5, 10, 10, 10);
+    const cyl = makeCylinder(1, 6);
+    const result = booleanSubtract(box.solid, cyl.solid);
+    expect(result.success).toBe(true);
+    const faces = shellFaces(result.result!.solid.outerShell);
+    const cylFaces = faces.filter(f => f.surface.type === 'cylinder');
+    expect(cylFaces.length).toBeGreaterThanOrEqual(1);
+    expect(cylFaces[0].forward).toBe(false);
+  });
+
+  it('larger cylinder r=2: still correct', () => {
+    // Larger radius = higher quadrature error (scales with r²).
+    // 8% tolerance accounts for Gauss quadrature precision at N_L=48, N_U=32.
+    const box = makeBox(0, 0, -5, 10, 10, 10);
+    const cyl = makeCylinder(2, 8);
+    const result = booleanSubtract(box.solid, cyl.solid);
+    expect(result.success).toBe(true);
+    const vol = solidVolume(result.result!.solid);
+    const expected = 1000 - Math.PI * 4 * 8;
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.08);
+  });
+});
