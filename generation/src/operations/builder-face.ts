@@ -921,18 +921,20 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
         // of recomputing from PCurve (which can give the wrong seam side for
         // reverse boundary half-edges).
         // OCCT: Path() lines 572-583 — seam disambiguation.
-        // On faces with poles (reverse boundary half-edges exist), use startUV
-        // from the vertex pool WITHOUT periodic modulo — the UV encodes the seam
-        // side directly. On other periodic faces (cylinders), use PCurve-based UV
-        // WITH modulo wrapping for proper periodic handling.
+        // Use startUV WITHOUT modulo for reverse boundary half-edges on
+        // pole-bearing faces (these can be on the wrong seam side and the
+        // modulo would hide the difference). For all other edges, use the
+        // standard modulo-based comparison.
         if (periodic && currentUV && cand.startVtx !== cand.endVtx) {
           let du: number, dv: number;
-          if (degeneratePts.length > 0 && cand.startUV) {
-            // Vertex pool UV — no modulo (seam side encoded)
+          // Reverse boundary half-edges are the ones we added for pole-bearing faces.
+          // They have isBoundary=true and their edge is NOT in the original face wire.
+          const isReverseBoundary = cand.isBoundary && degeneratePts.length > 0 &&
+            !faceOuterWire(face).edges.some(oe => oe.edge === cand.edge);
+          if (isReverseBoundary && cand.startUV) {
             du = Math.abs(cand.startUV.x - currentUV.x);
             dv = Math.abs(cand.startUV.y - currentUV.y);
           } else {
-            // PCurve UV with periodic wrapping
             const candUV = getEdgeUV(cand.edge, surface, cand.forward, cand.pcurveOccurrence);
             if (!candUV) { viable.push(cand); continue; }
             du = Math.abs(candUV.start.x - currentUV.x);
