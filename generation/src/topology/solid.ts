@@ -114,19 +114,30 @@ function computeFaceVolume(face: Face): number {
   const N_U = 32;
 
   // OCCT: BU1 from theSurface.Bounds() — the face's actual UV bounds.
-  // For periodic surfaces, BU1=0. For non-periodic (planes), derive from boundary.
+  // For periodic surfaces, BU1=0. For non-periodic (planes), derive from
+  // ALL boundary edges (outer + inner wires), sampling along closed curves
+  // to find the true minimum U (not just start/end, which are equal for circles).
   let BU1: number;
   if (adapter.isUPeriodic) {
     BU1 = 0;
   } else {
     BU1 = Infinity;
-    for (const oe of wire.edges) {
+    const allWireEdges = [...wire.edges];
+    for (const iw of faceInnerWires(face)) {
+      for (const oe of iw.edges) allWireEdges.push(oe);
+    }
+    for (const oe of allWireEdges) {
       if (oe.edge.degenerate) continue;
       for (const pc of oe.edge.pcurves) {
         if (pc.surface === surface) {
-          const uS = evaluateCurve2D(pc.curve2d, pc.curve2d.startParam).x;
-          const uE = evaluateCurve2D(pc.curve2d, pc.curve2d.endParam).x;
-          BU1 = Math.min(BU1, uS, uE);
+          const c2d = pc.curve2d;
+          // Sample N points along the curve to find true min U.
+          // Needed for closed curves (circles) where start=end misses extrema.
+          const N_SAMPLE = 8;
+          for (let k = 0; k <= N_SAMPLE; k++) {
+            const t = c2d.startParam + (c2d.endParam - c2d.startParam) * k / N_SAMPLE;
+            BU1 = Math.min(BU1, evaluateCurve2D(c2d, t).x);
+          }
         }
       }
     }
