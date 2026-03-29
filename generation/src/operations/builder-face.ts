@@ -827,11 +827,25 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     let current = he;
 
     // Path tracing (OCCT BOPAlgo_WireSplitter_1.cxx Path())
+    // OCCT stores UV at each path vertex (aCoordVa) from the edge's PCurve.
+    // This is critical for seam disambiguation: the stored UV reflects which
+    // seam side the path arrived from, enabling correct 2D distance checks.
     const pathEdges: HalfEdge[] = [];
     const pathVertices: number[] = [he.startVtx];
+    const pathUVs: (Pt2 | null)[] = [];
+    // UV at the start vertex (aCoordVa in OCCT: Coord2d of the FORWARD vertex)
+    {
+      const startUV = getEdgeUV(he.edge, surface, he.forward, he.pcurveOccurrence);
+      pathUVs.push(startUV ? startUV.start : null);
+    }
     current.used = true;
     pathEdges.push(current);
     pathVertices.push(current.endVtx);
+    // UV at the end vertex
+    {
+      const endUV = getEdgeUV(current.edge, surface, current.forward, current.pcurveOccurrence);
+      pathUVs.push(endUV ? endUV.end : null);
+    }
 
     for (let safety = 0; safety < 10000; safety++) {
       const vtx = pathVertices[pathVertices.length - 1];
@@ -840,12 +854,9 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       // Scan BACKWARDS through path to find sub-loop. bHasEdge gates the
       // vertex-match check: degenerate-only tails are skipped entirely.
       let loopStartIdx = -1;
-      const lastEdgeForClosure = pathEdges[pathEdges.length - 1];
-      let endUVForClosure: Pt2 | null = null;
-      if (periodic) {
-        const uv = getEdgeUV(lastEdgeForClosure.edge, surface, lastEdgeForClosure.forward, lastEdgeForClosure.pcurveOccurrence);
-        if (uv) endUVForClosure = uv.end;
-      }
+      // OCCT: aPb = Coord2d(aVb, aEOuta, myFace) — UV of current vertex on the
+      // last edge's PCurve. Use stored pathUVs for the current position.
+      const endUVForClosure: Pt2 | null = pathUVs[pathUVs.length - 1];
       let bHasEdge = false;
       for (let k = pathVertices.length - 2; k >= 0; k--) {
         const edgeAtK = pathEdges[k];
@@ -854,13 +865,15 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
           if (!bHasEdge) continue;
         }
         if (pathVertices[k] !== vtx) continue;
+        // OCCT: aPaPrev = aCoordVa(i) — UV stored when vertex was first visited.
+        // Compare with aPb (endUVForClosure) by 2D distance.
         if (periodic && endUVForClosure) {
-          const uvAtK = getEdgeUV(edgeAtK.edge, surface, edgeAtK.forward, edgeAtK.pcurveOccurrence);
+          const uvAtK = pathUVs[k];
           if (uvAtK) {
-            let du = Math.abs(uvAtK.start.x - endUVForClosure.x);
+            let du = Math.abs(uvAtK.x - endUVForClosure.x);
             if (adapter.isUPeriodic) du = du % adapter.uPeriod;
             if (du > adapter.uPeriod / 2) du = adapter.uPeriod - du;
-            const dv = Math.abs(uvAtK.start.y - endUVForClosure.y);
+            const dv = Math.abs(uvAtK.y - endUVForClosure.y);
             if (du > adapter.uPeriod / 4 || dv > 0.5) continue;
           }
         }
@@ -871,6 +884,7 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       if (loopStartIdx >= 0) {
         const subLoop = pathEdges.splice(loopStartIdx);
         pathVertices.splice(loopStartIdx + 1);
+        pathUVs.splice(loopStartIdx + 1);
         const isUturn = subLoop.length === 2 && subLoop[0].edge === subLoop[1].edge;
         if (subLoop.length >= 1 && !isUturn) {
           loops.push(subLoop);
@@ -886,15 +900,9 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       const candidates = outgoing.get(vtx);
       if (!candidates) break;
 
-      // OCCT ref: At seam vertices, filter candidates by UV position.
-      // Compute current UV from last edge's PCurve end (Coord2d in OCCT).
-      // Candidates whose PCurve start UV is far from current UV are on the
-      // wrong side of the seam and must be skipped.
-      let currentUV: Pt2 | null = null;
-      if (periodic) {
-        const lastUV = getEdgeUV(lastEdge.edge, surface, lastEdge.forward, lastEdge.pcurveOccurrence);
-        if (lastUV) currentUV = lastUV.end;
-      }
+      // OCCT ref: Path() line 418 — aPb = Coord2d(aVb, aEOuta, myFace)
+      // Use the stored UV at the current path position for seam disambiguation.
+      const currentUV: Pt2 | null = pathUVs[pathUVs.length - 1];
 
       const viable: HalfEdge[] = [];
       for (const cand of candidates) {
@@ -941,6 +949,9 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       bestHE.used = true;
       pathEdges.push(bestHE);
       pathVertices.push(bestHE.endVtx);
+      // OCCT: store UV at the new vertex from the edge's PCurve end
+      const newUV = getEdgeUV(bestHE.edge, surface, bestHE.forward, bestHE.pcurveOccurrence);
+      pathUVs.push(newUV ? newUV.end : null);
     }
 
     if (pathEdges.length >= 1) {
