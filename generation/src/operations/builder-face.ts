@@ -712,55 +712,16 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   // result edges that coincide with face boundary edges are not duplicated.
   // Skip if vertex pair AND curve type match. Different geometry connecting
   // OCCT ref: BOPAlgo_WireSplitter fills the SmartMap with both FORWARD and
-  // REVERSED orientations of each edge. After splitting, the sub-wires may
-  // traverse boundary sub-edges in either direction. Only add reverse
-  // half-edges for boundary edges that were SPLIT (sub-edges from split
-  // boundary edges may need to be traversed in either direction in the new
-  // sub-wires). Original unsplit boundary edges keep only the wire direction.
-  // OCCT ref: BOPAlgo_WireSplitter fills the SmartMap with both orientations.
-  // On faces with poles, sub-edges from split NON-SEAM boundaries may need
-  // reverse half-edges. Seam sub-edges already have both directions (the seam
-  // appears twice in the original wire: forward and reversed).
+  // REVERSED orientations of each edge. On faces with poles (degenerate edges),
+  // split boundary sub-edges may need to be traversed in either direction.
+  // Add reverse half-edges for ALL boundary sub-edges (not original edges).
   if (degeneratePts.length > 0) {
-    // Identify seam edges: those appearing 2+ times in the wire
-    const seamEdges = new Set<Edge>();
-    const wireEdgeCounts = new Map<Edge, number>();
-    for (const oe of faceOuterWire(face).edges) {
-      wireEdgeCounts.set(oe.edge, (wireEdgeCounts.get(oe.edge) || 0) + 1);
-    }
-    for (const [e, count] of wireEdgeCounts) {
-      if (count >= 2) seamEdges.add(e);
-    }
-
     const boundaryReverse: HalfEdge[] = [];
     for (const bhe of boundaryHalfEdges) {
       if (bhe.startVtx === bhe.endVtx) continue;
       // Only sub-edges (not original boundary)
       const isOriginal = faceOuterWire(face).edges.some(oe => oe.edge === bhe.edge);
       if (isOriginal) continue;
-      // Skip sub-edges from seam parents. A seam sub-edge's pcurveOccurrence
-      // tells us which seam traversal it came from; occurrence >= 1 means it's
-      // from the reverse seam (definitely a seam). Occurrence 0 could be seam
-      // or non-seam. Check if ANY seam edge's 3D curve contains this sub-edge.
-      let isSeamDerived = false;
-      if (bhe.pcurveOccurrence >= 1) {
-        isSeamDerived = true;
-      } else {
-        // Check if sub-edge midpoint lies on a seam edge
-        const mid = (bhe.edge.curve.type === 'arc3d' || bhe.edge.curve.type === 'circle3d')
-          ? evalCurve(bhe.edge.curve, (bhe.edge.curve.startParam + bhe.edge.curve.endParam) / 2)
-          : edgeStartPoint(bhe.edge);
-        for (const seamE of seamEdges) {
-          if (seamE.curve.type === 'arc3d' && 'plane' in seamE.curve) {
-            const sc = seamE.curve as any;
-            const rel = vec3d(mid.x - sc.plane.origin.x, mid.y - sc.plane.origin.y, mid.z - sc.plane.origin.z);
-            const nComp = Math.abs(rel.x * sc.plane.normal.x + rel.y * sc.plane.normal.y + rel.z * sc.plane.normal.z);
-            const r = Math.sqrt(rel.x * rel.x + rel.y * rel.y + rel.z * rel.z);
-            if (nComp < 0.01 && Math.abs(r - sc.radius) < 0.01) { isSeamDerived = true; break; }
-          }
-        }
-      }
-      if (isSeamDerived) continue;
       boundaryReverse.push({
         edge: bhe.edge, forward: !bhe.forward,
         startVtx: bhe.endVtx, endVtx: bhe.startVtx,
