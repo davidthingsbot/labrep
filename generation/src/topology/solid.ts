@@ -1,9 +1,10 @@
 import { Point3D } from '../core';
 import { OperationResult, success, failure } from '../mesh/mesh';
-import { Shell, shellIsClosed, shellFaces } from './shell';
+import { Shell, materializeShellFaceUse, shellFaceUses, shellIsClosed } from './shell';
 import { faceOuterWire, faceInnerWires, Face, Surface } from './face';
 import { toAdapter } from '../surfaces/surface-adapter';
 import { evaluateCurve2D } from './pcurve';
+import { type OrientedEdge } from './wire';
 
 /**
  * A closed 3D volume defined by its boundary shell(s).
@@ -96,18 +97,16 @@ type Pt = { x: number; y: number; z: number };
  *
  * BU1 = face's minimum U parameter (from Bounds(), not hardcoded 0).
  */
-function computeFaceVolume(face: Face): number {
+export interface FaceEdgeVolumeContribution {
+  readonly edge: OrientedEdge['edge'];
+  readonly forward: boolean;
+  readonly volume: number;
+}
+
+function computeFaceVolume(face: Face, edgeContributions?: FaceEdgeVolumeContribution[]): number {
   const surface = face.surface;
-  const wire = faceOuterWire(face);
   const adapter = toAdapter(surface);
-
-  // OCCT applies TWO orientation corrections that cancel:
-  // 1. BRepGProp_Face::Normal: reverses Jacobian for reversed faces (mySReverse)
-  // 2. BRepGProp_Face::Load(Edge): reverses PCurve for reversed edges (C->Reversed())
-  // Since we DON'T reverse PCurves (we swap lStart/lEnd instead, giving negative dl),
-  // we also must NOT reverse the Jacobian. The wire winding (via dl sign) naturally
-  // provides the correct volume sign for each face.
-
+  const outerWire = faceOuterWire(face);
 
   // Boundary-curve algorithm for all other faces
   const N_L = 48;
@@ -122,7 +121,7 @@ function computeFaceVolume(face: Face): number {
     BU1 = 0;
   } else {
     BU1 = Infinity;
-    const allWireEdges = [...wire.edges];
+    const allWireEdges = [...outerWire.edges];
     for (const iw of faceInnerWires(face)) {
       for (const oe of iw.edges) allWireEdges.push(oe);
     }
@@ -146,16 +145,14 @@ function computeFaceVolume(face: Face): number {
 
   let vol = 0;
 
-  // OCCT BRepGProp_Domain: iterate ALL edges (outer + inner wires)
-  const allEdges: { edge: typeof wire.edges[0]['edge']; forward: boolean }[] = [];
-  for (const oe of wire.edges) allEdges.push(oe);
+  const allEdges: { edge: typeof outerWire.edges[0]['edge']; forward: boolean }[] = [];
+  for (const oe of outerWire.edges) allEdges.push(oe);
   for (const iw of faceInnerWires(face)) {
     for (const oe of iw.edges) allEdges.push(oe);
   }
 
   const edgeSeen = new Map<object, number>();
 
-  // Pre-count edge appearances for true seam detection
   const edgeAppearances = new Map<object, number>();
   for (const oe of allEdges) {
     if (!oe.edge.degenerate) {
@@ -163,16 +160,12 @@ function computeFaceVolume(face: Face): number {
     }
   }
 
+  const reverseSurfaceNormal = face.forward === false;
+
   for (const oe of allEdges) {
     if (oe.edge.degenerate) continue;
+    let edgeVolume = 0;
 
-    // PCurve selection — OCCT BRep_Tool::CurveOnSurface + seam occurrence.
-    // For forward faces, rawOcc pairs each visit with the correct PCurve
-    // regardless of storage order.
-    // For reversed faces (flipFace reverses wire but not PCurve order), we
-    // swap occurrences ONLY when occ 0 is the "far" PCurve (U≈period,
-    // nonzero integral). This handles both extrude (occ 0=U=2π → swap)
-    // and revolve (occ 0=U=0 → no swap) without depending on storage order.
     const rawOcc = edgeSeen.get(oe.edge) || 0;
     edgeSeen.set(oe.edge, rawOcc + 1);
 
@@ -181,19 +174,21 @@ function computeFaceVolume(face: Face): number {
       if (p.surface === surface) matchingPCs.push(p);
     }
 
-    // Only swap for TRUE seams (same edge object 2+ times in wire).
-    // Split seams (boolean creates separate edges with 2 PCurves each) use
-    // rawOcc=0 — their PCurve directions are already correct for the volume sign.
-    // OCCT ref: IsCurveOnClosedSurface() distinguishes true seams from split edges.
     const isTrueSeam = (edgeAppearances.get(oe.edge) || 0) >= 2;
     let targetOcc = rawOcc;
     if (face.forward === false && isTrueSeam && matchingPCs.length >= 2) {
-      const midU0 = evaluateCurve2D(matchingPCs[0].curve2d,
-        (matchingPCs[0].curve2d.startParam + matchingPCs[0].curve2d.endParam) / 2).x;
+      const midU0 = evaluateCurve2D(
+        matchingPCs[0].curve2d,
+        (matchingPCs[0].curve2d.startParam + matchingPCs[0].curve2d.endParam) / 2,
+      ).x;
       const farFromBU1 = Math.abs(midU0 - BU1) > (adapter.isUPeriodic ? adapter.uPeriod / 4 : 1);
       if (farFromBU1) {
         targetOcc = 1 - rawOcc;
       }
+    } else if (!isTrueSeam && matchingPCs.length >= 2) {
+      // OCCT BRep_Tool::CurveOnSurface on a closed-surface edge:
+      // PCurve1 for FORWARD edge use, PCurve2 for REVERSED edge use.
+      targetOcc = oe.forward ? 0 : 1;
     }
 
     let pcIdx = 0;
@@ -207,14 +202,19 @@ function computeFaceVolume(face: Face): number {
     if (!pc) continue;
 
     const c2d = pc.curve2d;
-    const lStart = oe.forward ? c2d.startParam : c2d.endParam;
-    const lEnd = oe.forward ? c2d.endParam : c2d.startParam;
+    const evalOrientedCurve2D = (t: number) =>
+      evaluateCurve2D(
+        c2d,
+        oe.forward ? t : (c2d.startParam + c2d.endParam - t),
+      );
+    const lStart = c2d.startParam;
+    const lEnd = c2d.endParam;
     const dl = (lEnd - lStart) / N_L;
 
     for (let i = 0; i < N_L; i++) {
       const l = lStart + (i + 0.5) * dl;
 
-      const Puv = evaluateCurve2D(c2d, l);
+      const Puv = evalOrientedCurve2D(l);
       // Normalize u for periodic surfaces (PCurves may have out-of-range values)
       let u2 = Puv.x;
       if (adapter.isUPeriodic) {
@@ -225,8 +225,8 @@ function computeFaceVolume(face: Face): number {
 
       // dv/dl (OCCT: Vuv.Y())
       const eps = Math.max(Math.abs(dl) * 0.001, 1e-10);
-      const PuvPrev = evaluateCurve2D(c2d, l - eps);
-      const PuvNext = evaluateCurve2D(c2d, l + eps);
+      const PuvPrev = evalOrientedCurve2D(l - eps);
+      const PuvNext = evalOrientedCurve2D(l + eps);
       const dvdl = (PuvNext.y - PuvPrev.y) / (2 * eps);
 
       if (Math.abs(dvdl) < 1e-14) continue;
@@ -238,15 +238,31 @@ function computeFaceVolume(face: Face): number {
       for (let j = 0; j < N_U; j++) {
         const u = BU1 + (j + 0.5) * duInner;
         const pt = evaluateSurface(surface, u, v);
-        const jn = jacobianNormal(surface, u, v);
+        const rawNormal = jacobianNormal(surface, u, v);
+        const jn = reverseSurfaceNormal
+          ? { x: -rawNormal.x, y: -rawNormal.y, z: -rawNormal.z }
+          : rawNormal;
         innerSum += (pt.x * jn.x + pt.y * jn.y + pt.z * jn.z) * duInner;
       }
 
-      vol += innerSum * dvdl * dl;
+      const stepVolume = innerSum * dvdl * dl;
+      vol += stepVolume;
+      edgeVolume += stepVolume;
     }
+
+    edgeContributions?.push({
+      edge: oe.edge,
+      forward: oe.forward,
+      volume: edgeVolume / 3,
+    });
   }
 
   return vol / 3;
+}
+
+export interface FaceVolumeContribution {
+  readonly face: Face;
+  readonly volume: number;
 }
 
 /**
@@ -304,8 +320,29 @@ function evaluateSurface(surface: Surface, u: number, v: number): Pt {
  */
 function computeShellSignedVolume(shell: Shell): number {
   let totalVolume = 0;
-  for (const face of shellFaces(shell)) {
-    totalVolume += computeFaceVolume(face);
+  for (const faceUse of shellFaceUses(shell)) {
+    totalVolume += computeFaceVolume(materializeShellFaceUse(faceUse));
   }
   return totalVolume;
+}
+
+export function debugFaceVolumes(shell: Shell): FaceVolumeContribution[] {
+  return shellFaceUses(shell).map(faceUse => ({
+    face: faceUse.face,
+    volume: computeFaceVolume(materializeShellFaceUse(faceUse)),
+  }));
+}
+
+export function debugShellSignedVolume(shell: Shell): number {
+  return computeShellSignedVolume(shell);
+}
+
+export function debugFaceVolume(face: Face, reversed = false): number {
+  return computeFaceVolume(materializeShellFaceUse({ face, reversed }));
+}
+
+export function debugFaceEdgeVolumes(face: Face, reversed = false): FaceEdgeVolumeContribution[] {
+  const contributions: FaceEdgeVolumeContribution[] = [];
+  computeFaceVolume(materializeShellFaceUse({ face, reversed }), contributions);
+  return contributions;
 }

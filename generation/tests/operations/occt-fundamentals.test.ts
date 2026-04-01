@@ -15,16 +15,17 @@
 import { describe, it, expect } from 'vitest';
 import { point3d, vec3d, plane } from '../../src/core';
 import { makeLine3D } from '../../src/geometry/line3d';
-import { makeArc3D } from '../../src/geometry/arc3d';
-import { makeCircle3D } from '../../src/geometry/circle3d';
+import { makeArc3D, evaluateArc3D } from '../../src/geometry/arc3d';
+import { makeCircle3D, evaluateCircle3D } from '../../src/geometry/circle3d';
 import { makeEdgeFromCurve, edgeStartPoint, edgeEndPoint, addPCurveToEdge } from '../../src/topology/edge';
 import { makeWire, makeWireFromEdges, orientEdge } from '../../src/topology/wire';
 import { shellFaces } from '../../src/topology/shell';
-import { solidVolume } from '../../src/topology/solid';
+import { debugFaceVolumes, solidInnerShells, solidVolume } from '../../src/topology/solid';
 import { extrude } from '../../src/operations/extrude';
 import { revolve } from '../../src/operations/revolve';
-import { builderFace } from '../../src/operations/builder-face';
-import { buildPCurveForEdgeOnSurface } from '../../src/topology/pcurve';
+import { builderFace, debugGetEdgeUseUV } from '../../src/operations/builder-face';
+import { intersectFaceFace } from '../../src/operations/face-face-intersection';
+import { buildPCurveForEdgeOnSurface, evaluateCurve2D } from '../../src/topology/pcurve';
 import { booleanSubtract } from '../../src/operations/boolean';
 import { solidToMesh } from '../../src/mesh/tessellation';
 
@@ -64,6 +65,42 @@ function makeBox(cx: number, cy: number, z: number, w: number, h: number, d: num
   return extrude(makeWireFromEdges(edges).result!, vec3d(0, 0, 1), d).result!;
 }
 
+function wireSignedAreaXY(wire: ReturnType<typeof makeWire>['result']): number {
+  const pts: { x: number; y: number }[] = [];
+  for (const oe of wire!.edges) {
+    const curve = oe.edge.curve;
+    if (curve.type === 'circle3d') {
+      for (let i = 0; i < 32; i++) {
+        const frac = i / 32;
+        const t = oe.forward
+          ? curve.startParam + frac * (curve.endParam - curve.startParam)
+          : curve.endParam - frac * (curve.endParam - curve.startParam);
+        const pt = evaluateCircle3D(curve, t);
+        pts.push({ x: pt.x, y: pt.y });
+      }
+    } else if (curve.type === 'arc3d') {
+      for (let i = 0; i < 16; i++) {
+        const frac = i / 16;
+        const t = oe.forward
+          ? curve.startParam + frac * (curve.endParam - curve.startParam)
+          : curve.endParam - frac * (curve.endParam - curve.startParam);
+        const pt = evaluateArc3D(curve, t);
+        pts.push({ x: pt.x, y: pt.y });
+      }
+    } else {
+      const pt = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      pts.push({ x: pt.x, y: pt.y });
+    }
+  }
+
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const j = (i + 1) % pts.length;
+    area += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+  }
+  return area / 2;
+}
+
 // ═══════════════════════════════════════════════════════
 // 1. PRIMITIVE TOPOLOGY (OCCT BRepPrim)
 // ═══════════════════════════════════════════════════════
@@ -86,6 +123,27 @@ describe('OCCT primitive topology', () => {
     const edgeObjs = sideFace.outerWire.edges.map(oe => oe.edge);
     const unique = new Set(edgeObjs);
     expect(unique.size).toBe(3); // 2 circles + 1 seam (appearing twice)
+  });
+
+  it('closed-face reversed seam use reads the alternate PCurve occurrence', () => {
+    const cyl = makeCylinder(2, 5);
+    const sideFace = shellFaces(cyl.solid.outerShell).find(f => f.surface.type === 'cylinder')!;
+    const seamUses = sideFace.outerWire.edges.filter((oe) =>
+      oe.edge.pcurves.filter((pc) => pc.surface === sideFace.surface).length > 1);
+
+    expect(seamUses).toHaveLength(2);
+
+    const firstUse = debugGetEdgeUseUV(seamUses[0].edge, sideFace.surface, seamUses[0].forward, 0);
+    const secondUse = debugGetEdgeUseUV(seamUses[1].edge, sideFace.surface, seamUses[1].forward, 1);
+    const rawSecondOccurrence = seamUses[1].edge.pcurves
+      .filter((pc) => pc.surface === sideFace.surface)[1]!;
+    const rawSecondStart = evaluateCurve2D(rawSecondOccurrence.curve2d, rawSecondOccurrence.curve2d.startParam);
+
+    expect(firstUse).not.toBeNull();
+    expect(secondUse).not.toBeNull();
+    expect(rawSecondStart.x).toBeCloseTo(0, 6);
+    expect(firstUse!.start.x).toBeCloseTo(2 * Math.PI, 6);
+    expect(secondUse!.start.x).toBeCloseTo(2 * Math.PI, 6);
   });
 
   it('cylinder cap is single closed circle edge', () => {
@@ -208,6 +266,129 @@ describe('BuilderFace: circle on planar face', () => {
     expect(holed).toBeDefined();
     expect(disk).toBeDefined();
   });
+
+  it('circle fully inside an existing hole does not create new split faces', () => {
+    const outerFace = makeRectFace(-3, -3, 3, 3);
+    const outerPlane = outerFace.surface.plane;
+
+    const largeCircle = makeCircle3D(
+      plane(point3d(0, 0, 0), outerPlane.normal, outerPlane.xAxis),
+      2,
+    ).result!;
+    const largeEdge = makeEdgeFromCurve(largeCircle).result!;
+    const largePCurve = buildPCurveForEdgeOnSurface(largeEdge, outerFace.surface, true);
+    if (largePCurve) addPCurveToEdge(largeEdge, largePCurve);
+
+    const firstSplit = builderFace(outerFace, [largeEdge]);
+    const holedFace = firstSplit.find((f) => f.innerWires.length === 1);
+    expect(holedFace).toBeDefined();
+
+    const smallCircle = makeCircle3D(
+      plane(point3d(0, 0, 0), outerPlane.normal, outerPlane.xAxis),
+      1,
+    ).result!;
+    const smallEdge = makeEdgeFromCurve(smallCircle).result!;
+    const smallPCurve = buildPCurveForEdgeOnSurface(smallEdge, holedFace!.surface, true);
+    if (smallPCurve) addPCurveToEdge(smallEdge, smallPCurve);
+
+    const secondSplit = builderFace(holedFace!, [smallEdge]);
+    expect(secondSplit.length).toBe(1);
+    expect(secondSplit[0].innerWires.length).toBe(1);
+  });
+
+  it('disk split by concentric circle gives annulus with opposite hole winding', () => {
+    const cyl = makeCylinder(5, 20);
+    const topFace = shellFaces(cyl.solid.outerShell).find(f =>
+      f.surface.type === 'plane' &&
+      f.outerWire.edges.some(oe => Math.abs(edgeStartPoint(oe.edge).z - 10) < 0.01)
+    )!;
+
+    const circlePlane = plane(point3d(0, 0, 10), vec3d(0, 0, 1), vec3d(1, 0, 0));
+    const circle = makeCircle3D(circlePlane, 3).result!;
+    const edge = makeEdgeFromCurve(circle).result!;
+    const pc = buildPCurveForEdgeOnSurface(edge, topFace.surface, true);
+    if (pc) addPCurveToEdge(edge, pc);
+
+    const split = builderFace(topFace, [edge]);
+    const annulus = split.find(f => f.innerWires.length === 1);
+    expect(annulus).toBeDefined();
+
+    const outerArea = wireSignedAreaXY(annulus!.outerWire);
+    const innerArea = wireSignedAreaXY(annulus!.innerWires[0]);
+    expect(Math.sign(outerArea)).not.toBe(0);
+    expect(Math.sign(innerArea)).not.toBe(0);
+    expect(Math.sign(outerArea)).toBe(-Math.sign(innerArea));
+  });
+
+  it('disk split by concentric circle preserves the parent outer winding on the annulus', () => {
+    const cyl = makeCylinder(5, 20);
+    const topFace = shellFaces(cyl.solid.outerShell).find(f =>
+      f.surface.type === 'plane' &&
+      f.outerWire.edges.some(oe => Math.abs(edgeStartPoint(oe.edge).z - 10) < 0.01)
+    )!;
+
+    const circlePlane = plane(point3d(0, 0, 10), vec3d(0, 0, 1), vec3d(1, 0, 0));
+    const circle = makeCircle3D(circlePlane, 3).result!;
+    const edge = makeEdgeFromCurve(circle).result!;
+    const pc = buildPCurveForEdgeOnSurface(edge, topFace.surface, true);
+    if (pc) addPCurveToEdge(edge, pc);
+
+    const split = builderFace(topFace, [edge]);
+    const annulus = split.find(f => f.innerWires.length === 1);
+    expect(annulus).toBeDefined();
+
+    const parentOuterArea = wireSignedAreaXY(topFace.outerWire);
+    const annulusOuterArea = wireSignedAreaXY(annulus!.outerWire);
+    expect(Math.sign(annulusOuterArea)).toBe(Math.sign(parentOuterArea));
+  });
+
+  it('bottom box cap split by a sphere trim circle preserves the parent outer winding on the disk', () => {
+    const sphere = makeSphere(5);
+    const sphereFace = shellFaces(sphere.solid.outerShell).find((face) => face.surface.type === 'sphere')!;
+    const box = makeBox(0, 0, -3, 12, 12, 6);
+    const bottomFace = shellFaces(box.solid.outerShell)
+      .filter((face) => face.surface.type === 'plane')
+      .find((face) => face.outerWire.edges.some((oe) => Math.abs(edgeStartPoint(oe.edge).z + 3) < 1e-6))!;
+
+    const ffi = intersectFaceFace(bottomFace, sphereFace);
+    expect(ffi).not.toBeNull();
+    expect(ffi!.edges).toHaveLength(1);
+
+    const split = builderFace(bottomFace, [ffi!.edges[0].edge]);
+    const disk = split.find((face) =>
+      face.innerWires.length === 0 &&
+      face.outerWire.edges.some((oe) => oe.edge.curve.type === 'circle3d'),
+    );
+    expect(disk).toBeDefined();
+
+    const parentOuterArea = wireSignedAreaXY(bottomFace.outerWire);
+    const diskOuterArea = wireSignedAreaXY(disk!.outerWire);
+    expect(Math.sign(diskOuterArea)).toBe(Math.sign(parentOuterArea));
+  });
+
+  it('top box cap split by a sphere trim circle preserves the parent outer winding on the disk', () => {
+    const sphere = makeSphere(5);
+    const sphereFace = shellFaces(sphere.solid.outerShell).find((face) => face.surface.type === 'sphere')!;
+    const box = makeBox(0, 0, -3, 12, 12, 6);
+    const topFace = shellFaces(box.solid.outerShell)
+      .filter((face) => face.surface.type === 'plane')
+      .find((face) => face.outerWire.edges.some((oe) => Math.abs(edgeStartPoint(oe.edge).z - 3) < 1e-6))!;
+
+    const ffi = intersectFaceFace(topFace, sphereFace);
+    expect(ffi).not.toBeNull();
+    expect(ffi!.edges).toHaveLength(1);
+
+    const split = builderFace(topFace, [ffi!.edges[0].edge]);
+    const disk = split.find((face) =>
+      face.innerWires.length === 0 &&
+      face.outerWire.edges.some((oe) => oe.edge.curve.type === 'circle3d'),
+    );
+    expect(disk).toBeDefined();
+
+    const parentOuterArea = wireSignedAreaXY(topFace.outerWire);
+    const diskOuterArea = wireSignedAreaXY(disk!.outerWire);
+    expect(Math.sign(diskOuterArea)).toBe(Math.sign(parentOuterArea));
+  });
 });
 
 // ═══════════════════════════════════════════════════════
@@ -256,6 +437,54 @@ describe('BuilderFace: circle on periodic surface', () => {
     for (const f of result) {
       expect(f.outerWire.isClosed).toBe(true);
     }
+  });
+
+  it('circle-split cylinder sub-faces preserve parent forward flag', () => {
+    const cyl = makeCylinder(2, 10);
+    const sideFace = shellFaces(cyl.solid.outerShell).find(f => f.surface.type === 'cylinder')!;
+
+    const edges = [-2, 2].map(z => {
+      const cp = plane(point3d(0, 0, z), vec3d(0, 0, 1), vec3d(1, 0, 0));
+      const circle = makeCircle3D(cp, 2).result!;
+      const edge = makeEdgeFromCurve(circle).result!;
+      const pc = buildPCurveForEdgeOnSurface(edge, sideFace.surface, true);
+      if (pc) addPCurveToEdge(edge, pc);
+      return edge;
+    });
+
+    const result = builderFace(sideFace, edges);
+    expect(result.length).toBe(3);
+    for (const face of result) {
+      expect(face.forward).toBe(sideFace.forward);
+    }
+  });
+
+  it('circle near a cylinder cap still splits the side face into 2 faces', () => {
+    const cyl = makeCylinder(3, 8, 0, 0, 7); // z=3..11
+    const sideFace = shellFaces(cyl.solid.outerShell).find(f => f.surface.type === 'cylinder')!;
+
+    const cp = plane(point3d(0, 0, 10), vec3d(0, 0, 1), vec3d(1, 0, 0));
+    const circle = makeCircle3D(cp, 3).result!;
+    const edge = makeEdgeFromCurve(circle).result!;
+    const pc = buildPCurveForEdgeOnSurface(edge, sideFace.surface, true);
+    if (pc) addPCurveToEdge(edge, pc);
+
+    const result = builderFace(sideFace, [edge]);
+    expect(result.length).toBe(2);
+
+    const zBands = result.map(face => {
+      const zs = new Set<number>();
+      for (const oe of face.outerWire.edges) {
+        const curve = oe.edge.curve;
+        if (curve.type === 'circle3d' || curve.type === 'arc3d') {
+          zs.add(Math.round(curve.plane.origin.z * 1000) / 1000);
+        }
+      }
+      return [...zs].sort((a, b) => a - b);
+    });
+
+    expect(zBands).toContainEqual([3, 10]);
+    expect(zBands).toContainEqual([10, 11]);
   });
 
   it('circle splits sphere face into 2 faces', () => {
@@ -379,7 +608,7 @@ describe('BuilderFace: cylinder split by axial lines', () => {
 // 5. BOOLEAN: BOX MINUS CONTAINED SPHERE
 //
 // The simplest curved boolean. Sphere fully inside box.
-// Must produce 6 planar faces + 1 reversed sphere face.
+// OCCT-style result: outer box shell plus one inner spherical shell.
 // ═══════════════════════════════════════════════════════
 
 describe('boolean: box minus contained sphere', () => {
@@ -389,9 +618,14 @@ describe('boolean: box minus contained sphere', () => {
     const result = booleanSubtract(box.solid, sphere.solid);
     expect(result.success).toBe(true);
 
-    const faces = shellFaces(result.result!.solid.outerShell);
-    expect(faces.filter(f => f.surface.type === 'plane').length).toBe(6);
-    expect(faces.filter(f => f.surface.type === 'sphere').length).toBe(1);
+    const outerFaces = shellFaces(result.result!.solid.outerShell);
+    expect(outerFaces.filter(f => f.surface.type === 'plane').length).toBe(6);
+    expect(outerFaces.filter(f => f.surface.type === 'sphere').length).toBe(0);
+
+    const innerShells = solidInnerShells(result.result!.solid);
+    expect(innerShells).toHaveLength(1);
+    const innerFaces = shellFaces(innerShells[0]);
+    expect(innerFaces.filter(f => f.surface.type === 'sphere').length).toBe(1);
   });
 
   it('has correct volume: box - sphere', () => {
@@ -618,6 +852,11 @@ describe('Revolve: OCCT face conventions', () => {
       // Find the same edge object in the lateral face
       const cylCircle = cylFace.outerWire.edges.find(oe =>
         oe.edge === diskCircle.edge)!;
+      console.log('[DBG revolve shared circle dirs]', {
+        diskForward: diskCircle.forward,
+        cylForward: cylCircle?.forward,
+        diskFaceForward: disk.forward,
+      });
       expect(cylCircle).toBeDefined();
       // They must have OPPOSITE forward flags
       expect(cylCircle.forward).not.toBe(diskCircle.forward);
@@ -630,5 +869,42 @@ describe('Revolve: OCCT face conventions', () => {
     const vol = solidVolume(result.result!.solid);
     const expected = Math.PI * r * r * h;
     expect(Math.abs(vol - expected) / expected).toBeLessThan(0.01);
+  });
+
+  it('debugs revolved cylinder face contributions', () => {
+    const result = makeCylinderFromRevolve();
+    expect(result.success).toBe(true);
+    console.log('[DBG revolved cylinder face totals]', debugFaceVolumes(result.result!.solid.outerShell).map((entry) => ({
+      surface: entry.face.surface.type,
+      forward: entry.face.forward,
+      edges: entry.face.outerWire.edges.length,
+      volume: entry.volume,
+    })));
+    expect(true).toBe(true);
+  });
+
+  it('debugs raw revolved lateral face before shell materialization', () => {
+    const result = makeCylinderFromRevolve();
+    expect(result.success).toBe(true);
+    const rawLateral = result.result!.sideFaces.find(f => f.surface.type === 'cylinder')!;
+    console.log('[DBG raw revolved lateral]', rawLateral.outerWire.edges.map((oe) => ({
+      type: oe.edge.curve.type,
+      forward: oe.forward,
+    })));
+    expect(true).toBe(true);
+  });
+
+  it('debugs materialized revolved lateral face after shell creation', () => {
+    const result = makeCylinderFromRevolve();
+    expect(result.success).toBe(true);
+    const shellLateral = shellFaces(result.result!.solid.outerShell).find(f => f.surface.type === 'cylinder')!;
+    console.log('[DBG shell revolved lateral]', {
+      forward: shellLateral.forward,
+      edges: shellLateral.outerWire.edges.map((oe) => ({
+        type: oe.edge.curve.type,
+        forward: oe.forward,
+      })),
+    });
+    expect(true).toBe(true);
   });
 });

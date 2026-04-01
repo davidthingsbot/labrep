@@ -25,13 +25,16 @@ import type { Curve3D } from '../topology/edge';
 import { Edge, makeEdgeFromCurve, edgeStartPoint, edgeEndPoint } from '../topology/edge';
 import { Wire, OrientedEdge, orientEdge, makeWire } from '../topology/wire';
 import { Face, Surface, makeFace } from '../topology/face';
-import { Shell, makeShell, shellFaces } from '../topology/shell';
-import { Solid, makeSolid, solidVolume } from '../topology/solid';
+import { Shell, makeShell, materializeShellFaceUse, shellFaces, type ShellFaceUse } from '../topology/shell';
+import { Solid, makeSolid, solidInnerShells, solidVolume } from '../topology/solid';
 import { PlaneSurface, makePlaneSurface } from '../surfaces';
 import { toAdapter } from '../surfaces/surface-adapter';
 import { pointInSolid } from './point-in-solid';
 import { intersectFaceFace } from './face-face-intersection';
 import { builderFace } from './builder-face';
+import { stitchEdges } from './occt-common-edges';
+import { isSplitFaceReversed } from './occt-orientation';
+import { orientFacesOnShell } from './occt-shell-orientation';
 import { evaluateCurve2D } from '../topology/pcurve';
 
 // ═══════════════════════════════════════════════════════
@@ -44,6 +47,32 @@ export interface BooleanResult {
   solid: Solid;
   facesFromA: Face[];
   facesFromB: Face[];
+}
+
+export interface BooleanFaceSelection {
+  selectedFaces: Face[];
+  facesFromA: Face[];
+  facesFromB: Face[];
+  classifiedFacesFromA: { face: Face; classification: 'inside' | 'outside' | 'on' }[];
+  classifiedFacesFromB: { face: Face; classification: 'inside' | 'outside' | 'on' }[];
+}
+
+export interface DebugBooleanFaceSplits {
+  facesFromA: { original: Face; intersectionEdges: Edge[]; subFaces: Face[] }[];
+  facesFromB: { original: Face; intersectionEdges: Edge[]; subFaces: Face[] }[];
+}
+
+export interface DebugSubFaceCandidate {
+  edge: Edge;
+  onIntersection: boolean;
+  onSolidBounds: boolean;
+  midpoint: Point3D;
+  pointInSolid: 'inside' | 'outside' | 'on';
+}
+
+export interface DebugSubFaceFaceProbe {
+  point: Point3D;
+  pointInSolid: 'inside' | 'outside' | 'on';
 }
 
 // ═══════════════════════════════════════════════════════
@@ -153,6 +182,477 @@ function pointInPolygon2DSimple(pt: Pt2, poly: Pt2[]): boolean {
     }
   }
   return inside;
+}
+
+function pointOnSegment2D(pt: Pt2, a: Pt2, b: Pt2): boolean {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const crossValue = dx * (pt.y - a.y) - dy * (pt.x - a.x);
+  if (Math.abs(crossValue) > 1e-9) return false;
+  const dotValue = (pt.x - a.x) * dx + (pt.y - a.y) * dy;
+  if (dotValue < -1e-9) return false;
+  const lenSq = dx * dx + dy * dy;
+  return dotValue <= lenSq + 1e-9;
+}
+
+function windingNumber2D(pt: Pt2, poly: Pt2[]): number {
+  let winding = 0;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[j];
+    const b = poly[i];
+    if (pointOnSegment2D(pt, a, b)) {
+      return Number.POSITIVE_INFINITY;
+    }
+    if (a.y <= pt.y) {
+      if (b.y > pt.y) {
+        const orient = (b.x - a.x) * (pt.y - a.y) - (b.y - a.y) * (pt.x - a.x);
+        if (orient > 0) winding++;
+      }
+    } else if (b.y <= pt.y) {
+      const orient = (b.x - a.x) * (pt.y - a.y) - (b.y - a.y) * (pt.x - a.x);
+      if (orient < 0) winding--;
+    }
+  }
+  return winding;
+}
+
+function polygonCentroid2D(poly: Pt2[]): Pt2 | null {
+  const area = polygonArea2D(poly);
+  if (Math.abs(area) < 1e-12) {
+    return null;
+  }
+
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const j = (i + 1) % poly.length;
+    const crossValue = poly[i].x * poly[j].y - poly[j].x * poly[i].y;
+    cx += (poly[i].x + poly[j].x) * crossValue;
+    cy += (poly[i].y + poly[j].y) * crossValue;
+  }
+
+  return {
+    x: cx / (6 * area),
+    y: cy / (6 * area),
+  };
+}
+
+function polygonInteriorPoint2D(poly: Pt2[]): Pt2 | null {
+  if (poly.length < 3) {
+    return null;
+  }
+
+  let candidate = polygonCentroid2D(poly);
+  if (!candidate) {
+    let x = 0;
+    let y = 0;
+    for (const point of poly) {
+      x += point.x;
+      y += point.y;
+    }
+    candidate = { x: x / poly.length, y: y / poly.length };
+  }
+
+  if (pointInPolygon2DSimple(candidate, poly)) {
+    return candidate;
+  }
+
+  for (const boundaryPoint of poly) {
+    const midpoint = {
+      x: (candidate.x + boundaryPoint.x) / 2,
+      y: (candidate.y + boundaryPoint.y) / 2,
+    };
+    if (pointInPolygon2DSimple(midpoint, poly)) {
+      return midpoint;
+    }
+  }
+
+  return null;
+}
+
+// OCCT ref: IntTools_Tools::IntermediatePoint
+function intermediatePoint1D(first: number, last: number): number {
+  const PAR_T = 0.43213918;
+  return (1 - PAR_T) * first + PAR_T * last;
+}
+
+function hatchInteriorPoint2D(outer: Pt2[], innerPolygons: Pt2[]): Pt2 | null {
+  if (outer.length < 3) return null;
+
+  const xValues = outer.map((point) => point.x);
+  const minX = Math.min(...xValues);
+  const maxX = Math.max(...xValues);
+  const midX = intermediatePoint1D(minX, maxX);
+  const tryXs = [
+    midX,
+    maxX - (midX - minX),
+    intermediatePoint1D(minX, midX),
+    intermediatePoint1D(midX, maxX),
+    (minX + maxX) / 2,
+  ];
+
+  function lineDomains(x: number): Array<{ y1: number; y2: number }> {
+    const rings = [outer, ...innerPolygons.filter((polygon) => polygon.length >= 3)];
+    const ys: number[] = [];
+    for (const ring of rings) {
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const a = ring[j];
+        const b = ring[i];
+        if ((a.x > x) === (b.x > x)) continue;
+        if (Math.abs(b.x - a.x) < 1e-12) continue;
+        const t = (x - a.x) / (b.x - a.x);
+        const y = a.y + t * (b.y - a.y);
+        ys.push(y);
+      }
+    }
+
+    ys.sort((left, right) => left - right);
+    const uniqueYs: number[] = [];
+    for (const y of ys) {
+      if (uniqueYs.length === 0 || Math.abs(y - uniqueYs[uniqueYs.length - 1]) > 1e-7) {
+        uniqueYs.push(y);
+      }
+    }
+
+    const domains: Array<{ y1: number; y2: number }> = [];
+    for (let i = 0; i + 1 < uniqueYs.length; i++) {
+      const y1 = uniqueYs[i];
+      const y2 = uniqueYs[i + 1];
+      if (y2 - y1 < 1e-9) continue;
+      const y = intermediatePoint1D(y1, y2);
+      if (pointInFaceUV({ x, y }, outer, innerPolygons)) {
+        domains.push({ y1, y2 });
+      }
+    }
+    return domains;
+  }
+
+  const seenXs: number[] = [];
+  for (const rawX of tryXs) {
+    const x = rawX;
+    if (seenXs.some((existing) => Math.abs(existing - x) < 1e-9)) {
+      continue;
+    }
+    seenXs.push(x);
+    const domains = lineDomains(x);
+    for (const domain of domains) {
+      const y = intermediatePoint1D(domain.y1, domain.y2);
+      const pt = { x, y };
+      if (pointInFaceUV(pt, outer, innerPolygons)) {
+        return pt;
+      }
+    }
+  }
+
+  return null;
+}
+
+function faceInteriorPoint2D(outer: Pt2[], innerPolygons: Pt2[]): Pt2 | null {
+  const hatched = hatchInteriorPoint2D(outer, innerPolygons);
+  if (hatched) {
+    return hatched;
+  }
+
+  const candidate = polygonInteriorPoint2D(outer);
+  if (candidate && pointInFaceUV(candidate, outer, innerPolygons)) {
+    return candidate;
+  }
+
+  for (const boundaryPoint of outer) {
+    const midpoint = candidate
+      ? { x: (candidate.x + boundaryPoint.x) / 2, y: (candidate.y + boundaryPoint.y) / 2 }
+      : boundaryPoint;
+    if (pointInFaceUV(midpoint, outer, innerPolygons)) {
+      return midpoint;
+    }
+  }
+
+  return null;
+}
+
+function gridInteriorPoint2D(outer: Pt2[], innerPolygons: Pt2[], steps: number = 12): Pt2 | null {
+  if (outer.length < 3) return null;
+  const xs = outer.map((pt) => pt.x);
+  const ys = outer.map((pt) => pt.y);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  if (maxX - minX < 1e-12 || maxY - minY < 1e-12) {
+    return null;
+  }
+
+  for (let yi = 1; yi < steps; yi++) {
+    const y = minY + (yi / steps) * (maxY - minY);
+    for (let xi = 1; xi < steps; xi++) {
+      const x = minX + (xi / steps) * (maxX - minX);
+      const pt = { x, y };
+      if (pointInFaceUV(pt, outer, innerPolygons)) {
+        return pt;
+      }
+    }
+  }
+
+  return null;
+}
+
+function faceProbePoint3D(face: Face): Point3D | null {
+  if (face.surface.type === 'plane') {
+    return null;
+  }
+
+  const adapter = toAdapter(face.surface);
+  const outerSamples = sampleFaceOuterWireUV(face).map(({ x, y }) => ({ u: x, v: y }));
+  const innerSamplesByWire = face.innerWires.map((wire) => sampleWireUV(face, wire));
+  if (outerSamples.length < 3) {
+    return null;
+  }
+
+  function tryProbe(gapEnd: number | null): Point3D | null {
+    let shiftedSamples = outerSamples;
+    let shiftedInnerPolygons = innerSamplesByWire;
+    if (adapter.isUPeriodic && gapEnd !== null) {
+      const period = adapter.uPeriod;
+      const normalized = normalizePeriodicPolygon(outerSamples.map(({ u, v }) => ({ x: u, y: v })), period);
+      shiftedSamples = normalized.polygon.map(({ x, y }) => ({ u: x, v: y }));
+      shiftedInnerPolygons = innerSamplesByWire.map((polygon) =>
+        polygon.map((pt) => normalizePointWithGap(pt, normalized.gapEnd, period)));
+      gapEnd = normalized.gapEnd;
+    }
+
+    const polygon = shiftedSamples.map(({ u, v }) => ({ x: u, y: v }));
+    function candidateFallsInRawHole(candidate: Pt2): boolean {
+      let raw = candidate;
+      if (adapter.isUPeriodic && gapEnd !== null) {
+        raw = { x: (candidate.x + gapEnd) % adapter.uPeriod, y: candidate.y };
+      }
+      return innerSamplesByWire.some((polygon) =>
+        polygon.length >= 3 && pointInPolygon2DSimple(raw, polygon));
+    }
+
+    const candidates = [
+      faceInteriorPoint2D(polygon, shiftedInnerPolygons),
+      gridInteriorPoint2D(polygon, shiftedInnerPolygons),
+    ].filter((candidate): candidate is Pt2 => candidate !== null);
+
+    for (const candidate of candidates) {
+      if (candidateFallsInRawHole(candidate)) {
+        continue;
+      }
+      let u = candidate.x;
+      if (adapter.isUPeriodic && gapEnd !== null) {
+        u = (u + gapEnd) % adapter.uPeriod;
+      }
+      return adapter.evaluate(u, candidate.y);
+    }
+
+    for (const wire of [face.outerWire, ...face.innerWires]) {
+      for (const oe of wire.edges) {
+        if (oe.edge.degenerate) continue;
+        const curve = oe.edge.curve;
+        const midT = (curve.startParam + curve.endParam) / 2;
+        const dt = Math.max(Math.abs(curve.endParam - curve.startParam) * 0.01, 1e-4);
+        const mid3 = evaluateCurveAt(curve, midT);
+        const before3 = evaluateCurveAt(curve, midT - dt);
+        const after3 = evaluateCurveAt(curve, midT + dt);
+        if (!mid3 || !before3 || !after3) continue;
+
+        let midUV = adapter.projectPoint(mid3);
+        let beforeUV = adapter.projectPoint(before3);
+        let afterUV = adapter.projectPoint(after3);
+        if (adapter.isUPeriodic && gapEnd !== null) {
+          const period = adapter.uPeriod;
+          midUV = { u: normalizePointWithGap({ x: midUV.u, y: midUV.v }, gapEnd, period).x, v: midUV.v };
+          beforeUV = { u: normalizePointWithGap({ x: beforeUV.u, y: beforeUV.v }, gapEnd, period).x, v: beforeUV.v };
+          afterUV = { u: normalizePointWithGap({ x: afterUV.u, y: afterUV.v }, gapEnd, period).x, v: afterUV.v };
+        }
+
+        const tangent2d = { x: afterUV.u - beforeUV.u, y: afterUV.v - beforeUV.v };
+        const normalLen = Math.hypot(tangent2d.x, tangent2d.y);
+        if (normalLen < 1e-10) continue;
+
+        const uvNudge = 1e-3;
+        const left = {
+          x: midUV.u - (tangent2d.y / normalLen) * uvNudge,
+          y: midUV.v + (tangent2d.x / normalLen) * uvNudge,
+        };
+        const right = {
+          x: midUV.u + (tangent2d.y / normalLen) * uvNudge,
+          y: midUV.v - (tangent2d.x / normalLen) * uvNudge,
+        };
+        const leftInside = pointInFaceUV(left, polygon, shiftedInnerPolygons);
+        const rightInside = pointInFaceUV(right, polygon, shiftedInnerPolygons);
+        if (leftInside === rightInside) continue;
+
+        const chosen = leftInside ? left : right;
+        let u = chosen.x;
+        if (adapter.isUPeriodic && gapEnd !== null) {
+          u = (u + gapEnd) % adapter.uPeriod;
+        }
+        return adapter.evaluate(u, chosen.y);
+      }
+    }
+
+    for (const wire of [face.outerWire, ...face.innerWires]) {
+      for (const oe of wire.edges) {
+        if (oe.edge.degenerate) continue;
+        const curve = oe.edge.curve;
+        const midT = (curve.startParam + curve.endParam) / 2;
+        const dt = Math.max(Math.abs(curve.endParam - curve.startParam) * 0.01, 1e-4);
+        const mid3 = evaluateCurveAt(curve, midT);
+        const before3 = evaluateCurveAt(curve, midT - dt);
+        const after3 = evaluateCurveAt(curve, midT + dt);
+        if (!mid3 || !before3 || !after3) continue;
+
+        let uv = adapter.projectPoint(mid3);
+        let shiftedUV = { x: uv.u, y: uv.v };
+        if (adapter.isUPeriodic && gapEnd !== null) {
+          shiftedUV = normalizePointWithGap(shiftedUV, gapEnd, adapter.uPeriod);
+        }
+        const normal = adapter.normal(uv.u, uv.v);
+        const tangent3 = vec3d(after3.x - before3.x, after3.y - before3.y, after3.z - before3.z);
+        const binormal = cross(vec3d(normal.x, normal.y, normal.z), tangent3);
+        const binLen = length(binormal);
+        if (binLen < 1e-10) continue;
+
+        const nudge = 1e-4;
+        const left3 = point3d(
+          mid3.x + (binormal.x / binLen) * nudge,
+          mid3.y + (binormal.y / binLen) * nudge,
+          mid3.z + (binormal.z / binLen) * nudge,
+        );
+        const right3 = point3d(
+          mid3.x - (binormal.x / binLen) * nudge,
+          mid3.y - (binormal.y / binLen) * nudge,
+          mid3.z - (binormal.z / binLen) * nudge,
+        );
+
+        let leftUV = adapter.projectPoint(left3);
+        let rightUV = adapter.projectPoint(right3);
+        let leftShifted = { x: leftUV.u, y: leftUV.v };
+        let rightShifted = { x: rightUV.u, y: rightUV.v };
+        if (adapter.isUPeriodic && gapEnd !== null) {
+          leftShifted = normalizePointWithGap(leftShifted, gapEnd, adapter.uPeriod);
+          rightShifted = normalizePointWithGap(rightShifted, gapEnd, adapter.uPeriod);
+        }
+
+        const leftInside = pointInFaceUV(leftShifted, polygon, shiftedInnerPolygons);
+        const rightInside = pointInFaceUV(rightShifted, polygon, shiftedInnerPolygons);
+        if (leftInside !== rightInside) {
+          return leftInside ? left3 : right3;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  if (adapter.isUPeriodic) {
+    return tryProbe(null) ?? tryProbe(0);
+  }
+  return tryProbe(null);
+}
+
+function periodicGapShift(values: number[], period: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  let maxGap = 0;
+  let gapEnd = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    const next = (i + 1 < sorted.length) ? sorted[i + 1] : sorted[0] + period;
+    const gap = next - sorted[i];
+    if (gap > maxGap) {
+      maxGap = gap;
+      gapEnd = next % period;
+    }
+  }
+  return gapEnd;
+}
+
+function normalizePeriodicPolygon(poly: Pt2[], period: number): { polygon: Pt2[]; gapEnd: number } {
+  if (poly.length === 0) {
+    return { polygon: poly, gapEnd: 0 };
+  }
+  const gapEnd = periodicGapShift(poly.map((pt) => pt.x), period);
+  return {
+    gapEnd,
+    polygon: poly.map((pt) => {
+      let u = pt.x - gapEnd;
+      if (u < 0) u += period;
+      return { x: u, y: pt.y };
+    }),
+  };
+}
+
+function sampleWireUV(face: Face, wire: Wire): Pt2[] {
+  const adapter = toAdapter(face.surface);
+  const samples: Pt2[] = [];
+
+  for (const oe of wire.edges) {
+    if (oe.edge.degenerate) continue;
+    const curve = oe.edge.curve;
+    const nSamp = curve.type === 'line3d' ? 2 : 8;
+    for (let si = 0; si < nSamp; si++) {
+      const frac = si / nSamp;
+      const tStart = oe.forward ? curve.startParam : curve.endParam;
+      const tEnd = oe.forward ? curve.endParam : curve.startParam;
+      const t = tStart + frac * (tEnd - tStart);
+      const pt = evaluateCurveAt(curve, t);
+      if (!pt) continue;
+
+      const pcsOnSurf = oe.edge.pcurves.filter((p) => p.surface === face.surface);
+      const pc = pcsOnSurf.length === 1 ? pcsOnSurf[0] : null;
+      if (pc) {
+        const c2 = pc.curve2d;
+        const t2d = oe.forward
+          ? c2.startParam + frac * (c2.endParam - c2.startParam)
+          : c2.endParam - frac * (c2.endParam - c2.startParam);
+        const uv2d = evaluateCurve2D(c2, t2d);
+        if (uv2d) {
+          let u = uv2d.x;
+          if (adapter.isUPeriodic && u < 0) u += adapter.uPeriod;
+          samples.push({ x: u, y: uv2d.y });
+          continue;
+        }
+      }
+
+      let uv = adapter.projectPoint(pt);
+      if (adapter.isUPeriodic && uv.u < 0) uv = { u: uv.u + adapter.uPeriod, v: uv.v };
+      samples.push({ x: uv.u, y: uv.v });
+    }
+  }
+
+  return samples;
+}
+
+function sampleFaceOuterWireUV(face: Face): Pt2[] {
+  return sampleWireUV(face, face.outerWire);
+}
+
+function normalizePointWithGap(pt: Pt2, gapEnd: number, period: number): Pt2 {
+  let x = pt.x - gapEnd;
+  if (x < 0) x += period;
+  return { x, y: pt.y };
+}
+
+function pointInFaceUV(pt: Pt2, outer: Pt2[], innerPolygons: Pt2[]): boolean {
+  const outerContribution = windingNumber2D(pt, outer);
+  if (!Number.isFinite(outerContribution)) {
+    return true;
+  }
+  if (outerContribution === 0) {
+    return false;
+  }
+  for (const polygon of innerPolygons) {
+    if (polygon.length < 3) continue;
+    const contribution = windingNumber2D(pt, polygon);
+    if (!Number.isFinite(contribution)) {
+      return true;
+    }
+    if (contribution !== 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -359,35 +859,29 @@ function faceToPolygon2D(face: Face, pl: Plane): Pt2[] {
 
 
 /**
- * Flip a face's normal by reversing the wire winding.
+ * Flip a face's orientation without rewriting its boundary topology.
+ *
+ * OCCT ref: TopoDS_Shape::Reverse() flips only the orientation flag.
+ * It does not rebuild or reverse the face wires.
  */
 function flipFace(face: Face): OperationResult<Face> {
-  // Reverse outer wire
-  const reversedEdges: OrientedEdge[] = [];
-  for (let i = face.outerWire.edges.length - 1; i >= 0; i--) {
-    const oe = face.outerWire.edges[i];
-    reversedEdges.push(orientEdge(oe.edge, !oe.forward));
-  }
-  const wireResult = makeWire(reversedEdges);
-  if (!wireResult.success) return failure(`Failed to reverse wire: ${wireResult.error}`);
+  return success({
+    surface: face.surface,
+    outerWire: face.outerWire,
+    innerWires: face.innerWires,
+    forward: !face.forward,
+  });
+}
 
-  // Reverse inner wires (holes) — OCCT preserves holes when flipping faces
-  const flippedInnerWires: Wire[] = [];
-  for (const iw of face.innerWires) {
-    const revInner: OrientedEdge[] = [];
-    for (let i = iw.edges.length - 1; i >= 0; i--) {
-      const oe = iw.edges[i];
-      revInner.push(orientEdge(oe.edge, !oe.forward));
-    }
-    const iwResult = makeWire(revInner);
-    if (iwResult.success) flippedInnerWires.push(iwResult.result!);
+/**
+ * Align a split face with its original parent face using OCCT's
+ * `BOPTools_AlgoTools::IsSplitToReverse` logic.
+ */
+function orientSplitFaceLikeOriginal(splitFace: Face, originalFace: Face): OperationResult<Face> {
+  if (!isSplitFaceReversed(splitFace, originalFace)) {
+    return success(splitFace);
   }
-
-  // OCCT ref: TopoDS_Shape::Reverse() only flips the orientation flag.
-  // It NEVER creates a new surface — the same surface, PCurves, and edges
-  // are reused. The forward flag tells downstream code how to interpret
-  // the surface normal direction.
-  return makeFace(face.surface, wireResult.result!, flippedInnerWires, !face.forward);
+  return flipFace(splitFace);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -396,6 +890,7 @@ function flipFace(face: Face): OperationResult<Face> {
 
 const COPLANAR_TOL = 1e-5;
 const NUDGE_EPS = 1e-4;
+const STITCH_TOL = 1e-6;
 
 function areFacesCoplanar(faceA: Face, faceB: Face): boolean {
   if (faceA.surface.type !== 'plane' || faceB.surface.type !== 'plane') return false;
@@ -462,18 +957,21 @@ function classifySubFace(
   otherSolid: Solid,
   intersectionEdges: Edge[],
 ): 'inside' | 'outside' | 'on' {
-  // Phase 1: Try intersection-edge-based classification
-  // Find an intersection edge in this sub-face's boundary
-  for (const oe of face.outerWire.edges) {
-    // Check if this edge lies on an intersection edge. BuilderFace may have
-    // split the intersection edge, so we check if the edge MIDPOINT lies on
-    // any intersection edge (not just endpoint matching).
-    const eStart = edgeStartPoint(oe.edge);
-    const eEnd = edgeEndPoint(oe.edge);
-    const eMid = point3d((eStart.x + eEnd.x) / 2, (eStart.y + eEnd.y) / 2, (eStart.z + eEnd.z) / 2);
-    const isIntEdge = intersectionEdges.some(ie => {
-      // Direct edge identity check (BuilderFace may reuse the same Edge object)
-      if (oe.edge === ie) return true;
+  const trustBoundaryNudge = face.surface.type === 'plane' || face.innerWires.length === 0;
+
+  function edgeLiesOnIntersection(edge: Edge, orientedEdge?: OrientedEdge): boolean {
+    const eStart = edgeStartPoint(edge);
+    const eEnd = edgeEndPoint(edge);
+    const start = orientedEdge
+      ? (orientedEdge.forward ? eStart : eEnd)
+      : eStart;
+    const end = orientedEdge
+      ? (orientedEdge.forward ? eEnd : eStart)
+      : eEnd;
+    const eMid = point3d((start.x + end.x) / 2, (start.y + end.y) / 2, (start.z + end.z) / 2);
+
+    return intersectionEdges.some((ie) => {
+      if (edge === ie) return true;
 
       const iStart = edgeStartPoint(ie);
       const iEnd = edgeEndPoint(ie);
@@ -481,8 +979,6 @@ function classifySubFace(
       const lenSq = dx * dx + dy * dy + dz * dz;
 
       if (lenSq < 1e-12) {
-        // Closed intersection edge (circle): check if sub-face edge midpoint
-        // lies on the circle by sampling. Check proximity to several points.
         if (ie.curve.type === 'circle3d' || ie.curve.type === 'arc3d') {
           const nSamples = 16;
           for (let si = 0; si < nSamples; si++) {
@@ -494,8 +990,6 @@ function classifySubFace(
         return false;
       }
 
-      // For arc/circle intersection edges: check if eMid lies on the arc
-      // (distance from center ≈ radius, in the arc plane, within angle range).
       if ((ie.curve.type === 'arc3d' || ie.curve.type === 'circle3d') && 'plane' in ie.curve) {
         const arcCurve = ie.curve as any;
         const center = arcCurve.plane.origin;
@@ -508,7 +1002,6 @@ function classifySubFace(
         return Math.abs(dist - radius) < STITCH_TOL * 100;
       }
 
-      // Open intersection edge (line): check if eMid lies on segment iStart→iEnd
       const vx = eMid.x - iStart.x, vy = eMid.y - iStart.y, vz = eMid.z - iStart.z;
       const t = (vx * dx + vy * dy + vz * dz) / lenSq;
       if (t < -0.01 || t > 1.01) return false;
@@ -517,6 +1010,54 @@ function classifySubFace(
       const pz = iStart.z + t * dz - eMid.z;
       return Math.sqrt(px * px + py * py + pz * pz) < STITCH_TOL * 10;
     });
+  }
+
+  function edgeLiesOnSolidBounds(edge: Edge, orientedEdge?: OrientedEdge): boolean {
+    return edgeBelongsToSolidBounds(edge, otherSolid);
+  }
+
+  // OCCT ref: BOPTools_AlgoTools::ComputeState(face, solid, bounds)
+  // First classify a midpoint on any face edge that does not belong to the
+  // reference solid boundary edge set.
+  let hasNonBoundaryCandidate = false;
+  for (const wire of [face.outerWire, ...face.innerWires]) {
+    for (const oe of wire.edges) {
+      if (oe.edge.degenerate) continue;
+      if (edgeLiesOnIntersection(oe.edge, oe)) continue;
+      if (edgeLiesOnSolidBounds(oe.edge, oe)) continue;
+      hasNonBoundaryCandidate = true;
+
+      const curve = oe.edge.curve;
+      let mid: Point3D;
+      if (curve.type === 'circle3d' || curve.type === 'arc3d' || curve.type === 'ellipse3d') {
+        const midT = (curve.startParam + curve.endParam) / 2;
+        mid = evaluateCurveAt(curve, midT) || edgeStartPoint(oe.edge);
+      } else {
+        const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+        const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+        mid = point3d((s.x + e.x) / 2, (s.y + e.y) / 2, (s.z + e.z) / 2);
+      }
+
+      const result = pointInSolid(mid, otherSolid);
+      if (result !== 'on') return result;
+    }
+  }
+
+  if (!hasNonBoundaryCandidate && face.surface.type !== 'plane') {
+    const faceProbe = faceProbePoint3D(face);
+    if (faceProbe) {
+      const result = pointInSolid(faceProbe, otherSolid);
+      if (result !== 'on') return result;
+    }
+  }
+
+  // Phase 1: Try intersection-edge-based classification
+  // Find an intersection edge in this sub-face's boundary
+  for (const oe of face.outerWire.edges) {
+    const eStart = edgeStartPoint(oe.edge);
+    const eEnd = edgeEndPoint(oe.edge);
+    const eMid = point3d((eStart.x + eEnd.x) / 2, (eStart.y + eEnd.y) / 2, (eStart.z + eEnd.z) / 2);
+    const isIntEdge = edgeLiesOnIntersection(oe.edge, oe);
     if (!isIntEdge) continue;
 
     // Found an intersection edge in this sub-face.
@@ -581,9 +1122,66 @@ function classifySubFace(
         mid.z - (binormal.z / binLen) * nudge,
       );
       const result = pointInSolid(testPt, otherSolid);
-      if (result !== 'on') return result;
+      if (result !== 'on' && trustBoundaryNudge) return result;
     } else {
-      // Non-planar: test both nudge directions
+      // Non-planar: first choose the in-face side in UV, closer to OCCT's
+      // FindPointInFace behavior, instead of trusting a raw 3D binormal.
+      const pcsOnSurf = oe.edge.pcurves.filter((p) => p.surface === face.surface);
+      const pc = pcsOnSurf.length === 1 ? pcsOnSurf[0] : null;
+      if (pc) {
+        const c2 = pc.curve2d;
+        const mid2d = evaluateCurve2D(c2, (c2.startParam + c2.endParam) / 2);
+        const dt2d = (c2.endParam - c2.startParam) * 0.01;
+        const before2d = evaluateCurve2D(c2, (c2.startParam + c2.endParam) / 2 - dt2d);
+        const after2d = evaluateCurve2D(c2, (c2.startParam + c2.endParam) / 2 + dt2d);
+        if (mid2d && before2d && after2d) {
+          const adapter2d = toAdapter(face.surface);
+          let uvPolygon = sampleFaceOuterWireUV(face);
+          let innerPolygons = face.innerWires.map((wire) => sampleWireUV(face, wire));
+          let uvMid = { x: mid2d.x, y: mid2d.y };
+          let gapEnd = 0;
+          if (adapter2d.isUPeriodic) {
+            const normalized = normalizePeriodicPolygon(uvPolygon, adapter2d.uPeriod);
+            uvPolygon = normalized.polygon;
+            gapEnd = normalized.gapEnd;
+            uvMid = normalizePointWithGap(uvMid, gapEnd, adapter2d.uPeriod);
+            innerPolygons = innerPolygons.map((polygon) =>
+              polygon.map((pt) => normalizePointWithGap(pt, gapEnd, adapter2d.uPeriod)));
+          }
+
+          const tangent2d = {
+            x: after2d.x - before2d.x,
+            y: after2d.y - before2d.y,
+          };
+          const normalLen = Math.hypot(tangent2d.x, tangent2d.y);
+          if (normalLen > 1e-10) {
+            const uvNudge = 1e-3;
+            const left = {
+              x: uvMid.x - (tangent2d.y / normalLen) * uvNudge,
+              y: uvMid.y + (tangent2d.x / normalLen) * uvNudge,
+            };
+            const right = {
+              x: uvMid.x + (tangent2d.y / normalLen) * uvNudge,
+              y: uvMid.y - (tangent2d.x / normalLen) * uvNudge,
+            };
+            const leftInside = pointInFaceUV(left, uvPolygon, innerPolygons);
+            const rightInside = pointInFaceUV(right, uvPolygon, innerPolygons);
+            if (leftInside !== rightInside) {
+              const chosen = leftInside ? left : right;
+              let u = chosen.x;
+              if (adapter2d.isUPeriodic) {
+                u = (u + gapEnd) % adapter2d.uPeriod;
+              }
+              const uvPoint = adapter2d.evaluate(u, chosen.y);
+              const uvResult = pointInSolid(uvPoint, otherSolid);
+              if (uvResult !== 'on' && trustBoundaryNudge) return uvResult;
+            }
+          }
+        }
+      }
+
+      // If UV-side selection was unavailable, fall back to testing both 3D
+      // nudge directions.
       const testPt2 = point3d(
         mid.x - (binormal.x / binLen) * nudge,
         mid.y - (binormal.y / binLen) * nudge,
@@ -591,91 +1189,8 @@ function classifySubFace(
       );
       const r1 = pointInSolid(testPt1, otherSolid);
       const r2 = pointInSolid(testPt2, otherSolid);
-      if (r1 === r2 && r1 !== 'on') return r1;
-      // Disagree or 'on' → fall through to Phase 1.5 UV interior point
-    }
-  }
-
-  // Phase 1.5: For non-planar faces, compute an interior point via UV sampling.
-  // OCCT ref: BOPTools_AlgoTools::ComputeState → PointInFace uses a hatcher
-  // to find a 2D interior point, then evaluates the surface there.
-  // We approximate: sample the face boundary in UV, compute the UV centroid,
-  // evaluate the surface at that centroid, and classify the 3D point.
-  if (face.surface.type !== 'plane') {
-    const adapter = toAdapter(face.surface);
-    const uvSamples: { u: number; v: number }[] = [];
-    for (const oe of face.outerWire.edges) {
-      if (oe.edge.degenerate) continue;
-      const curve = oe.edge.curve;
-      const nSamp = (curve.type === 'line3d') ? 2 : 8;
-      for (let si = 0; si < nSamp; si++) {
-        const frac = si / nSamp;
-        const tStart = oe.forward ? curve.startParam : curve.endParam;
-        const tEnd = oe.forward ? curve.endParam : curve.startParam;
-        const t = tStart + frac * (tEnd - tStart);
-        const pt = evaluateCurveAt(curve, t);
-        if (pt) {
-          // Prefer PCurve UV over projection. Skip seam edges (2+ PCurves on same
-          // surface) — we can't determine the correct seam side in this context.
-          const pcsOnSurf = oe.edge.pcurves.filter(p => p.surface === face.surface);
-          const pc = pcsOnSurf.length === 1 ? pcsOnSurf[0] : null;
-          if (pc) {
-            const c2 = pc.curve2d;
-            const t2d = oe.forward
-              ? c2.startParam + frac * (c2.endParam - c2.startParam)
-              : c2.endParam - frac * (c2.endParam - c2.startParam);
-            const uv2d = evaluateCurve2D(c2, t2d);
-            if (uv2d) {
-              let u = uv2d.x;
-              // Normalize to [0, period] for consistent centroid on periodic surfaces
-              if (adapter.isUPeriodic && u < 0) u += adapter.uPeriod;
-              uvSamples.push({ u, v: uv2d.y });
-              continue;
-            }
-          }
-          let uv = adapter.projectPoint(pt);
-          // Normalize to [0, period] to avoid centroid errors from atan2 wrapping
-          if (adapter.isUPeriodic && uv.u < 0) uv = { u: uv.u + adapter.uPeriod, v: uv.v };
-          uvSamples.push(uv);
-        }
-      }
-    }
-    if (uvSamples.length >= 3) {
-      let vSum = 0;
-      for (const uv of uvSamples) { vSum += uv.v; }
-      const vCentroid = vSum / uvSamples.length;
-
-      // Compute u centroid handling periodic wraparound.
-      // If u values span the seam (e.g., 5.5, 5.8, 0.1, 0.4), a naive average
-      // would give ~3.0 (wrong side). Instead, shift values so they're contiguous:
-      // find the largest gap in sorted u values and use the gap's end as the
-      // "virtual zero". OCCT ref: IntTools_FClass2d handles this internally.
-      let uCentroid: number;
-      if (adapter.isUPeriodic) {
-        const period = adapter.uPeriod;
-        const sorted = uvSamples.map(uv => uv.u).sort((a, b) => a - b);
-        let maxGap = 0, gapEnd = 0;
-        for (let i = 0; i < sorted.length; i++) {
-          const next = (i + 1 < sorted.length) ? sorted[i + 1] : sorted[0] + period;
-          const gap = next - sorted[i];
-          if (gap > maxGap) { maxGap = gap; gapEnd = next % period; }
-        }
-        // Shift all u values so gapEnd becomes 0, then average, then shift back
-        let uShiftedSum = 0;
-        for (const uv of uvSamples) {
-          let u = uv.u - gapEnd;
-          if (u < 0) u += period;
-          uShiftedSum += u;
-        }
-        uCentroid = (uShiftedSum / uvSamples.length + gapEnd) % period;
-      } else {
-        let uSum = 0;
-        for (const uv of uvSamples) uSum += uv.u;
-        uCentroid = uSum / uvSamples.length;
-      }
-      const interiorPt3D = adapter.evaluate(uCentroid, vCentroid);
-      const result = pointInSolid(interiorPt3D, otherSolid);
-      if (result !== 'on') return result;
+      if (r1 === r2 && r1 !== 'on' && trustBoundaryNudge) return r1;
+      // Disagree or 'on' → fall through to later fallbacks
     }
   }
 
@@ -697,6 +1212,9 @@ function classifySubFace(
   let bestDist = -1;
   let bestMid: Point3D | null = null;
   for (const oe of face.outerWire.edges) {
+    if (edgeLiesOnIntersection(oe.edge, oe)) {
+      continue;
+    }
     const curve = oe.edge.curve;
     let mid: Point3D;
     if (curve.type === 'circle3d' || curve.type === 'arc3d' || curve.type === 'ellipse3d') {
@@ -722,11 +1240,152 @@ function classifySubFace(
 
   if (bestMid) {
     const result = pointInSolid(bestMid, otherSolid);
-    if (result !== 'on') return result;
+    if (result !== 'on') {
+      const shouldTrustMidpoint = face.surface.type === 'plane' || face.innerWires.length === 0;
+      if (shouldTrustMidpoint) return result;
+    }
+  }
+
+  // Phase 2.5: For non-planar faces, compute an interior point via UV sampling.
+  // OCCT ref: BOPTools_AlgoTools::ComputeState → PointInFace uses a hatcher
+  // to find a 2D interior point, then evaluates the surface there.
+  // We approximate by building a UV polygon, finding an interior point in that
+  // polygon, then evaluating the surface there. This stays as a fallback behind
+  // the more trustworthy "far from section edge" test above.
+  if (face.surface.type !== 'plane') {
+    const faceProbe = faceProbePoint3D(face);
+    if (faceProbe) {
+      const result = pointInSolid(faceProbe, otherSolid);
+      if (result !== 'on') return result;
+    }
   }
 
   // Phase 3: Last resort — standard classifyFace
   return classifyFace(face, otherSolid);
+}
+
+function solidBoundaryEdges(solid: Solid): Edge[] {
+  const edges: Edge[] = [];
+  const shells = [solid.outerShell, ...solidInnerShells(solid)];
+  for (const shell of shells) {
+    for (const shellFace of shellFaces(shell)) {
+      for (const wire of [shellFace.outerWire, ...shellFace.innerWires]) {
+        for (const oe of wire.edges) {
+          edges.push(oe.edge);
+        }
+      }
+    }
+  }
+  return edges;
+}
+
+function edgeBelongsToSolidBounds(edge: Edge, solid: Solid): boolean {
+  const bounds = solidBoundaryEdges(solid);
+  if (bounds.includes(edge)) return true;
+  if (edge.sourceEdge && bounds.includes(edge.sourceEdge)) return true;
+  return bounds.some((bound) =>
+    bound.sourceEdge === edge ||
+    (edge.sourceEdge !== undefined && bound.sourceEdge === edge.sourceEdge));
+}
+
+function edgeMidpointForClassification(edge: Edge, orientedEdge?: OrientedEdge): Point3D {
+  const curve = edge.curve;
+  if (curve.type === 'circle3d' || curve.type === 'arc3d' || curve.type === 'ellipse3d') {
+    const midT = (curve.startParam + curve.endParam) / 2;
+    return evaluateCurveAt(curve, midT) || edgeStartPoint(edge);
+  }
+  const eStart = edgeStartPoint(edge);
+  const eEnd = edgeEndPoint(edge);
+  const start = orientedEdge
+    ? (orientedEdge.forward ? eStart : eEnd)
+    : eStart;
+  const end = orientedEdge
+    ? (orientedEdge.forward ? eEnd : eStart)
+    : eEnd;
+  return point3d((start.x + end.x) / 2, (start.y + end.y) / 2, (start.z + end.z) / 2);
+}
+
+export function debugClassifySubFaceCandidates(
+  face: Face,
+  otherSolid: Solid,
+  intersectionEdges: Edge[],
+): DebugSubFaceCandidate[] {
+  const edgeLiesOnIntersection = (edge: Edge, orientedEdge?: OrientedEdge): boolean => {
+    const eStart = edgeStartPoint(edge);
+    const eEnd = edgeEndPoint(edge);
+    const start = orientedEdge ? (orientedEdge.forward ? eStart : eEnd) : eStart;
+    const end = orientedEdge ? (orientedEdge.forward ? eEnd : eStart) : eEnd;
+    const eMid = point3d((start.x + end.x) / 2, (start.y + end.y) / 2, (start.z + end.z) / 2);
+
+    return intersectionEdges.some((ie) => {
+      if (edge === ie) return true;
+
+      const iStart = edgeStartPoint(ie);
+      const iEnd = edgeEndPoint(ie);
+      const dx = iEnd.x - iStart.x, dy = iEnd.y - iStart.y, dz = iEnd.z - iStart.z;
+      const lenSq = dx * dx + dy * dy + dz * dz;
+
+      if (lenSq < 1e-12) {
+        if (ie.curve.type === 'circle3d' || ie.curve.type === 'arc3d') {
+          const nSamples = 16;
+          for (let si = 0; si < nSamples; si++) {
+            const t = ie.curve.startParam + (si / nSamples) * (ie.curve.endParam - ie.curve.startParam);
+            const pt = evaluateCurveAt(ie.curve, t);
+            if (pt && distance(eMid, pt) < STITCH_TOL * 10) return true;
+          }
+        }
+        return false;
+      }
+
+      if ((ie.curve.type === 'arc3d' || ie.curve.type === 'circle3d') && 'plane' in ie.curve) {
+        const arcCurve = ie.curve as any;
+        const center = arcCurve.plane.origin;
+        const normal = arcCurve.plane.normal;
+        const radius = arcCurve.radius;
+        const rel = vec3d(eMid.x - center.x, eMid.y - center.y, eMid.z - center.z);
+        const normalComp = Math.abs(rel.x * normal.x + rel.y * normal.y + rel.z * normal.z);
+        if (normalComp > STITCH_TOL * 100) return false;
+        const dist = Math.sqrt(rel.x * rel.x + rel.y * rel.y + rel.z * rel.z);
+        return Math.abs(dist - radius) < STITCH_TOL * 100;
+      }
+
+      const vx = eMid.x - iStart.x, vy = eMid.y - iStart.y, vz = eMid.z - iStart.z;
+      const t = (vx * dx + vy * dy + vz * dz) / lenSq;
+      if (t < -0.01 || t > 1.01) return false;
+      const px = iStart.x + t * dx - eMid.x;
+      const py = iStart.y + t * dy - eMid.y;
+      const pz = iStart.z + t * dz - eMid.z;
+      return Math.sqrt(px * px + py * py + pz * pz) < STITCH_TOL * 10;
+    });
+  };
+
+  const candidates: DebugSubFaceCandidate[] = [];
+  for (const wire of [face.outerWire, ...face.innerWires]) {
+    for (const oe of wire.edges) {
+      if (oe.edge.degenerate) continue;
+      const midpoint = edgeMidpointForClassification(oe.edge, oe);
+      candidates.push({
+        edge: oe.edge,
+        onIntersection: edgeLiesOnIntersection(oe.edge, oe),
+        onSolidBounds: edgeBelongsToSolidBounds(oe.edge, otherSolid),
+        midpoint,
+        pointInSolid: pointInSolid(midpoint, otherSolid),
+      });
+    }
+  }
+  return candidates;
+}
+
+export function debugClassifySubFaceFaceProbe(
+  face: Face,
+  otherSolid: Solid,
+): DebugSubFaceFaceProbe | null {
+  const point = faceProbePoint3D(face);
+  if (!point) return null;
+  return {
+    point,
+    pointInSolid: pointInSolid(point, otherSolid),
+  };
 }
 
 function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on' {
@@ -734,6 +1393,33 @@ function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on
 
   // Compute a representative interior point for classification.
   let centroid: Point3D;
+  if (face.innerWires.length > 0 && face.surface.type !== 'plane') {
+    const adapter = toAdapter(face.surface);
+    const outer = sampleFaceOuterWireUV(face);
+    let inners = face.innerWires.map((innerWire) => sampleWireUV(face, innerWire));
+    let gapEnd = 0;
+    let normalizedOuter = outer;
+    if (adapter.isUPeriodic) {
+      const normalized = normalizePeriodicPolygon(outer, adapter.uPeriod);
+      gapEnd = normalized.gapEnd;
+      normalizedOuter = normalized.polygon;
+      inners = inners.map((polygon) =>
+        polygon.map((pt) => normalizePointWithGap(pt, gapEnd, adapter.uPeriod)));
+    }
+    const interiorUV = faceInteriorPoint2D(normalizedOuter, inners);
+    if (interiorUV) {
+      let u = interiorUV.x;
+      if (adapter.isUPeriodic) {
+        u = (u + gapEnd) % adapter.uPeriod;
+      }
+      centroid = adapter.evaluate(u, interiorUV.y);
+    } else {
+      const oe = wire.edges[0];
+      const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+      const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+      centroid = point3d((start.x + end.x) / 2, (start.y + end.y) / 2, (start.z + end.z) / 2);
+    }
+  } else
   if (face.surface.type !== 'plane' && wire.edges.length > 0 && wire.edges[0].edge.curve.isClosed) {
     // Curved face with circle boundary: sample a point on the face interior.
     if (wire.edges.length === 1) {
@@ -886,15 +1572,21 @@ function classifyFace(face: Face, otherSolid: Solid): 'inside' | 'outside' | 'on
  */
 function addEdgeIfNotDuplicate(list: Edge[], edge: Edge): void {
   if (list.includes(edge)) return; // Same object → skip
+  if (!edge.curve.isClosed) {
+    // OCCT reference: BOPDS_DS stores section edges as separate topological
+    // entities and reconciles coincidence later via common blocks / pave
+    // blocks. Do not collapse open FFI edges here by endpoint proximity.
+    list.push(edge);
+    return;
+  }
   const s = edgeStartPoint(edge);
   const e = edgeEndPoint(edge);
   const TOL = 1e-5;
   for (const existing of list) {
     const es = edgeStartPoint(existing);
     const ee = edgeEndPoint(existing);
-    // Same geometry: both endpoints match (in either order for open curves)
+    // Same geometry: both endpoints match for closed curves
     if (distance(s, es) < TOL && distance(e, ee) < TOL) return;
-    if (!edge.curve.isClosed && distance(s, ee) < TOL && distance(e, es) < TOL) return;
     // For closed curves: same center + radius + plane check
     if (edge.curve.isClosed && existing.curve.isClosed) {
       if (edge.curve.type === 'circle3d' && existing.curve.type === 'circle3d' && 'plane' in edge.curve && 'plane' in existing.curve) {
@@ -921,11 +1613,11 @@ function addEdgeIfNotDuplicate(list: Edge[], edge: Edge): void {
  * 5. Select faces per operation rules
  * 6. Stitch edges and assemble result solid
  */
-export function booleanOperation(
+export function debugSelectBooleanFaces(
   a: Solid,
   b: Solid,
   op: BooleanOp,
-): OperationResult<BooleanResult> {
+): OperationResult<BooleanFaceSelection> {
   // Stage 1: AABB overlap check
   const bboxA = boundingBoxFromSolid(a);
   const bboxB = boundingBoxFromSolid(b);
@@ -933,7 +1625,13 @@ export function booleanOperation(
   if (!bboxIntersects(bboxA, bboxB)) {
     if (op === 'intersect') return failure('Solids do not overlap — intersection is empty');
     if (op === 'union') return failure('Solids do not overlap — disjoint union not supported');
-    return success({ solid: a, facesFromA: [...shellFaces(a.outerShell)], facesFromB: [] });
+    return success({
+      selectedFaces: [...shellFaces(a.outerShell)],
+      facesFromA: [...shellFaces(a.outerShell)],
+      facesFromB: [],
+      classifiedFacesFromA: [...shellFaces(a.outerShell)].map((face) => ({ face, classification: 'outside' as const })),
+      classifiedFacesFromB: [],
+    });
   }
 
   const facesOfA = shellFaces(a.outerShell);
@@ -1054,10 +1752,12 @@ export function booleanOperation(
     if (intEdges && intEdges.length > 0) {
       const subFaces = builderFace(faceA, intEdges);
       for (const sf of subFaces) {
+        const aligned = orientSplitFaceLikeOriginal(sf, faceA);
+        if (!aligned.success) continue;
         const cls = cpInfo
-          ? classifyCoplanarSubFace(sf, cpInfo.partner, b, (faceA.surface as PlaneSurface).plane, op, true, intEdges)
-          : classifySubFace(sf, b, intEdges);
-        allFacesA.push({ face: sf, classification: cls });
+          ? classifyCoplanarSubFace(aligned.result!, cpInfo.partner, b, (faceA.surface as PlaneSurface).plane, op, true, intEdges)
+          : classifySubFace(aligned.result!, b, intEdges);
+        allFacesA.push({ face: aligned.result!, classification: cls });
       }
     } else if (cpInfo && cpInfo.sameNormal) {
       // Full overlap (no splitting edges): entire face is the overlap region
@@ -1079,10 +1779,12 @@ export function booleanOperation(
     if (intEdges && intEdges.length > 0) {
       const subFaces = builderFace(faceB, intEdges);
       for (const sf of subFaces) {
+        const aligned = orientSplitFaceLikeOriginal(sf, faceB);
+        if (!aligned.success) continue;
         const cls = cpInfo
-          ? classifyCoplanarSubFace(sf, cpInfo.partner, a, (faceB.surface as PlaneSurface).plane, op, false, intEdges)
-          : classifySubFace(sf, a, intEdges);
-        allFacesB.push({ face: sf, classification: cls });
+          ? classifyCoplanarSubFace(aligned.result!, cpInfo.partner, a, (faceB.surface as PlaneSurface).plane, op, false, intEdges)
+          : classifySubFace(aligned.result!, a, intEdges);
+        allFacesB.push({ face: aligned.result!, classification: cls });
       }
     } else if (cpInfo && cpInfo.sameNormal) {
       // Full overlap: B-side → 'on' (A's copy handles it)
@@ -1135,18 +1837,137 @@ export function booleanOperation(
     return failure(`Boolean ${op} produced only ${selectedFaces.length} faces (A:${allFacesA.length} [${allFacesA.map(f=>f.classification)}], B:${allFacesB.length} [${allFacesB.map(f=>f.classification)}]) — result is degenerate`);
   }
 
+  return success({
+    selectedFaces,
+    facesFromA,
+    facesFromB,
+    classifiedFacesFromA: allFacesA,
+    classifiedFacesFromB: allFacesB,
+  });
+}
+
+export function debugBooleanFaceSplits(
+  a: Solid,
+  b: Solid,
+): OperationResult<DebugBooleanFaceSplits> {
+  const bboxA = boundingBoxFromSolid(a);
+  const bboxB = boundingBoxFromSolid(b);
+  if (!bboxIntersects(bboxA, bboxB)) {
+    return failure('Solids do not overlap');
+  }
+
+  const facesOfA = shellFaces(a.outerShell);
+  const facesOfB = shellFaces(b.outerShell);
+  const edgesOnA: Map<Face, Edge[]> = new Map();
+  const edgesOnB: Map<Face, Edge[]> = new Map();
+
+  for (const faceA of facesOfA) {
+    for (const faceB of facesOfB) {
+      if (areFacesCoplanar(faceA, faceB)) {
+        continue;
+      }
+      const bboxFA = boundingBoxFromFace(faceA);
+      const bboxFB = boundingBoxFromFace(faceB);
+      if (!bboxIntersects(bboxFA, bboxFB)) continue;
+
+      const ffiResult = intersectFaceFace(faceA, faceB);
+      if (!ffiResult || ffiResult.edges.length === 0) continue;
+
+      for (const ffiEdge of ffiResult.edges) {
+        const e = ffiEdge.edge;
+        const matchA = findMatchingBoundaryEdge(e, faceA);
+        const matchB = findMatchingBoundaryEdge(e, faceB);
+        const isCurvedA = matchA && (matchA.curve.type === 'circle3d' || matchA.curve.type === 'arc3d');
+        const isCurvedB = matchB && (matchB.curve.type === 'circle3d' || matchB.curve.type === 'arc3d');
+        const canShareA = isCurvedA && e.curve.isClosed && matchA!.curve.isClosed;
+        const canShareB = isCurvedB && e.curve.isClosed && matchB!.curve.isClosed;
+
+        if (!matchA) {
+          let edgeToUse = e;
+          if (canShareB) {
+            edgeToUse = matchB!;
+            for (const pc of e.pcurves) {
+              if (!edgeToUse.pcurves.some(p => p.surface === pc.surface)) {
+                edgeToUse.pcurves.push(pc);
+              }
+            }
+          }
+          if (!edgesOnA.has(faceA)) edgesOnA.set(faceA, []);
+          addEdgeIfNotDuplicate(edgesOnA.get(faceA)!, edgeToUse);
+        }
+        if (!matchB) {
+          let edgeToUse = e;
+          if (canShareA) {
+            edgeToUse = matchA!;
+            for (const pc of e.pcurves) {
+              if (!edgeToUse.pcurves.some(p => p.surface === pc.surface)) {
+                edgeToUse.pcurves.push(pc);
+              }
+            }
+          }
+          if (!edgesOnB.has(faceB)) edgesOnB.set(faceB, []);
+          addEdgeIfNotDuplicate(edgesOnB.get(faceB)!, edgeToUse);
+        }
+      }
+    }
+  }
+
+  return success({
+    facesFromA: facesOfA
+      .filter((face) => (edgesOnA.get(face)?.length ?? 0) > 0)
+      .map((face) => ({
+        original: face,
+        intersectionEdges: edgesOnA.get(face)!,
+        subFaces: builderFace(face, edgesOnA.get(face)!),
+      })),
+    facesFromB: facesOfB
+      .filter((face) => (edgesOnB.get(face)?.length ?? 0) > 0)
+      .map((face) => ({
+        original: face,
+        intersectionEdges: edgesOnB.get(face)!,
+        subFaces: builderFace(face, edgesOnB.get(face)!),
+      })),
+  });
+}
+
+export function booleanOperation(
+  a: Solid,
+  b: Solid,
+  op: BooleanOp,
+): OperationResult<BooleanResult> {
+  const selection = debugSelectBooleanFaces(a, b, op);
+  if (!selection.success) {
+    return failure(selection.error);
+  }
+
+  const {
+    selectedFaces,
+    facesFromA,
+    facesFromB,
+  } = selection.result!;
+
   // ── Stage 5: Orient faces, stitch edges, and assemble ──
 
   // Following OCCT BOPTools_AlgoTools::OrientFacesOnShell + ShapeFix_Shell::GetShells:
   // Ensure all faces have consistent edge winding. Faces from different source solids
   // may have inconsistent orientations at shared intersection edges.
-  const oriented = orientFacesOnShell(selectedFaces);
-  const stitched = stitchEdges(oriented);
+  const stitched = stitchEdges(selectedFaces);
+  const oriented = orientFacesOnShell(stitched);
 
-  const shellResult = makeShell(stitched);
-  if (!shellResult.success) return failure(`Shell creation failed: ${shellResult.error}`);
+  const shellComponents = splitShellFaceUses(oriented);
+  const shells: Shell[] = [];
+  for (const component of shellComponents) {
+    const shellResult = makeShell(component);
+    if (!shellResult.success) return failure(`Shell creation failed: ${shellResult.error}`);
+    shells.push(shellResult.result!);
+  }
+  if (shells.length === 0) {
+    return failure('Boolean produced no shell components');
+  }
 
-  const solidResult = makeSolid(shellResult.result!);
+  const outerShell = pickOuterShell(shells);
+  const innerShells = shells.filter((shell) => shell !== outerShell);
+  const solidResult = makeSolid(outerShell, innerShells);
   if (!solidResult.success) {
     // Diagnose boundary edges
     const TOL7 = 1e-7;
@@ -1217,6 +2038,101 @@ export function booleanOperation(
   });
 }
 
+function splitShellFaceUses(faceUses: ShellFaceUse[]): ShellFaceUse[][] {
+  if (faceUses.length <= 1) {
+    return faceUses.length === 0 ? [] : [faceUses];
+  }
+
+  const edgeToFaces = new Map<string, number[]>();
+  for (let faceIndex = 0; faceIndex < faceUses.length; faceIndex++) {
+    for (const key of componentEdgeKeys(materializeShellFaceUse(faceUses[faceIndex]))) {
+      if (!edgeToFaces.has(key)) {
+        edgeToFaces.set(key, []);
+      }
+      edgeToFaces.get(key)!.push(faceIndex);
+    }
+  }
+
+  const visited = new Set<number>();
+  const components: ShellFaceUse[][] = [];
+
+  for (let start = 0; start < faceUses.length; start++) {
+    if (visited.has(start)) continue;
+    const queue = [start];
+    const component: ShellFaceUse[] = [];
+    visited.add(start);
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      component.push(faceUses[current]);
+      for (const key of componentEdgeKeys(materializeShellFaceUse(faceUses[current]))) {
+        const neighbors = edgeToFaces.get(key) || [];
+        for (const neighbor of neighbors) {
+          if (!visited.has(neighbor)) {
+            visited.add(neighbor);
+            queue.push(neighbor);
+          }
+        }
+      }
+    }
+
+    components.push(component);
+  }
+
+  return components;
+}
+
+function componentEdgeKeys(face: Face): string[] {
+  const keys: string[] = [];
+  const round7 = (value: number) => Math.round(value / 1e-7) * 1e-7;
+  const addEdgeKey = (oe: OrientedEdge) => {
+    if (oe.edge.degenerate) return;
+    const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+    const startKey = `${round7(start.x)},${round7(start.y)},${round7(start.z)}`;
+    const endKey = `${round7(end.x)},${round7(end.y)},${round7(end.z)}`;
+    const curve = oe.edge.curve;
+
+    if (curve.isClosed && (curve.type === 'circle3d' || curve.type === 'arc3d') && 'plane' in curve) {
+      const center = curve.plane.origin;
+      const normal = curve.plane.normal;
+      let nx = round7(normal.x);
+      let ny = round7(normal.y);
+      let nz = round7(normal.z);
+      const firstNonZero = nx !== 0 ? nx : ny !== 0 ? ny : nz;
+      if (firstNonZero < 0) {
+        nx = -nx;
+        ny = -ny;
+        nz = -nz;
+      }
+      keys.push(`C:${round7(center.x)},${round7(center.y)},${round7(center.z)}|r=${round7((curve as any).radius)}|n=${nx},${ny},${nz}`);
+      return;
+    }
+
+    const key = startKey < endKey ? `${startKey}|${endKey}` : `${endKey}|${startKey}`;
+    keys.push(key);
+  };
+
+  for (const oe of face.outerWire.edges) addEdgeKey(oe);
+  for (const innerWire of face.innerWires) {
+    for (const oe of innerWire.edges) addEdgeKey(oe);
+  }
+  return keys;
+}
+
+function pickOuterShell(shells: Shell[]): Shell {
+  let best = shells[0];
+  let bestVolume = Math.abs(solidVolume({ outerShell: shells[0], innerShells: [] }));
+  for (let i = 1; i < shells.length; i++) {
+    const volume = Math.abs(solidVolume({ outerShell: shells[i], innerShells: [] }));
+    if (volume > bestVolume) {
+      best = shells[i];
+      bestVolume = volume;
+    }
+  }
+  return best;
+}
+
 // ═══════════════════════════════════════════════════════
 // OPPOSITE-NORMAL COPLANAR HANDLING
 // ═══════════════════════════════════════════════════════
@@ -1258,301 +2174,6 @@ function handleOppositeNormalCoplanar(
   } else { // intersect
     // Opposite normals with overlap but no volume → discard
   }
-}
-
-// ═══════════════════════════════════════════════════════
-// EDGE STITCHING
-// ═══════════════════════════════════════════════════════
-
-const STITCH_TOL = 1e-6;
-
-/**
- * Pre-split a face's boundary edges at a set of global vertices.
- *
- * Following OCCT BOPAlgo_PaveFiller::MakeSplitEdges: boundary edges are split
- * in a shared vertex pool BEFORE face reconstruction. Adjacent faces of the
- * same solid automatically share the same split edges because they use the
- * same canonical vertex objects from the pool.
- *
- * This replaces the old post-hoc "stitcher" approach.
- */
-function preSplitFaceAtVertices(face: Face, vertices: Point3D[]): Face {
-  if (vertices.length === 0) return face;
-
-  const splitOEs: OrientedEdge[] = [];
-  let anySplit = false;
-
-  for (const oe of face.outerWire.edges) {
-    // Skip degenerate edges — they can't be split
-    if (oe.edge.degenerate) {
-      splitOEs.push(oe);
-      continue;
-    }
-    // Only split line edges at vertices
-    if (oe.edge.curve.type !== 'line3d') {
-      splitOEs.push(oe);
-      continue;
-    }
-
-    const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-    const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
-    const dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z;
-    const lenSq = dx * dx + dy * dy + dz * dz;
-    if (lenSq < STITCH_TOL * STITCH_TOL) {
-      splitOEs.push(oe);
-      continue;
-    }
-
-    // Find vertices that lie strictly between start and end on this edge
-    const intermediates: { t: number; pt: Point3D }[] = [];
-    for (const v of vertices) {
-      if (distance(v, start) < STITCH_TOL || distance(v, end) < STITCH_TOL) continue;
-
-      const vx = v.x - start.x, vy = v.y - start.y, vz = v.z - start.z;
-      const t = (vx * dx + vy * dy + vz * dz) / lenSq;
-      if (t < STITCH_TOL || t > 1 - STITCH_TOL) continue;
-
-      const px = start.x + t * dx - v.x;
-      const py = start.y + t * dy - v.y;
-      const pz = start.z + t * dz - v.z;
-      if (Math.sqrt(px * px + py * py + pz * pz) > STITCH_TOL) continue;
-
-      intermediates.push({ t, pt: v });
-    }
-
-    if (intermediates.length === 0) {
-      // Snap endpoints to canonical vertices (OCCT BRepBuilderAPI_Sewing).
-      // Different faces may create edges for the same geometric line via
-      // different FFI computations, producing tiny coordinate differences.
-      const snapStart = snapToCanonical(start, vertices);
-      const snapEnd = snapToCanonical(end, vertices);
-      if (snapStart !== start || snapEnd !== end) {
-        const lr = makeLine3D(snapStart, snapEnd);
-        if (lr.success) {
-          const er = makeEdgeFromCurve(lr.result!);
-          if (er.success) {
-            splitOEs.push(orientEdge(er.result!, true));
-            anySplit = true;
-            continue;
-          }
-        }
-      }
-      splitOEs.push(oe);
-      continue;
-    }
-
-    anySplit = true;
-    intermediates.sort((a, b) => a.t - b.t);
-
-    // Create sub-edges using canonical vertex coordinates
-    let current = snapToCanonical(start, vertices);
-    for (const inter of intermediates) {
-      const lineRes = makeLine3D(current, inter.pt);
-      if (lineRes.success) {
-        const edgeRes = makeEdgeFromCurve(lineRes.result!);
-        if (edgeRes.success) splitOEs.push(orientEdge(edgeRes.result!, true));
-      }
-      current = inter.pt;
-    }
-    const lineRes = makeLine3D(current, snapToCanonical(end, vertices));
-    if (lineRes.success) {
-      const edgeRes = makeEdgeFromCurve(lineRes.result!);
-      if (edgeRes.success) splitOEs.push(orientEdge(edgeRes.result!, true));
-    }
-  }
-
-  if (!anySplit) return face;
-
-  const wireRes = makeWire(splitOEs);
-  if (!wireRes.success) return face;
-
-  const faceRes = makeFace(face.surface, wireRes.result!, [...face.innerWires], face.forward);
-  return faceRes.success ? faceRes.result! : face;
-}
-
-/**
- * Minimal edge stitching pass. After OCCT-style pre-splitting, most edges
- * already match. This handles any remaining cases (e.g., coplanar handler
- * output faces whose edges need to match adjacent split faces).
- */
-function stitchEdges(faces: Face[]): Face[] {
-  // Collect canonical vertex pool from all faces
-  const allVerts: Point3D[] = [];
-  for (const face of faces) {
-    for (const oe of face.outerWire.edges) {
-      pushUnique(allVerts, edgeStartPoint(oe.edge));
-      pushUnique(allVerts, edgeEndPoint(oe.edge));
-    }
-    for (const iw of face.innerWires) {
-      for (const oe of iw.edges) {
-        pushUnique(allVerts, edgeStartPoint(oe.edge));
-        pushUnique(allVerts, edgeEndPoint(oe.edge));
-      }
-    }
-  }
-
-  // Re-use the pre-split logic: collect all vertices from all selected faces,
-  // then split any remaining unsplit edges at those vertices.
-  const result: Face[] = [];
-  for (const face of faces) {
-    const rebuilt = preSplitFaceAtVertices(face, allVerts);
-    result.push(rebuilt);
-  }
-
-  return result;
-}
-
-// ═══════════════════════════════════════════════════════
-// SHELL ORIENTATION (OCCT OrientFacesOnShell)
-// ═══════════════════════════════════════════════════════
-
-/**
- * Orient faces so shared edges are traversed in opposite directions.
- *
- * Following OCCT BOPTools_AlgoTools::OrientFacesOnShell (line 353-480)
- * and ShapeFix_Shell::GetShells (line 301-610):
- *
- * For each edge shared by 2 faces, if the edge has the SAME orientation
- * in both faces (both forward or both reversed), one face is flipped.
- * This greedy algorithm processes faces one at a time, flipping each
- * to maintain consistent edge winding with already-processed neighbors.
- */
-/**
- * Orient faces so shared edges are traversed in opposite directions.
- *
- * Following OCCT BOPTools_AlgoTools::OrientFacesOnShell (line 353-480)
- * and ShapeFix_Shell::GetShells (line 301-610):
- *
- * BFS from face 0: for each unprocessed neighbor, check if the shared
- * edge has the same directed key in both faces. If so, flip the neighbor.
- */
-function orientFacesOnShell(faces: Face[]): Face[] {
-  if (faces.length <= 1) return faces;
-
-  const TOL7 = 1e-7;
-  const round = (n: number) => Math.round(n / TOL7) * TOL7;
-
-  // Helper: compute edge keys for a face (outer + inner wires)
-  // For closed circles, use geometry-based keys (center+radius+normal) to match
-  // different edge objects at the same geometric location.
-  function edgeKey(oe: { edge: Edge; forward: boolean }): { key: string; directed: string } | null {
-    if (oe.edge.degenerate) return null;
-    const s = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-    const e = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
-    const k1 = `${round(s.x)},${round(s.y)},${round(s.z)}`;
-    const k2 = `${round(e.x)},${round(e.y)},${round(e.z)}`;
-
-    const curve = oe.edge.curve;
-    if (curve.isClosed && (curve.type === 'circle3d' || curve.type === 'arc3d') && 'plane' in curve) {
-      const c = curve as any;
-      const ctr = c.plane.origin;
-      const n = c.plane.normal;
-      // Canonicalize normal direction: pick the half-space where the first
-      // nonzero component is positive. Two circles at the same location with
-      // opposite normals (+z vs -z) are the SAME geometric edge — OCCT matches
-      // them by topological identity; we match by canonical geometry.
-      let nx = round(n.x), ny = round(n.y), nz = round(n.z);
-      const firstNonZero = nx !== 0 ? nx : ny !== 0 ? ny : nz;
-      if (firstNonZero < 0) { nx = -nx; ny = -ny; nz = -nz; }
-      const geoKey = `C:${round(ctr.x)},${round(ctr.y)},${round(ctr.z)}|r=${round(c.radius)}|n=${nx},${ny},${nz}`;
-      // When the normal is flipped, the circle's forward/reversed sense also
-      // flips (a CCW circle viewed from +z is CW viewed from -z). Encode the
-      // effective direction so the BFS can detect same-vs-opposite winding.
-      const normalFlipped = firstNonZero < 0;
-      const effectiveFwd = normalFlipped ? !oe.forward : oe.forward;
-      return { key: geoKey, directed: `${geoKey}|${effectiveFwd ? 'F' : 'R'}` };
-    }
-    // Open arcs: include midpoint to disambiguate from lines with same endpoints
-    if (curve.type === 'arc3d' && 'plane' in curve) {
-      const midT = (curve.startParam + curve.endParam) / 2;
-      const mid = evaluateCurveAt(curve, midT);
-      if (mid) {
-        const mk = `M:${round(mid.x)},${round(mid.y)},${round(mid.z)}`;
-        const key = k1 < k2 ? `${k1}|${k2}|${mk}` : `${k2}|${k1}|${mk}`;
-        return { key, directed: `${k1}->${k2}|${mk}` };
-      }
-    }
-    const key = k1 < k2 ? `${k1}|${k2}` : `${k2}|${k1}`;
-    const directed = curve.isClosed ? `${k1}|${oe.forward ? 'F' : 'R'}` : `${k1}->${k2}`;
-    return { key, directed };
-  }
-
-  function faceEdgeKeys(face: Face): { key: string; directed: string }[] {
-    const result: { key: string; directed: string }[] = [];
-    for (const oe of face.outerWire.edges) {
-      const ek = edgeKey(oe);
-      if (ek) result.push(ek);
-    }
-    for (const iw of face.innerWires) {
-      for (const oe of iw.edges) {
-        const ek = edgeKey(oe);
-        if (ek) result.push(ek);
-      }
-    }
-    return result;
-  }
-
-  // Build initial undirected edge → face index map
-  const edgeToFaces = new Map<string, number[]>();
-  for (let fi = 0; fi < faces.length; fi++) {
-    for (const { key } of faceEdgeKeys(faces[fi])) {
-      if (!edgeToFaces.has(key)) edgeToFaces.set(key, []);
-      const list = edgeToFaces.get(key)!;
-      if (!list.includes(fi)) list.push(fi);
-    }
-  }
-
-  const result = [...faces];
-  const processed = new Set<number>();
-  const queue: number[] = [0];
-  processed.add(0);
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    const currentKeys = faceEdgeKeys(result[current]);
-
-    for (const { key, directed } of currentKeys) {
-      const neighbors = edgeToFaces.get(key);
-      if (!neighbors) continue;
-
-      for (const ni of neighbors) {
-        if (ni === current || processed.has(ni)) continue;
-
-        // Find the directed key for this edge in the neighbor face
-        const neighborKeys = faceEdgeKeys(result[ni]);
-        const neighborEdge = neighborKeys.find(nk => nk.key === key);
-        if (!neighborEdge) continue;
-
-        // If same directed key → same winding → flip neighbor
-        if (directed === neighborEdge.directed) {
-          const flippedFace = flipFace(result[ni]);
-          if (flippedFace.success) {
-            result[ni] = flippedFace.result!;
-          }
-        }
-
-        processed.add(ni);
-        queue.push(ni);
-      }
-    }
-  }
-
-  return result;
-}
-
-/** Snap a point to the nearest canonical vertex within tolerance. */
-function snapToCanonical(pt: Point3D, canonicalVerts: Point3D[]): Point3D {
-  for (const v of canonicalVerts) {
-    if (distance(pt, v) < STITCH_TOL) return v;
-  }
-  return pt;
-}
-
-function pushUnique(arr: Point3D[], pt: Point3D): void {
-  for (const existing of arr) {
-    if (distance(existing, pt) < STITCH_TOL) return;
-  }
-  arr.push(pt);
 }
 
 // ═══════════════════════════════════════════════════════

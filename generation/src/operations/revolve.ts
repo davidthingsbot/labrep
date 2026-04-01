@@ -433,14 +433,14 @@ function generateFullRevolveFace(
   const TWO_PI = 2 * Math.PI;
 
   // Helper: attach seam PCurves to edge (two PCurves: left at U=0, right at U=2π)
+  // Store occurrence 0 at U=2π and occurrence 1 at U=0, matching the closed-surface
+  // convention already used by extrusion and expected by the volume path.
   // Both PCurves are in edge geometric direction (startVertex → endVertex).
-  // Wire direction is handled by getEdgeUV which swaps when forward=false.
-  // OCCT reference: seam edges always have PCurves in edge direction.
   function addSeamPCurves(e: Edge): void {
-    const leftPC = makeLine2D({ x: 0, y: vStart }, { x: 0, y: vEnd });
-    if (leftPC.result) addPCurveToEdge(e, makePCurve(leftPC.result, surface));
     const rightPC = makeLine2D({ x: TWO_PI, y: vStart }, { x: TWO_PI, y: vEnd });
     if (rightPC.result) addPCurveToEdge(e, makePCurve(rightPC.result, surface));
+    const leftPC = makeLine2D({ x: 0, y: vStart }, { x: 0, y: vEnd });
+    if (leftPC.result) addPCurveToEdge(e, makePCurve(leftPC.result, surface));
   }
 
   // Helper: attach circle PCurve to edge
@@ -492,34 +492,17 @@ function generateFullRevolveFace(
       startCircle = startCircle || startCircleResult.result!;
     }
 
-    // Wire order for 3D connectivity: seam(FWD) → endCircle → seam(REV) → startCircle
-    // OCCT uses TopEdge(REV) + BottomEdge(FWD) in lateral, but our wire must
-    // connect in 3D. The circle directions must be OPPOSITE to the disk face
-    // directions for proper edge sharing (shell closure).
-    // Disk bottom (startOnAxis): endCircle(FWD) → lateral must use endCircle...
-    // Actually: the shared circle used FWD in the bottom disk, so lateral must use REV.
-    // Similarly, top disk uses startCircle(REV), so lateral uses startCircle(FWD)...
-    // Wait — we need to check which circle is shared with which disk.
-    //
-    // For rectangle (0,0,0)→(r,0,0)→(r,0,h)→(0,0,h):
-    //   Edge 1 (bottom horiz): startOnAxis → disk uses endCircle (at (r,0,0)) FWD, face reversed
-    //   Edge 2 (right vert): !startOnAxis && !endOnAxis → lateral face
-    //     startCircle = circle at (r,0,0) → SAME as edge 1's endCircle → must be OPPOSITE = REV ✗
-    //     But currently it's REV... which means disk(FWD) vs lateral(REV) = opposite ✓
-    //   Edge 3 (top horiz): endOnAxis → disk uses startCircle (at (r,0,h)) REV, face forward
-    //     endCircle = circle at (r,0,h) → SAME as edge 3's startCircle → must be OPPOSITE = FWD ✗
-    //     But currently it's FWD... which means disk(REV) vs lateral(FWD) = opposite ✓
-    //
-    // So the CURRENT directions are already correct for edge sharing!
+    // For a full revolve, OCCT shares StartEdge/EndEdge when there are no side caps.
+    // Keep one seam edge object used twice, but use the OCCT-compatible circle directions.
     addSeamPCurves(edge);
-    addCirclePCurve(endCircle, vEnd, true);
-    addCirclePCurve(startCircle, vStart, false);
+    addCirclePCurve(endCircle, vEnd, false);
+    addCirclePCurve(startCircle, vStart, true);
 
     wireEdges.push(
       orientEdge(edge, true),
-      orientEdge(endCircle, true),
+      orientEdge(endCircle, false),
       orientEdge(edge, false),
-      orientEdge(startCircle, false),
+      orientEdge(startCircle, true),
     );
   } else if (startOnAxis && surface.type === 'plane') {
     // OCCT ref: BRepPrim_OneAxis::BottomFace.
@@ -539,9 +522,10 @@ function generateFullRevolveFace(
     wireEdges.push(orientEdge(endCircle, true));
   } else if (endOnAxis && surface.type === 'plane') {
     // OCCT ref: BRepPrim_OneAxis::TopFace.
-    // Planar disk face: wire = single circle edge (REV), forward=true.
+    // Planar disk face: wire = single circle edge (FWD), forward=true.
+    // OCCT ref: BRepPrim_OneAxis::TopWire adds TopEdge() with orientation=true.
     // The profile edge goes inward toward axis (endOnAxis). The circle at
-    // startPt is the disk boundary, used REV (matching the lateral face's FWD).
+    // startPt is the disk boundary, used FORWARD on the top face.
     const ROUND3 = 1e-7;
     const vtxKey3 = (pt: Point3D) => `${Math.round(pt.x/ROUND3)*ROUND3},${Math.round(pt.y/ROUND3)*ROUND3},${Math.round(pt.z/ROUND3)*ROUND3}`;
     let startCircle = sharedCircleEdges?.get(vtxKey3(startPt));
@@ -550,9 +534,9 @@ function generateFullRevolveFace(
       if (!startCircleResult.success) return failure('Failed to create sweep circle');
       startCircle = startCircleResult.result!;
     }
-    const pc = buildPCurveForEdgeOnSurface(startCircle, surface, false);
+    const pc = buildPCurveForEdgeOnSurface(startCircle, surface, true);
     if (pc) addPCurveToEdge(startCircle, pc);
-    wireEdges.push(orientEdge(startCircle, false));
+    wireEdges.push(orientEdge(startCircle, true));
   } else if (startOnAxis) {
     // Non-planar, start on axis (cone/sphere pole): 4-edge lateral face with degen.
     const ROUND2 = 1e-7;
@@ -700,13 +684,8 @@ function generateRevolveCapFaces(
   startAngle: number,
   endAngle: number,
 ): OperationResult<{ startFace: Face; endFace: Face }> {
-  // Start cap: the original profile wire (reversed for correct normal direction)
-  const startReversedResult = reverseWire(wire);
-  if (!startReversedResult.success) {
-    return failure(`Failed to reverse start cap wire: ${startReversedResult.error}`);
-  }
-
-  const startFaceResult = makePlanarFace(startReversedResult.result!);
+  // Start cap: same wire topology, semantic reversal only.
+  const startFaceResult = makePlanarFace(wire);
   if (!startFaceResult.success) {
     return failure(`Failed to create start cap face: ${startFaceResult.error}`);
   }
@@ -723,7 +702,10 @@ function generateRevolveCapFaces(
   }
 
   return success({
-    startFace: startFaceResult.result!,
+    startFace: {
+      ...startFaceResult.result!,
+      forward: false,
+    },
     endFace: endFaceResult.result!,
   });
 }

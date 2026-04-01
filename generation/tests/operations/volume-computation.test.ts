@@ -15,11 +15,12 @@ import { makeArc3D } from '../../src/geometry/arc3d';
 import { makeEdgeFromCurve } from '../../src/topology/edge';
 import { makeWire, makeWireFromEdges, orientEdge } from '../../src/topology/wire';
 import { shellFaces } from '../../src/topology/shell';
-import { solidVolume } from '../../src/topology/solid';
+import { shellFaceUses } from '../../src/topology/shell';
+import { debugFaceEdgeVolumes, debugFaceVolume, debugFaceVolumes, debugShellSignedVolume, solidInnerShells, solidVolume } from '../../src/topology/solid';
 import { evaluateCurve2D as evaluateCurve2DHelper } from '../../src/topology/pcurve';
 import { extrude } from '../../src/operations/extrude';
 import { revolve } from '../../src/operations/revolve';
-import { booleanSubtract } from '../../src/operations/boolean';
+import { booleanSubtract, booleanIntersect, booleanUnion } from '../../src/operations/boolean';
 
 // ═══════════════════════════════════════════════════════
 // PRIMITIVE SOLIDS — known exact volumes
@@ -191,6 +192,30 @@ describe('volume: sign consistency (the root cause test)', () => {
   });
 });
 
+describe('volume: primitive diagnostics', () => {
+  it('debugs offset box face contributions', () => {
+    const box = makeBox(5, 5, 5, 2, 2, 2);
+    console.log('[DBG offset box face totals]', debugFaceVolumes(box.solid.outerShell).map((entry) => ({
+      surface: entry.face.surface.type,
+      forward: entry.face.forward,
+      edges: entry.face.outerWire.edges.length,
+      volume: entry.volume,
+    })));
+    expect(true).toBe(true);
+  });
+
+  it('debugs cylinder face contributions', () => {
+    const cyl = makeCylinder(1, 1);
+    console.log('[DBG cylinder face totals]', debugFaceVolumes(cyl.solid.outerShell).map((entry) => ({
+      surface: entry.face.surface.type,
+      forward: entry.face.forward,
+      edges: entry.face.outerWire.edges.length,
+      volume: entry.volume,
+    })));
+    expect(true).toBe(true);
+  });
+});
+
 // ═══════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════
@@ -249,7 +274,9 @@ describe('volume: box minus sphere (reversed revolve face)', () => {
     const sphere = makeSphere(2);
     const result = booleanSubtract(box.solid, sphere.solid);
     expect(result.success).toBe(true);
-    const faces = shellFaces(result.result!.solid.outerShell);
+    const innerShells = solidInnerShells(result.result!.solid);
+    expect(innerShells).toHaveLength(1);
+    const faces = shellFaces(innerShells[0]);
     const sphereFaces = faces.filter(f => f.surface.type === 'sphere');
     expect(sphereFaces.length).toBe(1);
     expect(sphereFaces[0].forward).toBe(false);
@@ -263,6 +290,20 @@ describe('volume: box minus sphere (reversed revolve face)', () => {
     const vol = solidVolume(result.result!.solid);
     const expected = 1000 - (4 / 3) * Math.PI * 27;
     expect(Math.abs(vol - expected) / expected).toBeLessThan(0.02);
+  });
+
+  it('debugs sphere cavity face totals', () => {
+    const box = makeBox(0, 0, -5, 10, 10, 10);
+    const sphere = makeSphere(2);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+    console.log('[DBG sphere cavity face totals]', debugFaceVolumes(result.result!.solid.outerShell).map((entry) => ({
+      surface: entry.face.surface.type,
+      forward: entry.face.forward,
+      edges: entry.face.outerWire.edges.length,
+      volume: entry.volume,
+    })));
+    expect(true).toBe(true);
   });
 });
 
@@ -288,7 +329,9 @@ describe('volume: box minus contained cylinder (reversed extrude face)', () => {
     const cyl = makeCylinder(1, 6);
     const result = booleanSubtract(box.solid, cyl.solid);
     expect(result.success).toBe(true);
-    const faces = shellFaces(result.result!.solid.outerShell);
+    const innerShells = solidInnerShells(result.result!.solid);
+    expect(innerShells).toHaveLength(1);
+    const faces = shellFaces(innerShells[0]);
     const cylFaces = faces.filter(f => f.surface.type === 'cylinder');
     expect(cylFaces.length).toBeGreaterThanOrEqual(1);
     expect(cylFaces[0].forward).toBe(false);
@@ -304,5 +347,308 @@ describe('volume: box minus contained cylinder (reversed extrude face)', () => {
     const vol = solidVolume(result.result!.solid);
     const expected = 1000 - Math.PI * 4 * 8;
     expect(Math.abs(vol - expected) / expected).toBeLessThan(0.08);
+  });
+});
+
+describe('volume: sphere minus contained sphere (concentric cavity)', () => {
+  // Both spheres at origin, B entirely inside A. No face-face intersection.
+  // Both sphere faces have true seam edges (same Edge object 2× in wire).
+  // When flipFace reverses B's wire, seam visits swap position AND flip
+  // forward flags — these cancel, leaving dl unchanged. The volume
+  // computation must still correctly negate B's contribution.
+  it('V(A-B) = V(big) - V(small)', () => {
+    const s1 = makeSphere(2);
+    const s2 = makeSphere(1.5);
+    const result = booleanSubtract(s1.solid, s2.solid);
+    expect(result.success).toBe(true);
+    const vol = solidVolume(result.result!.solid);
+    const expected = (4 / 3) * Math.PI * (8 - 3.375);
+    expect(Math.abs(vol - expected) / expected).toBeLessThan(0.10);
+  });
+
+  it('debugs concentric sphere face totals', () => {
+    const s1 = makeSphere(2);
+    const s2 = makeSphere(1.5);
+    const result = booleanSubtract(s1.solid, s2.solid);
+    expect(result.success).toBe(true);
+    console.log('[DBG concentric sphere face totals]', debugFaceVolumes(result.result!.solid.outerShell).map((entry) => ({
+      surface: entry.face.surface.type,
+      forward: entry.face.forward,
+      edges: entry.face.outerWire.edges.length,
+      volume: entry.volume,
+    })));
+    expect(true).toBe(true);
+  });
+});
+
+describe('volume: Phase 13 OCCT shell mass properties', () => {
+  it('truncated sphere shell uses spherical faces outward on the shell', () => {
+    const sphere = makeSphere(5);
+    const box = makeBox(0, 0, -3, 12, 12, 6);
+    const result = booleanIntersect(sphere.solid, box.solid);
+    expect(result.success).toBe(true);
+
+    const shell = result.result!.solid.outerShell;
+    const sphericalUses = shellFaceUses(shell).filter((faceUse) => faceUse.face.surface.type === 'sphere');
+    expect(sphericalUses.length).toBe(1);
+    expect(sphericalUses[0].face.forward).toBe(true);
+    expect(sphericalUses[0].reversed).toBe(false);
+  });
+
+  it('debugs truncated sphere shell face uses', () => {
+    const sphere = makeSphere(5);
+    const box = makeBox(0, 0, -3, 12, 12, 6);
+    const result = booleanIntersect(sphere.solid, box.solid);
+    expect(result.success).toBe(true);
+
+    const shell = result.result!.solid.outerShell;
+    console.log('[DBG truncated shell face uses]', shellFaceUses(shell).map((faceUse) => ({
+      surface: faceUse.face.surface.type,
+      faceForward: faceUse.face.forward,
+      reversed: faceUse.reversed,
+      edges: faceUse.face.outerWire.edges.length,
+      z: faceUse.face.surface.type === 'plane' ? faceUse.face.surface.plane.origin.z : null,
+      nz: faceUse.face.surface.type === 'plane' ? faceUse.face.surface.plane.normal.z : null,
+      edgeDirs: faceUse.face.outerWire.edges.map((oe) => oe.forward),
+      volume: debugFaceVolume(faceUse.face, faceUse.reversed),
+      flippedVolume: debugFaceVolume(faceUse.face, !faceUse.reversed),
+    })));
+    expect(true).toBe(true);
+  });
+
+  it('sphere cavity shell uses the spherical face inward on the shell', () => {
+    const box = makeBox(0, 0, -5, 10, 10, 10);
+    const sphere = makeSphere(2);
+    const result = booleanSubtract(box.solid, sphere.solid);
+    expect(result.success).toBe(true);
+
+    const shell = solidInnerShells(result.result!.solid)[0];
+    const sphericalUses = shellFaceUses(shell).filter((faceUse) => faceUse.face.surface.type === 'sphere');
+    expect(sphericalUses.length).toBe(1);
+    expect(sphericalUses[0].face.forward).toBe(false);
+    expect(sphericalUses[0].reversed).toBe(false);
+  });
+
+  it('truncated sphere shell has the correct signed shell volume', () => {
+    const sphere = makeSphere(5);
+    const box = makeBox(0, 0, -3, 12, 12, 6);
+    const result = booleanIntersect(sphere.solid, box.solid);
+    expect(result.success).toBe(true);
+
+    const shell = result.result!.solid.outerShell;
+    console.log('[DBG truncated shell face totals]', JSON.stringify(
+      debugFaceVolumes(shell).map((entry) => ({
+        surface: entry.face.surface.type,
+        volume: entry.volume,
+        edges: entry.face.outerWire.edges.length,
+        inner: entry.face.innerWires.length,
+      })),
+      null,
+      2,
+    ));
+    const signedVolume = debugShellSignedVolume(shell);
+    const expected = 132 * Math.PI;
+    expect(Math.abs(signedVolume - expected) / expected).toBeLessThan(0.03);
+  });
+
+  it('truncated sphere shell keeps net positive spherical-band contribution', () => {
+    const sphere = makeSphere(5);
+    const box = makeBox(0, 0, -3, 12, 12, 6);
+    const result = booleanIntersect(sphere.solid, box.solid);
+    expect(result.success).toBe(true);
+
+    const contributions = debugFaceVolumes(result.result!.solid.outerShell);
+    const spherical = contributions
+      .filter(c => c.face.surface.type === 'sphere')
+      .reduce((sum, c) => sum + c.volume, 0);
+
+    expect(spherical).toBeGreaterThan(0);
+  });
+
+  it('selected truncated-sphere spherical face has positive single-face contribution', () => {
+    const sphere = makeSphere(5);
+    const box = makeBox(0, 0, -3, 12, 12, 6);
+    const result = booleanIntersect(sphere.solid, box.solid);
+    expect(result.success).toBe(true);
+
+    const shell = result.result!.solid.outerShell;
+    const sphericalUse = shellFaceUses(shell).find((faceUse) => faceUse.face.surface.type === 'sphere');
+    expect(sphericalUse).toBeDefined();
+
+    const contribution = debugFaceVolume(sphericalUse!.face, sphericalUse!.reversed);
+    expect(contribution).toBeGreaterThan(0);
+  });
+
+  it('selected truncated-sphere spherical face has the expected boundary structure', () => {
+    const sphere = makeSphere(5);
+    const box = makeBox(0, 0, -3, 12, 12, 6);
+    const result = booleanIntersect(sphere.solid, box.solid);
+    expect(result.success).toBe(true);
+
+    const shell = result.result!.solid.outerShell;
+    const sphericalUse = shellFaceUses(shell).find((faceUse) => faceUse.face.surface.type === 'sphere');
+    expect(sphericalUse).toBeDefined();
+
+    const face = sphericalUse!.face;
+    console.log('[DBG truncated-sphere spherical face]', JSON.stringify(face.outerWire.edges.map((oe, index) => ({
+      index,
+      type: oe.edge.curve.type,
+      forward: oe.forward,
+      pcurves: oe.edge.pcurves.filter((pc) => pc.surface === face.surface).length,
+      pcurveMidU: oe.edge.pcurves
+        .filter((pc) => pc.surface === face.surface)
+        .map((pc) => evaluateCurve2DHelper(pc.curve2d, (pc.curve2d.startParam + pc.curve2d.endParam) / 2).x),
+      z: oe.edge.curve.type === 'circle3d' ? oe.edge.curve.plane.origin.z : null,
+      closed: oe.edge.curve.isClosed,
+      degenerate: oe.edge.degenerate,
+    })), null, 2));
+    expect(face.outerWire.edges).toHaveLength(4);
+    expect(face.innerWires).toHaveLength(0);
+    expect(face.outerWire.edges.filter((oe) => oe.edge.curve.type === 'circle3d')).toHaveLength(2);
+    expect(face.outerWire.edges.filter((oe) => oe.edge.pcurves.filter((pc) => pc.surface === face.surface).length >= 2)).toHaveLength(2);
+  });
+
+  it('selected truncated-sphere spherical face keeps nonzero contribution on the seam arcs', () => {
+    const sphere = makeSphere(5);
+    const box = makeBox(0, 0, -3, 12, 12, 6);
+    const result = booleanIntersect(sphere.solid, box.solid);
+    expect(result.success).toBe(true);
+
+    const shell = result.result!.solid.outerShell;
+    const sphericalUse = shellFaceUses(shell).find((faceUse) => faceUse.face.surface.type === 'sphere');
+    expect(sphericalUse).toBeDefined();
+
+    const edgeContributions = debugFaceEdgeVolumes(sphericalUse!.face, sphericalUse!.reversed);
+    console.log('[DBG truncated-sphere edge contributions]', JSON.stringify(edgeContributions.map((entry) => ({
+      type: entry.edge.curve.type,
+      forward: entry.forward,
+      volume: entry.volume,
+      pcurves: entry.edge.pcurves.filter((pc) => pc.surface === sphericalUse!.face.surface).length,
+      z: entry.edge.curve.type === 'circle3d' ? entry.edge.curve.plane.origin.z : null,
+    })), null, 2));
+    const seamArcContrib = edgeContributions
+      .filter((entry) => entry.edge.curve.type === 'arc3d' && entry.edge.pcurves.filter((pc) => pc.surface === sphericalUse!.face.surface).length >= 2)
+      .reduce((sum, entry) => sum + entry.volume, 0);
+
+    expect(seamArcContrib).not.toBe(0);
+  });
+
+  it('selected truncated-sphere spherical seam arcs contribute with the same sign', () => {
+    const sphere = makeSphere(5);
+    const box = makeBox(0, 0, -3, 12, 12, 6);
+    const result = booleanIntersect(sphere.solid, box.solid);
+    expect(result.success).toBe(true);
+
+    const shell = result.result!.solid.outerShell;
+    const sphericalUse = shellFaceUses(shell).find((faceUse) => faceUse.face.surface.type === 'sphere');
+    expect(sphericalUse).toBeDefined();
+
+    const seamArcContribs = debugFaceEdgeVolumes(sphericalUse!.face, sphericalUse!.reversed)
+      .filter((entry) => entry.edge.curve.type === 'arc3d' && entry.edge.pcurves.filter((pc) => pc.surface === sphericalUse!.face.surface).length >= 2)
+      .map((entry) => entry.volume);
+
+    expect(seamArcContribs).toHaveLength(2);
+    expect(Math.sign(seamArcContribs[0])).toBe(Math.sign(seamArcContribs[1]));
+  });
+
+  it('truncated sphere planar trim disks each contribute positive signed volume', () => {
+    const sphere = makeSphere(5);
+    const box = makeBox(0, 0, -3, 12, 12, 6);
+    const result = booleanIntersect(sphere.solid, box.solid);
+    expect(result.success).toBe(true);
+
+    const shell = result.result!.solid.outerShell;
+    const planarContribs = shellFaceUses(shell)
+      .filter((faceUse) => faceUse.face.surface.type === 'plane')
+      .map((faceUse) => debugFaceVolume(faceUse.face, faceUse.reversed));
+
+    expect(planarContribs).toHaveLength(2);
+    expect(planarContribs[0]).toBeGreaterThan(0);
+    expect(planarContribs[1]).toBeGreaterThan(0);
+  });
+
+  it('T-pipe union shell has the correct signed shell volume', () => {
+    const vertCyl = makeCylinder(3, 20);
+
+    const circlePlane = plane(point3d(-10, 0, 0), vec3d(1, 0, 0), vec3d(0, 1, 0));
+    const circle = makeCircle3D(circlePlane, 3).result!;
+    const edge = makeEdgeFromCurve(circle).result!;
+    const wire = makeWire([orientEdge(edge, true)]).result!;
+    const horizCyl = extrude(wire, vec3d(1, 0, 0), 20).result!;
+
+    const result = booleanUnion(vertCyl.solid, horizCyl.solid);
+    expect(result.success).toBe(true);
+
+    const shell = result.result!.solid.outerShell;
+    console.log('[DBG t-pipe shell face totals]', JSON.stringify(
+      debugFaceVolumes(shell).map((entry) => ({
+        surface: entry.face.surface.type,
+        volume: entry.volume,
+        edges: entry.face.outerWire.edges.length,
+        inner: entry.face.innerWires.length,
+      })),
+      null,
+      2,
+    ));
+    const signedVolume = debugShellSignedVolume(shell);
+    const expected = 2 * Math.PI * 9 * 20 - 144;
+    expect(Math.abs(signedVolume - expected) / expected).toBeLessThan(0.05);
+  });
+
+  it('T-pipe union shell keeps net positive cylindrical contribution', () => {
+    const vertCyl = makeCylinder(3, 20);
+
+    const circlePlane = plane(point3d(-10, 0, 0), vec3d(1, 0, 0), vec3d(0, 1, 0));
+    const circle = makeCircle3D(circlePlane, 3).result!;
+    const edge = makeEdgeFromCurve(circle).result!;
+    const wire = makeWire([orientEdge(edge, true)]).result!;
+    const horizCyl = extrude(wire, vec3d(1, 0, 0), 20).result!;
+
+    const result = booleanUnion(vertCyl.solid, horizCyl.solid);
+    expect(result.success).toBe(true);
+
+    const contributions = debugFaceVolumes(result.result!.solid.outerShell);
+    const cylindrical = contributions
+      .filter(c => c.face.surface.type === 'cylinder' || c.face.surface.type === 'extrusion')
+      .reduce((sum, c) => sum + c.volume, 0);
+
+    expect(cylindrical).toBeGreaterThan(0);
+  });
+
+  it('selected T-pipe cylindrical face has nonzero edge contribution', () => {
+    const vertCyl = makeCylinder(3, 20);
+
+    const circlePlane = plane(point3d(-10, 0, 0), vec3d(1, 0, 0), vec3d(0, 1, 0));
+    const circle = makeCircle3D(circlePlane, 3).result!;
+    const edge = makeEdgeFromCurve(circle).result!;
+    const wire = makeWire([orientEdge(edge, true)]).result!;
+    const horizCyl = extrude(wire, vec3d(1, 0, 0), 20).result!;
+
+    const result = booleanUnion(vertCyl.solid, horizCyl.solid);
+    expect(result.success).toBe(true);
+
+    const shell = result.result!.solid.outerShell;
+    const cylUse = shellFaceUses(shell).find((faceUse) => faceUse.face.surface.type === 'cylinder');
+    expect(cylUse).toBeDefined();
+
+    const edgeContributions = debugFaceEdgeVolumes(cylUse!.face, cylUse!.reversed);
+    console.log('[DBG t-pipe cylinder face]', JSON.stringify(cylUse!.face.outerWire.edges.map((oe, index) => ({
+      index,
+      type: oe.edge.curve.type,
+      forward: oe.forward,
+      pcurves: oe.edge.pcurves.filter((pc) => pc.surface === cylUse!.face.surface).length,
+      pcurveMidU: oe.edge.pcurves
+        .filter((pc) => pc.surface === cylUse!.face.surface)
+        .map((pc) => evaluateCurve2DHelper(pc.curve2d, (pc.curve2d.startParam + pc.curve2d.endParam) / 2).x),
+    })), null, 2));
+    console.log('[DBG t-pipe cylinder edge contributions]', JSON.stringify(edgeContributions.map((entry) => ({
+      type: entry.edge.curve.type,
+      forward: entry.forward,
+      volume: entry.volume,
+      pcurves: entry.edge.pcurves.filter((pc) => pc.surface === cylUse!.face.surface).length,
+    })), null, 2));
+
+    const total = edgeContributions.reduce((sum, entry) => sum + entry.volume, 0);
+    expect(total).not.toBe(0);
   });
 });

@@ -720,34 +720,16 @@ export function generateCapFaces(
 ): OperationResult<{ bottomFace: Face; topFace: Face }> {
   const offset = scale(direction, dist);
 
-  // Bottom cap: original profile location
-  // The bottom face's outer wire should be CW when viewed from outside (below the solid)
-  // This is the opposite of the profile wire direction.
-  // The side faces use the profile edges going forward, so bottom cap needs edges reversed.
+  // Bottom cap: original profile location.
+  // OCCT keeps the same boundary topology and marks the bottom face REVERSED.
   const bottomSurface = makePlaneSurface(p);
 
-  // Reverse the outer wire for bottom face
-  const reversedOuterResult = reverseWire(outerWire);
-  if (!reversedOuterResult.success) {
-    return failure(`Failed to reverse outer wire: ${reversedOuterResult.error}`);
-  }
-
-  // Reverse inner wires for bottom face
-  const reversedInners: Wire[] = [];
-  for (const inner of innerWires) {
-    const reversedResult = reverseWire(inner);
-    if (!reversedResult.success) {
-      return failure(`Failed to reverse inner wire: ${reversedResult.error}`);
-    }
-    reversedInners.push(reversedResult.result!);
-  }
-
   // Attach PCurves to bottom cap edges (mutates in place — shared with side faces)
-  for (const oe of reversedOuterResult.result!.edges) {
+  for (const oe of outerWire.edges) {
     const pc = buildPCurveForEdgeOnSurface(oe.edge, bottomSurface, oe.forward);
     if (pc) addPCurveToEdge(oe.edge, pc);
   }
-  for (const inner of reversedInners) {
+  for (const inner of innerWires) {
     for (const oe of inner.edges) {
       const pc = buildPCurveForEdgeOnSurface(oe.edge, bottomSurface, oe.forward);
       if (pc) addPCurveToEdge(oe.edge, pc);
@@ -755,7 +737,7 @@ export function generateCapFaces(
   }
 
   // OCCT: bottom face is REVERSED (surface normal +z but outward normal -z)
-  const bottomFaceResult = makeFace(bottomSurface, reversedOuterResult.result!, reversedInners, false);
+  const bottomFaceResult = makeFace(bottomSurface, outerWire, innerWires, false);
   if (!bottomFaceResult.success) {
     return failure(`Failed to create bottom cap: ${bottomFaceResult.error}`);
   }

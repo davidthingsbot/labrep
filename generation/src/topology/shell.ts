@@ -1,6 +1,5 @@
 import { OperationResult, success, failure } from '../mesh/mesh';
 import { Face, faceOuterWire, faceInnerWires } from './face';
-import { Wire } from './wire';
 import { edgeStartPoint, edgeEndPoint } from './edge';
 import { evaluateArc3D } from '../geometry/arc3d';
 import { distance, TOLERANCE } from '../core';
@@ -13,11 +12,34 @@ import { distance, TOLERANCE } from '../core';
  * OCCT reference: TopoDS_Shell
  */
 export interface Shell {
+  /** The face uses composing the shell */
+  readonly faceUses: readonly ShellFaceUse[];
+
   /** The faces composing the shell */
   readonly faces: readonly Face[];
 
   /** True if the shell is watertight (closed) */
   readonly isClosed: boolean;
+}
+
+export interface ShellFaceUse {
+  readonly face: Face;
+  readonly reversed: boolean;
+}
+
+export function materializeShellFaceUse(faceUse: ShellFaceUse): Face {
+  const effectiveForward = faceUse.reversed ? !faceUse.face.forward : faceUse.face.forward;
+
+  return {
+    surface: faceUse.face.surface,
+    outerWire: faceUse.face.outerWire,
+    innerWires: faceUse.face.innerWires,
+    forward: effectiveForward,
+  };
+}
+
+function normalizeFaceUses(faces: Array<Face | ShellFaceUse>): ShellFaceUse[] {
+  return faces.map((item) => ('face' in item ? item : { face: item, reversed: false }));
 }
 
 /**
@@ -38,15 +60,17 @@ function makeEdgeKey(p1: { x: number; y: number; z: number }, p2: { x: number; y
  * Returns array of [edgeKey, directedKey] pairs.
  * directedKey preserves direction for detecting improper orientation.
  */
-function collectWireEdges(wire: Wire): Array<{ key: string; directed: string }> {
+function collectWireEdges(face: Face, reversed: boolean, wire: typeof face.outerWire): Array<{ key: string; directed: string }> {
   const edges: Array<{ key: string; directed: string }> = [];
-  
+  const effectiveForward = reversed ? !face.forward : face.forward;
+
   for (const oe of wire.edges) {
     // Skip degenerate edges (zero 3D length, e.g., at poles) — they don't
     // participate in shell closure analysis.
     if (oe.edge.degenerate) continue;
-    const start = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
-    const end = oe.forward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
+    const edgeForward = effectiveForward ? oe.forward : !oe.forward;
+    const start = edgeForward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    const end = edgeForward ? edgeEndPoint(oe.edge) : edgeStartPoint(oe.edge);
     
     const round = (n: number) => Math.round(n / TOLERANCE) * TOLERANCE;
     const k1 = `${round(start.x)},${round(start.y)},${round(start.z)}`;
@@ -63,12 +87,21 @@ function collectWireEdges(wire: Wire): Array<{ key: string; directed: string }> 
       const c = curve as any;
       const ctr = c.plane.origin;
       const n = c.plane.normal;
-      const geoKey = `C:${round(ctr.x)},${round(ctr.y)},${round(ctr.z)}|r=${round(c.radius)}|n=${round(n.x)},${round(n.y)},${round(n.z)}`;
+      let nx = round(n.x);
+      let ny = round(n.y);
+      let nz = round(n.z);
+      const firstNonZero = nx !== 0 ? nx : ny !== 0 ? ny : nz;
+      if (firstNonZero < 0) {
+        nx = -nx;
+        ny = -ny;
+        nz = -nz;
+      }
+      const geoKey = `C:${round(ctr.x)},${round(ctr.y)},${round(ctr.z)}|r=${round(c.radius)}|n=${nx},${ny},${nz}`;
       key = geoKey;
-      directed = `${geoKey}|${oe.forward ? 'fwd' : 'rev'}`;
+      directed = `${geoKey}|${edgeForward ? 'fwd' : 'rev'}`;
     } else if (isClosed) {
       key = `${k1}|${k1}`;
-      directed = `${k1}|${oe.forward ? 'fwd' : 'rev'}`;
+      directed = `${k1}|${edgeForward ? 'fwd' : 'rev'}`;
     } else if (curve.type === 'arc3d' && 'plane' in curve) {
       // Open arcs: include midpoint to disambiguate from lines with same endpoints.
       // An arc and a line can share endpoints but traverse different paths.
@@ -98,28 +131,27 @@ function collectWireEdges(wire: Wire): Array<{ key: string; directed: string }> 
  * Each edge should appear once in each direction (opposite orientations from
  * the two faces that share it).
  */
-function analyzeShellClosure(faces: Face[]): boolean {
-  if (faces.length === 0) return false;
+function analyzeShellClosure(faceUses: readonly ShellFaceUse[]): boolean {
+  if (faceUses.length === 0) return false;
   
   // Map from edge key to list of directed keys
   const edgeUsage = new Map<string, string[]>();
   
-  for (const face of faces) {
-    // Collect edges from outer wire
-    const outerEdges = collectWireEdges(faceOuterWire(face));
+  for (const faceUse of faceUses) {
+    const face = faceUse.face;
+    const outerEdges = collectWireEdges(face, faceUse.reversed, faceOuterWire(face));
     for (const { key, directed } of outerEdges) {
       const usages = edgeUsage.get(key) || [];
       usages.push(directed);
       edgeUsage.set(key, usages);
     }
-    
-    // Collect edges from inner wires (holes)
+
     for (const innerWire of faceInnerWires(face)) {
-      const innerEdges = collectWireEdges(innerWire);
+      const innerEdges = collectWireEdges(face, faceUse.reversed, innerWire);
       for (const { key, directed } of innerEdges) {
-        const usages = edgeUsage.get(key) || [];
-        usages.push(directed);
-        edgeUsage.set(key, usages);
+      const usages = edgeUsage.get(key) || [];
+      usages.push(directed);
+      edgeUsage.set(key, usages);
       }
     }
   }
@@ -127,12 +159,15 @@ function analyzeShellClosure(faces: Face[]): boolean {
   // For a closed shell:
   // - Every edge must be used exactly 2 times
   // - The two usages should be in opposite directions
-  for (const [, usages] of Array.from(edgeUsage)) {
+  for (const [key, usages] of Array.from(edgeUsage)) {
     if (usages.length !== 2) {
       return false;
     }
 
-    if (usages[0] === usages[1]) {
+    const isGeometricallyClosedEdge =
+      key.startsWith('C:') || key.split('|')[0] === key.split('|')[1];
+
+    if (usages[0] === usages[1] && !isGeometricallyClosedEdge) {
       return false;
     }
   }
@@ -149,15 +184,18 @@ function analyzeShellClosure(faces: Face[]): boolean {
  * @param faces - The faces composing the shell
  * @returns Shell or failure
  */
-export function makeShell(faces: Face[]): OperationResult<Shell> {
+export function makeShell(faces: Array<Face | ShellFaceUse>): OperationResult<Shell> {
   if (faces.length === 0) {
     return failure('Cannot create shell from empty face list');
   }
 
-  const isClosed = analyzeShellClosure(faces);
+  const faceUses = normalizeFaceUses(faces);
+  const materializedFaces = faceUses.map(materializeShellFaceUse);
+  const isClosed = analyzeShellClosure(faceUses);
 
   return success({
-    faces: [...faces],
+    faceUses,
+    faces: materializedFaces,
     isClosed,
   });
 }
@@ -167,6 +205,10 @@ export function makeShell(faces: Face[]): OperationResult<Shell> {
  */
 export function shellFaces(shell: Shell): readonly Face[] {
   return shell.faces;
+}
+
+export function shellFaceUses(shell: Shell): readonly ShellFaceUse[] {
+  return shell.faceUses;
 }
 
 /**

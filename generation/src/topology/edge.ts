@@ -54,6 +54,14 @@ export interface Edge {
    * and right seam edges across the full U period.
    */
   readonly degenerate?: boolean;
+
+  /**
+   * Optional provenance for split edges.
+   * OCCT keeps split topology tied to the original edge identity; local
+   * builders can use this to recognize when a sub-edge still belongs to an
+   * original face boundary.
+   */
+  readonly sourceEdge?: Edge;
 }
 
 /**

@@ -1106,7 +1106,26 @@ App Examples:
 
 **Exit Criteria:** `booleanSubtract(lBracket, sphere)` produces a correct B-rep solid with exact spherical cavity surface, closed shell, correct volume, and smooth-shaded tessellation. All analytic surface pairs handled. `V(A) + V(B) = V(union) + V(intersect)` invariant holds for all test cases.
 
-**Status (2026-03-28):** OCCT-aligned boolean pipeline. **1441/1451 tests passing (6 remaining).** Volume computation, face orientation, and face splitting all OCCT-aligned. Diagonal extrusion, reversed sphere/cylinder cavities, pipe fittings, sphere hemisphere splitting all correct. Through-hole, spherical pocket, mounting plate, bushing, cylinder-flat all work end-to-end.
+**Status (2026-03-30):** Phase 13 is in active OCCT-alignment migration. The focused OCCT boolean subset is now stable at **77/85 passing (8 remaining)** across:
+- `boolean-cad-objects.test.ts`
+- `boolean-pipeline-internals.test.ts`
+- `occt-fundamentals.test.ts`
+- `occt-orientation.test.ts`
+- `occt-shell-orientation.test.ts`
+- `occt-common-edges.test.ts`
+
+What is now locked down:
+- `IsSplitToReverse` parent-face orientation is implemented and directly tested.
+- Shell orientation now separates semantic face orientation from boundary traversal reversal.
+- Closed-circle shell matching canonicalizes opposite normals.
+- Common-edge pre-splitting has been extracted and tested, including inner-wire splitting.
+- Through-hole, spherical pocket, mounting plate, large spherical cavity, and cylinder-flat remain green in the authoritative Phase 13 subset.
+
+What is still not complete:
+- sequential boolean topology on already-modified solids
+- some shared-edge/common-block-style canonicalization cases
+- harder analytic topology cases such as sphere-box intersect and perpendicular-cylinder union
+- one remaining pipe-fitting volume discrepancy
 
 **Architecture:**
 
@@ -1231,14 +1250,21 @@ Major architectural refactor (2026-03-26):
 - **BU1 sampling for closed curves**: BU1 computed by sampling N=8 points along each PCurve (not just start/end). Inner wires included. Fixes closed-curve extrema missed by start=end.
 - **Coplanar normal comparison**: `coplanarSameNormal` compares effective outward normals via `forward` flags and plane normal dot product (not polygon area sign). Fixes stacked-box union.
 
-**Remaining: BuilderFace winding + IsSplitToReverse (next):**
+**Current OCCT migration status (2026-03-30):**
 
-The BFS `orientFacesOnShell` overcorrects: it flips bottom caps (intentionally `forward=false`) which creates new plane surfaces, breaking PCurve references. This causes annular caps in pipe fittings to contribute zero volume (1/3 error).
+The old shell-wide BFS face flipping is no longer the primary orientation mechanism.
 
-OCCT uses `IsSplitToReverse` (normal comparison against original face) instead of BFS. This requires:
-1. **BuilderFace winding fix**: Sub-faces from `builderFace` must preserve the parent face's edge winding so that shared intra-solid edges have opposite `oe.forward` in adjacent sub-faces. Currently, builderFace produces sub-faces with same-direction shared edges — the BFS masked this bug.
-2. **IsSplitToReverse**: Replace BFS with per-face normal comparison against original. Track `original` face through the split/classify/select pipeline. OCCT ref: `BOPAlgo_Builder_3::BuildDraftSolid` calls `IsSplitToReverse` per face.
-3. **Edge sharing**: Merge coincident edges from different solids into shared objects (OCCT `CommonBlock`). Copy PCurves, set opposite `oe.forward`.
+Implemented and retained:
+1. **`IsSplitToReverse`**: Split-face orientation is now parent-relative and directly tested. OCCT ref: `BOPTools_AlgoTools::IsSplitToReverse`.
+2. **Shell boundary traversal reversal**: `OrientFacesOnShell` behavior is now modeled as boundary-traversal correction, not semantic face reversal.
+3. **Canonical closed-circle matching**: Shell/orientation matching canonicalizes opposite circle normals to the same geometric key.
+4. **Common-edge pre-splitting helper**: Shared-edge splitting has been extracted into a dedicated helper with direct tests, including inner-wire splitting.
+
+Still remaining:
+1. **Deeper CommonBlock-style canonicalization**: The current stitcher still does not fully model OCCT `BOPDS_CommonBlock` / pave-block ownership across repeated and harder boolean assemblies.
+2. **Sequential boolean topology**: Counterbore still fails on the second subtract, indicating canonical shared-edge reuse is incomplete for already-boolean result solids.
+3. **Hard analytic topology cases**: Sphere-box intersect and perpendicular-cylinder union still fail at shell construction.
+4. **Pipe-fitting volume**: Shell closes, but annular-cap / shared-edge topology is still not fully OCCT-consistent in the coaxial subtract case.
 
 OCCT refs:
 - `BOPAlgo_BuilderFace::PerformLoops` (wire tracing preserves winding via angle-based next-edge selection)
@@ -1331,17 +1357,259 @@ Key principle: **circles are single closed edges, never split into arcs.** OCCT'
 | Box − sphere (reversed revolve face) | ✅ 3/3 |
 | Box − cylinder (reversed extrude face) | ✅ 3/3 |
 
-##### Remaining Work (6 failures)
+##### Remaining Work (current 8 failures in authoritative Phase 13 subset)
 
-| Test | Category | Root cause |
-|------|----------|------------|
-| Sphere-sphere subtract → closed shell | Boolean topology | Sphere-sphere SSI produces trimmed sphere faces; shell not closing |
-| Box − sphere at corner | Boolean topology | Sphere straddles 3 box faces; face splitting/classification edge case |
-| Counterbore (sequential booleans) | Boolean topology | Second boolean on already-boolean result; shell stitching |
-| T-pipe union × 3 (shell, volume, tessellation) | Boolean topology | Cylinder-cylinder SSI not implemented; perpendicular cylinders |
+| Test cluster | Failing tests | Category | Current diagnosis |
+|------|----------|------------|------------|
+| Counterbore (sequential booleans) | 1 | Boolean topology | Second boolean on already-boolean result; shared closed-edge reuse / shell stitching still incomplete |
+| Pipe fitting (tube) volume | 1 | Boolean topology / mass props coupling | Shell closes, but annular shared-edge topology still not fully OCCT-consistent |
+| Sphere intersect box (truncated sphere) | 3 | Boolean topology | Trimmed spherical faces + planar caps still not assembling into a closed shell |
+| T-pipe union (perpendicular cylinders) | 3 | Boolean topology | Hard shared-edge / SSI topology case; shell remains open |
 
-All 6 are boolean **topology** failures (shell construction), not volume or face orientation issues. The volume computation and face orientation pipeline are fully OCCT-aligned and locked down with 41 low-level tests.
-| 2-hemisphere sphere tests | Need migration to OCCT 1-face sphere |
+These 8 remaining failures are still Phase 13 **topology** failures, not broad regressions in the low-level OCCT alignment work above. The retained low-level changes are covered by dedicated tests in:
+- `occt-orientation.test.ts`
+- `occt-shell-orientation.test.ts`
+- `occt-common-edges.test.ts`
+
+The next implementation target is deeper `CommonBlock`-style edge ownership and canonicalization for repeated and harder boolean assemblies.
+
+##### 2026-03-31 Status Update: What Actually Happened Today
+
+This section replaces the too-optimistic reading that the remaining work is just "cleanup". It is not. The codebase is partway through a real OCCT migration, and the remaining hard slice is still a **hybrid**.
+
+**What landed today**
+
+- More low-level T-pipe discriminators were added in:
+  - [`generation/tests/operations/boolean-pipeline-internals.test.ts`](../generation/tests/operations/boolean-pipeline-internals.test.ts)
+- The current B-side horizontal-cylinder split is now locked down as:
+  - two large **holed** periodic cylinder faces exist
+  - those faces do contain outside sample regions
+  - the current `ComputeState(face) -> PointInFace(face)` fallback still picks interior points classified `inside`
+- `boolean.ts` was pushed closer to OCCT `PointInFace` in two real ways:
+  - `IntermediatePoint` now uses the OCCT parameter bias (`0.43213918`), not a raw midpoint
+  - the local hatcher tries the OCCT first two line positions first, then only uses extra lines as fallback because there is still no true `Geom2dHatch_Hatcher`
+- The stale "large no-hole B-side face" expectation was removed. The current B-side shape is holed again, and that is the more plausible OCCT direction.
+
+**Where we are right now**
+
+- The serious remaining blocker is the T-pipe classification slice.
+- The current narrow focused state is:
+  - Test scope:
+    `tests/operations/boolean-pipeline-internals.test.ts -t "full boolean B-side split keeps nontrivial holed cylinder faces on the horizontal cylinder|full boolean B-side holed cylinder faces contain an outside sample point|ComputeState face fallback finds an outside interior point on a clipped T-pipe B-cylinder face"`
+  - Result:
+    - `2 passed`
+    - `1 failed`
+- Passing:
+  - `full boolean B-side split keeps nontrivial holed cylinder faces on the horizontal cylinder`
+  - `full boolean B-side holed cylinder faces contain an outside sample point`
+- Failing:
+  - `ComputeState face fallback finds an outside interior point on a clipped T-pipe B-cylinder face`
+
+That means:
+- the B-side periodic-cylinder geometry is no longer the main uncertainty
+- the remaining miss is the face-probe / face-domain classifier used by `classifySubFace()`
+- full suite stabilization was **not** reached today
+
+**Why progress kept fragmenting into small changes**
+
+This is the honest answer.
+
+I kept trying to "tighten" individual pieces around the existing local pipeline instead of replacing the missing OCCT subsystem wholesale.
+
+The specific mistake was:
+- I treated `PointInFace` / `ComputeState` as if it could be recovered by tuning:
+  - scanline placement
+  - polygon winding
+  - periodic normalization
+  - candidate rejection
+- But the real missing mechanism is larger:
+  - OCCT uses `Geom2dHatch_Hatcher` domains over the actual face
+  - OCCT uses `IntTools_FClass2d` to classify temporary faces / wires
+  - OCCT `BuilderFace::PerformAreas` and `BOPTools_AlgoTools3D::PointInFace` are coupled to that machinery
+
+So the reason the work kept looking like "small changes" is simple:
+- too much of the old local approximation stayed in place
+- I kept trying to improve it incrementally
+- instead of replacing the missing OCCT sub-mechanism directly
+
+That was the wrong process for this layer, and you were right to call it out repeatedly.
+
+**Function Map of the Active Slice**
+
+This is the part of the boolean pipeline that consumed most of the day.
+
+1. `booleanOperation()` in [`generation/src/operations/boolean.ts`](../generation/src/operations/boolean.ts)
+   - Top-level boolean pipeline
+   - Calls FFI, `builderFace()`, classification, stitching, shell orientation, shell/solid construction
+   - **Status:** hybrid. High-level OCCT structure is present, but the classification path still contains local approximations.
+
+2. `debugBooleanFaceSplits()` in [`generation/src/operations/boolean.ts`](../generation/src/operations/boolean.ts)
+   - Debug entry to inspect split subfaces before classification/selection
+   - **Status:** labrep debug utility; not an OCCT concept itself
+
+3. `builderFace()` in [`generation/src/operations/builder-face.ts`](../generation/src/operations/builder-face.ts)
+   - Rebuilds subfaces from original face + section edges
+   - Local equivalent of OCCT `BOPAlgo_BuilderFace` + `BOPAlgo_WireSplitter`
+   - Calls path tracing / loop tracing / area construction
+   - **Status:** mixed but much more OCCT-aligned than at the start of the day. Still not a faithful replacement for `PerformAreas` + `FClass2d`.
+
+4. `debugBuilderFaceAreas()` in [`generation/src/operations/builder-face.ts`](../generation/src/operations/builder-face.ts)
+   - Exposes the temporary loops / outers / holes / final faces after `PerformAreas`-like processing
+   - **Status:** debug utility
+
+5. `classifySubFace()` in [`generation/src/operations/boolean.ts`](../generation/src/operations/boolean.ts)
+   - Classifies one split face relative to the opposite solid
+   - Intended OCCT analog: `BOPTools_AlgoTools::ComputeState(face, solid, bounds)`
+   - Order today:
+     - try non-boundary edge midpoint
+     - otherwise try `faceProbePoint3D()`
+     - then fall through to other older local fallbacks
+   - **Status:** not 100% OCCT. Still has legacy fallback structure around the OCCT-shaped front end.
+
+6. `faceProbePoint3D()` in [`generation/src/operations/boolean.ts`](../generation/src/operations/boolean.ts)
+   - Local stand-in for `BOPTools_AlgoTools3D::PointInFace(face)`
+   - Builds UV samples, tries hatch-like interior points, then edge-based UV/3D nudges
+   - **Status:** not OCCT-compliant. This is the current main blocker.
+
+7. `hatchInteriorPoint2D()` in [`generation/src/operations/boolean.ts`](../generation/src/operations/boolean.ts)
+   - Local replacement for the first part of OCCT `PointInFace(face, line)`
+   - Today it uses:
+     - OCCT `IntermediatePoint` bias
+     - OCCT first two line positions first
+     - extra fallback lines because there is still no true hatcher
+   - **Status:** explicit approximation, not OCCT
+
+8. `pointInFaceUV()` in [`generation/src/operations/boolean.ts`](../generation/src/operations/boolean.ts)
+   - Local polygon/ring inclusion test over sampled UV wires
+   - Used by the local hatcher/probe path
+   - **Status:** explicit approximation, not OCCT
+
+9. `stitchEdges()` in [`generation/src/operations/occt-common-edges.ts`](../generation/src/operations/occt-common-edges.ts)
+   - Canonicalizes shared split edges before shell assembly
+   - Local equivalent of OCCT `CommonBlock`/pave-block ownership
+   - **Status:** still partial, but no longer the main blocker in the current B-side slice
+
+10. `orientFacesOnShell()` in [`generation/src/operations/occt-shell-orientation.ts`](../generation/src/operations/occt-shell-orientation.ts)
+    - Shell-use orientation pass
+    - Now works on shell face uses rather than mutating face topology
+    - **Status:** one of the strongest OCCT-aligned migrations already completed
+
+11. `isSplitFaceReversed()` in [`generation/src/operations/occt-orientation.ts`](../generation/src/operations/occt-orientation.ts)
+    - Parent-relative `IsSplitToReverse`
+    - **Status:** directly OCCT-inspired and one of the cleaner parts of the migration
+
+12. `solidVolume()` / `computeFaceVolume()` in [`generation/src/topology/solid.ts`](../generation/src/topology/solid.ts)
+    - Mass-properties path
+    - **Status:** improved, but still downstream of unresolved boolean topology/classification on the T-pipe slice
+
+**What is actually OCCT-aligned now vs still hybrid**
+
+Mostly OCCT-aligned:
+- split-face parent-relative orientation (`IsSplitToReverse`)
+- shell-face-use model instead of mutating wires to express shell reversal
+- seam PCurve occurrence handling for reversed seam use
+- several `BuilderFace`/section-edge fixes that preserve richer periodic loops
+
+Still hybrid:
+- `BuilderFace::PerformAreas` temporary-face growth/hole classification
+- `PointInFace(face)` / local hatch-domain construction
+- `ComputeState(face, solid, bounds)` as a whole
+- `CommonBlock` / pave-block equivalence
+
+Still carrying old pipeline / workarounds:
+- `classifySubFace()` still has multiple local fallback phases after the OCCT-like front end
+- `faceProbePoint3D()` still falls back to grid probing and edge-side heuristics because there is no real face-domain classifier
+- `hatchInteriorPoint2D()` still uses polygonized loops instead of a true hatcher
+
+**Brutally honest next move**
+
+Do **not** keep tuning `boolean.ts` one probe heuristic at a time.
+
+The next correct task is:
+
+1. Build a dedicated local equivalent of OCCT `PointInFace(face, line)` / `IntTools_FClass2d` for temporary periodic faces.
+2. Use that same classifier in both:
+   - `builder-face.ts` `PerformAreas`
+   - `boolean.ts` `faceProbePoint3D()` / `classifySubFace()`
+3. Remove the layered legacy fallback phases after the new classifier proves itself.
+
+In other words:
+- stop patching the current polygon scanline
+- implement the missing OCCT sub-mechanism as one subsystem
+- then drive the T-pipe slice and the remaining full-suite fallout from that corrected base
+
+That is the work I should have pivoted to earlier.
+
+**Full-suite test analysis at end of day**
+
+Full run:
+
+- Test scope:
+  `generation: npm test --`
+- Result:
+  - `92` test files total
+  - `77` passed files
+  - `15` failed files
+  - `1537` total tests
+  - `1388` passed
+  - `145` failed
+  - `4` skipped
+
+Worst failing files:
+
+| File | Failed | Passed | What it means |
+|------|--------|--------|---------------|
+| `tests/operations/boolean-pipeline-internals.test.ts` | 51 | 30 | The active OCCT migration slice is still red at low level. This is the main source of instability. |
+| `tests/operations/boolean-cad-objects.test.ts` | 17 | 11 | Real CAD end-to-end booleans are still broken downstream of the low-level slice. |
+| `tests/operations/boolean-expose.test.ts` | 15 | 9 | Public boolean-facing API regressions from the same pipeline. |
+| `tests/operations/boolean-curved-final.test.ts` | 12 | 17 | Curved boolean closure / trimming / topology still unstable. |
+| `tests/operations/occt-fundamentals.test.ts` | 11 | 31 | Some formerly green OCCT fundamentals regressed, especially periodic BuilderFace and revolve conventions. |
+| `tests/operations/builder-face.test.ts` | 10 | 11 | BuilderFace itself is still not stable enough to support the migrated boolean path. |
+| `tests/operations/volume-computation.test.ts` | 7 | 32 | Downstream shell mass-properties still fail where boolean topology/classification is wrong. |
+
+Other failing files from the full run:
+
+- `tests/io/step-boolean.test.ts`
+- `tests/operations/edge-winding.test.ts`
+- `tests/operations/shared-edge-trimming.test.ts`
+- `tests/operations/boolean-general.test.ts`
+- `tests/operations/boolean.test.ts`
+- `tests/operations/boolean-curved.test.ts`
+- `tests/operations/occt-shell-orientation.test.ts`
+
+**Interpretation of the full run**
+
+The suite is not "a little red". It is broadly red anywhere the still-hybrid boolean pipeline is exercised.
+
+The failure pattern is concentrated in this chain:
+
+1. `builder-face.ts`
+2. `boolean.ts` face classification / `ComputeState`
+3. `occt-common-edges.ts` shared-edge canonicalization
+4. shell closure / shell orientation on those results
+5. volume / tessellation / STEP on the bad topology
+
+That is why so many downstream suites are failing at once.
+
+At the same time, some low-level OCCT migrations do remain solid:
+
+- shell-face-use orientation model
+- parent-relative `IsSplitToReverse`
+- seam PCurve occurrence handling baseline
+
+For example, the seam-use OCCT baseline still passes:
+
+- Test scope:
+  `tests/operations/occt-fundamentals.test.ts -t "closed-face reversed seam use reads the alternate PCurve occurrence|cylinder side face has 4-edge wire with seam"`
+- Result:
+  - `2 passed`
+  - `0 failed`
+
+So the full-suite result supports the same conclusion as the focused T-pipe work:
+
+- some foundational OCCT migrations are correct and should stay
+- but the active boolean/classification subsystem is still a hybrid
+- and that hybrid is now the dominant source of repo-wide failures
 
 ---
 

@@ -46,8 +46,8 @@ function makeSphere(r: number) {
   ]).result!, Z_AXIS_3D, 2 * Math.PI).result!;
 }
 
-function makeCylinder(r: number, height: number) {
-  const circlePlane = plane(point3d(0, 0, -height / 2), vec3d(0, 0, 1), vec3d(1, 0, 0));
+function makeCylinder(r: number, height: number, cx = 0, cy = 0, cz = 0) {
+  const circlePlane = plane(point3d(cx, cy, cz - height / 2), vec3d(0, 0, 1), vec3d(1, 0, 0));
   const circle = makeCircle3D(circlePlane, r).result!;
   const edge = makeEdgeFromCurve(circle).result!;
   const wire = makeWire([orientEdge(edge, true)]).result!;
@@ -252,6 +252,102 @@ describe('FFI: Analytic edge dispatch', () => {
       const r = (result!.edges[0].edge.curve as any).radius;
       expect(r).toBeCloseTo(0.5, 1);
     }
+  });
+
+  it('G4: blind-hole top plane intersects offset cylinder side at the trim height', () => {
+    const box = makeBox(0, 0, 0, 20, 20, 10);
+    const cyl = makeCylinder(3, 8, 0, 0, 7); // z=3..11
+
+    const boxFaces = shellFaces(box.solid.outerShell);
+    const cylFaces = shellFaces(cyl.solid.outerShell);
+
+    const topFace = boxFaces.find(f =>
+      f.surface.type === 'plane' && f.surface.plane.normal.z > 0.5 &&
+      f.outerWire.edges.some(oe => Math.abs(edgeStartPoint(oe.edge).z - 10) < 0.01)
+    )!;
+    const cylSide = cylFaces.find(f => f.surface.type === 'cylinder')!;
+    expect(topFace).toBeDefined();
+    expect(cylSide).toBeDefined();
+
+    const result = intersectFaceFace(topFace, cylSide);
+    expect(result).not.toBeNull();
+    expect(result!.edges.length).toBeGreaterThanOrEqual(1);
+
+    const curves = result!.edges.map(({ edge }) => edge.curve);
+    expect(curves.some(curve => curve.type === 'circle3d' || curve.type === 'arc3d')).toBe(true);
+
+    for (const curve of curves) {
+      if (curve.type === 'circle3d' || curve.type === 'arc3d') {
+        expect(curve.plane.origin.z).toBeCloseTo(10, 6);
+      }
+    }
+  });
+
+  it('G5: perpendicular cylinder side faces produce intersection edges', () => {
+    const vertCyl = makeCylinder(3, 20);
+
+    const circlePlane = plane(point3d(-10, 0, 0), vec3d(1, 0, 0), vec3d(0, 1, 0));
+    const circle = makeCircle3D(circlePlane, 3).result!;
+    const edge = makeEdgeFromCurve(circle).result!;
+    const wire = makeWire([orientEdge(edge, true)]).result!;
+    const horizCyl = extrude(wire, vec3d(1, 0, 0), 20).result!;
+
+    const vertSide = shellFaces(vertCyl.solid.outerShell).find((face) => face.surface.type === 'cylinder')!;
+    const horizSide = shellFaces(horizCyl.solid.outerShell).find((face) => face.surface.type !== 'plane')!;
+    expect(vertSide).toBeDefined();
+    expect(horizSide).toBeDefined();
+
+    const result = intersectFaceFace(vertSide, horizSide);
+    expect(result).not.toBeNull();
+    expect(result!.edges.length).toBeGreaterThan(0);
+  });
+
+  it('G5b: perpendicular cylinder side faces preserve a nontrivial SSI section chain', () => {
+    const vertCyl = makeCylinder(3, 20);
+
+    const circlePlane = plane(point3d(-10, 0, 0), vec3d(1, 0, 0), vec3d(0, 1, 0));
+    const circle = makeCircle3D(circlePlane, 3).result!;
+    const edge = makeEdgeFromCurve(circle).result!;
+    const wire = makeWire([orientEdge(edge, true)]).result!;
+    const horizCyl = extrude(wire, vec3d(1, 0, 0), 20).result!;
+
+    const vertSide = shellFaces(vertCyl.solid.outerShell).find((face) => face.surface.type === 'cylinder')!;
+    const horizSide = shellFaces(horizCyl.solid.outerShell).find((face) => face.surface.type !== 'plane')!;
+
+    const result = intersectFaceFace(vertSide, horizSide);
+    expect(result).not.toBeNull();
+    expect(result!.edges.length).toBeGreaterThan(4);
+    expect(result!.edges.every(({ edge: sectionEdge }) => sectionEdge.curve.type === 'line3d')).toBe(true);
+  });
+
+  it('G5c: perpendicular cylinder SSI section chain is vertex-continuous', () => {
+    const vertCyl = makeCylinder(3, 20);
+
+    const circlePlane = plane(point3d(-10, 0, 0), vec3d(1, 0, 0), vec3d(0, 1, 0));
+    const circle = makeCircle3D(circlePlane, 3).result!;
+    const edge = makeEdgeFromCurve(circle).result!;
+    const wire = makeWire([orientEdge(edge, true)]).result!;
+    const horizCyl = extrude(wire, vec3d(1, 0, 0), 20).result!;
+
+    const vertSide = shellFaces(vertCyl.solid.outerShell).find((face) => face.surface.type === 'cylinder')!;
+    const horizSide = shellFaces(horizCyl.solid.outerShell).find((face) => face.surface.type !== 'plane')!;
+
+    const result = intersectFaceFace(vertSide, horizSide);
+    expect(result).not.toBeNull();
+    expect(result!.edges.length).toBeGreaterThan(4);
+
+    const round = (value: number) => Math.round(value / 1e-6) * 1e-6;
+    const counts = new Map<string, number>();
+    for (const { edge: sectionEdge } of result!.edges) {
+      for (const point of [edgeStartPoint(sectionEdge), edgeEndPoint(sectionEdge)]) {
+        const key = `${round(point.x)},${round(point.y)},${round(point.z)}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+
+    const degreeFour = [...counts.values()].filter((count) => count === 4);
+    expect([...counts.values()].every((count) => count === 2 || count === 4)).toBe(true);
+    expect(degreeFour).toHaveLength(2);
   });
 });
 

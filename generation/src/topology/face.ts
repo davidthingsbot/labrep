@@ -1,7 +1,7 @@
 import { point3d, vec3d, plane, Plane, cross, normalize, subtractPoints } from '../core';
 import { PlaneSurface, CylindricalSurface, ExtrusionSurface, SphericalSurface, ConicalSurface, ToroidalSurface, RevolutionSurface, makePlaneSurface } from '../surfaces';
 import { OperationResult, success, failure } from '../mesh/mesh';
-import { Wire, wireStartPoint } from './wire';
+import { Wire, OrientedEdge, wireStartPoint } from './wire';
 import { edgeStartPoint, addPCurveToEdge } from './edge';
 import { buildPCurveForEdgeOnSurface } from './pcurve';
 
@@ -173,6 +173,32 @@ export function faceOuterWire(face: Face): Wire {
  */
 export function faceInnerWires(face: Face): readonly Wire[] {
   return face.innerWires;
+}
+
+/**
+ * Get oriented edges from a face, composing face orientation with edge orientation.
+ *
+ * OCCT ref: TopoDS_Iterator with cumOri=true (TopoDS_Iterator.cxx line 67).
+ * TopAbs::Compose(REVERSED, FORWARD) = REVERSED;
+ * TopAbs::Compose(REVERSED, REVERSED) = FORWARD.
+ *
+ * For a REVERSED face (forward=false), all edge forward flags are flipped.
+ * For a FORWARD face, edges are returned as-is.
+ *
+ * Returns outer wire edges followed by inner wire edges.
+ */
+export function faceOrientedEdges(face: Face): OrientedEdge[] {
+  const compose = !face.forward;
+  const result: OrientedEdge[] = [];
+  for (const oe of face.outerWire.edges) {
+    result.push(compose ? { edge: oe.edge, forward: !oe.forward } : oe);
+  }
+  for (const iw of face.innerWires) {
+    for (const oe of iw.edges) {
+      result.push(compose ? { edge: oe.edge, forward: !oe.forward } : oe);
+    }
+  }
+  return result;
 }
 
 /**

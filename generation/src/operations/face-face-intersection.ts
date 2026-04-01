@@ -116,6 +116,21 @@ function faceUVBoundary(face: Face): UVPoly {
   return uvPoly;
 }
 
+function hasClosedBoundaryEdgeOnFace(face: Face): boolean {
+  for (const oe of face.outerWire.edges) {
+    let count = 0;
+    for (const pc of oe.edge.pcurves) {
+      if (pc.surface === face.surface) {
+        count++;
+      }
+    }
+    if (count > 1) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Evaluate a curve at parameter t. */
 function evaluate3DAt(curve: Curve3D, t: number): Point3D | null {
   switch (curve.type) {
@@ -163,6 +178,16 @@ function faceUVBox(face: Face): UVBox {
   // Add margin for numerical safety
   const uMargin = (uMax - uMin) * 0.05 + 0.01;
   const vMargin = (vMax - vMin) * 0.05 + 0.01;
+  const adapter = toAdapter(face.surface);
+  if (adapter.isUPeriodic && hasClosedBoundaryEdgeOnFace(face)) {
+    const natural = adapter.uvBounds();
+    return {
+      uMin: natural.uMin,
+      uMax: natural.uMax,
+      vMin: vMin - vMargin,
+      vMax: vMax + vMargin,
+    };
+  }
   return {
     uMin: uMin - uMargin, uMax: uMax + uMargin,
     vMin: vMin - vMargin, vMax: vMax + vMargin,
@@ -245,6 +270,67 @@ interface ClipSegment {
   endIdx: number;
 }
 
+export interface DebugFFIClipInfo {
+  curveIndex: number;
+  isClosed: boolean;
+  segsA: ClipSegment[];
+  segsB: ClipSegment[];
+  survivingSegs: ClipSegment[];
+}
+
+export function debugClipSSICurves(faceA: Face, faceB: Face): DebugFFIClipInfo[] {
+  const analyticResult = tryAnalyticIntersection(faceA, faceB);
+  if (analyticResult !== undefined) return [];
+
+  const ssiResult = intersectSurfaces(faceA.surface, faceB.surface);
+  const natRestA = isNaturalRestriction(faceA);
+  const natRestB = isNaturalRestriction(faceB);
+  const uvPolyA = natRestA ? [] : faceUVBoundary(faceA);
+  const uvPolyB = natRestB ? [] : faceUVBoundary(faceB);
+
+  return ssiResult.curves.map((ssiCurve, curveIndex) => {
+    const fullSeg = [{ startIdx: 0, endIdx: ssiCurve.points.length - 1 }];
+    const segsA = natRestA ? fullSeg
+      : faceA.surface.type === 'plane' ? clipSSICurveToFace(ssiCurve, uvPolyA, true)
+      : clipSSICurveToUVBox(ssiCurve, faceUVBox(faceA), true);
+    const segsB = natRestB ? fullSeg
+      : faceB.surface.type === 'plane' ? clipSSICurveToFace(ssiCurve, uvPolyB, false)
+      : clipSSICurveToUVBox(ssiCurve, faceUVBox(faceB), false);
+    return {
+      curveIndex,
+      isClosed: ssiCurve.isClosed,
+      segsA,
+      segsB,
+      survivingSegs: intersectSegments(segsA, segsB),
+    };
+  });
+}
+
+function mergeClosedWrapSegments(curve: SSICurve, segments: ClipSegment[]): ClipSegment[][] {
+  if (segments.length === 0) return [];
+
+  const sorted = [...segments].sort((a, b) => a.startIdx - b.startIdx);
+  if (!curve.isClosed || sorted.length < 2) {
+    return sorted.map((segment) => [segment]);
+  }
+
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const maxIdx = curve.points.length - 1;
+  if (first.startIdx !== 0 || last.endIdx !== maxIdx) {
+    return sorted.map((segment) => [segment]);
+  }
+
+  const chains: ClipSegment[][] = [];
+  if (sorted.length > 2) {
+    for (const middle of sorted.slice(1, -1)) {
+      chains.push([middle]);
+    }
+  }
+  chains.push([last, first]);
+  return chains;
+}
+
 /**
  * Clip an SSI curve to a face boundary.
  *
@@ -317,32 +403,40 @@ function intersectSegments(segsA: ClipSegment[], segsB: ClipSegment[]): ClipSegm
  * Build an Edge from a segment of an SSI polyline.
  *
  * For short segments (< 5 points), creates a line edge.
- * For longer segments, creates a polyline approximated as a line from start to end.
- * (Future: fit arcs/circles for analytic representation.)
+ * For SSI-marched curves, preserve the marched topology as a chain of line
+ * edges between consecutive SSI points rather than collapsing the span into
+ * one chord. BuilderFace depends on that connectivity when the true
+ * intersection is curved (for example perpendicular cylinders).
  */
-function buildEdgeFromSSISegment(
+function buildEdgesFromSSISegment(
   curve: SSICurve,
   startIdx: number,
   endIdx: number,
-): Edge | null {
+): Edge[] {
   const pts = curve.points;
-  const startPt = pts[startIdx].point;
-  const endPt = pts[endIdx].point;
+  const edges: Edge[] = [];
 
-  // Don't create zero-length edges
-  if (distance(startPt, endPt) < 1e-6) return null;
+  for (let index = startIdx; index < endIdx; index++) {
+    const startPt = pts[index].point;
+    const endPt = pts[index + 1].point;
+    if (distance(startPt, endPt) < 1e-6) {
+      continue;
+    }
 
-  // Create a line edge between start and end points.
-  // This is a simplification — the actual intersection curve may be curved.
-  // For boolean operations, what matters is that the edge endpoints are correct
-  // and the edge lies approximately on both surfaces.
-  const lineResult = makeLine3D(startPt, endPt);
-  if (!lineResult.success) return null;
+    const lineResult = makeLine3D(startPt, endPt);
+    if (!lineResult.success) {
+      continue;
+    }
 
-  const edgeResult = makeEdgeFromCurve(lineResult.result!);
-  if (!edgeResult.success) return null;
+    const edgeResult = makeEdgeFromCurve(lineResult.result!);
+    if (!edgeResult.success) {
+      continue;
+    }
 
-  return edgeResult.result!;
+    edges.push(edgeResult.result!);
+  }
+
+  return edges;
 }
 
 // ═══════════════════════════════════════════════
@@ -400,9 +494,17 @@ export function intersectFaceFace(faceA: Face, faceB: Face): FFIResult | null {
     const survivingSegs = intersectSegments(segsA, segsB);
 
     // Step 4: Build edges from surviving segments with PCurves
-    for (const seg of survivingSegs) {
-      let edge = buildEdgeFromSSISegment(ssiCurve, seg.startIdx, seg.endIdx);
-      if (edge) {
+    for (const chain of mergeClosedWrapSegments(ssiCurve, survivingSegs)) {
+      const chainEdges: Edge[] = [];
+      for (const seg of chain) {
+        chainEdges.push(...buildEdgesFromSSISegment(ssiCurve, seg.startIdx, seg.endIdx));
+      }
+      if (chainEdges.length === 0) {
+        continue;
+      }
+      const chainStart = chain[0].startIdx;
+      const chainEnd = chain[chain.length - 1].endIdx;
+      for (const edge of chainEdges) {
         // Attach PCurves on both surfaces
         const pcA = buildPCurveForEdgeOnSurface(edge, faceA.surface, true);
         if (pcA) addPCurveToEdge(edge, pcA);
@@ -411,8 +513,8 @@ export function intersectFaceFace(faceA: Face, faceB: Face): FFIResult | null {
 
         edges.push({
           edge,
-          startIdx: seg.startIdx,
-          endIdx: seg.endIdx,
+          startIdx: chainStart,
+          endIdx: chainEnd,
           ssiCurve,
         });
       }
