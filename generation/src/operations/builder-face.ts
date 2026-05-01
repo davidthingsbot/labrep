@@ -18,6 +18,7 @@ import { Wire, OrientedEdge, orientEdge, makeWire } from '../topology/wire';
 import { Face, Surface, makeFace, faceOuterWire } from '../topology/face';
 import { PCurve, makePCurve, evaluateCurve2D, buildPCurveForEdgeOnSurface } from '../topology/pcurve';
 import { toAdapter, type SurfaceAdapter } from '../surfaces/surface-adapter';
+import { FClass2d } from './fclass2d';
 import { evaluateLine3D } from '../geometry/line3d';
 import { evaluateCircle3D } from '../geometry/circle3d';
 import { evaluateArc3D } from '../geometry/arc3d';
@@ -238,6 +239,9 @@ function resolvePCurveOccurrenceForUse(
   if (count <= 1 || forward) return occurrence;
   // OCCT ref: BRep_Tool::CurveOnSurface picks the alternate pcurve for
   // reversed uses of closed-on-face edges.
+  // For seam edges appearing twice in a wire (occurrence > 0), the occurrence
+  // already maps to the correct PCurve index — don't swap again.
+  if (occurrence > 0) return occurrence;
   return (occurrence + 1) % count;
 }
 
@@ -1353,8 +1357,8 @@ function traceBuilderFace(face: Face, edges: Edge[]): BuilderFaceTraceDebug | nu
       intHalfEdges.push({ edge: e, forward: true, startVtx: idx, endVtx: idx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false, pcurveOccurrence: 0 });
       intHalfEdges.push({ edge: e, forward: false, startVtx: idx, endVtx: idx, angleAtStart: 0, angleAtEnd: 0, used: false, isBoundary: false, pcurveOccurrence: 0 });
     } else {
-      const startIdx = findOrAddVertex(vertices, vertices2D, startPt, startUV, false, adapter.uPeriod);
-      const endIdx = findOrAddVertex(vertices, vertices2D, endPt, endUV, false, adapter.uPeriod);
+      const startIdx = findOrAddVertex(vertices, vertices2D, startPt, startUV, seamSplit, adapter.uPeriod);
+      const endIdx = findOrAddVertex(vertices, vertices2D, endPt, endUV, seamSplit, adapter.uPeriod);
 
       // Skip if same vertex pair AND same curve type as a boundary edge
       const pFwd = `${startIdx}-${endIdx}`, pRev = `${endIdx}-${startIdx}`;
@@ -1368,22 +1372,39 @@ function traceBuilderFace(face: Face, edges: Edge[]): BuilderFaceTraceDebug | nu
     }
   }
 
+  // ── DIAGNOSTIC LOGGING ──
+  if ((globalThis as any).__builderFaceDiag) {
+    console.log(`\n=== BuilderFace DIAG ===`);
+    console.log(`Surface: ${surface.type}, seamSplit=${seamSplit}, periodic=${periodic}`);
+    console.log(`Vertices (${vertices.length}):`);
+    for (let i = 0; i < vertices.length; i++) {
+      console.log(`  v${i}: 3D=(${vertices[i].x.toFixed(4)},${vertices[i].y.toFixed(4)},${vertices[i].z.toFixed(4)}) UV=(${vertices2D[i].x.toFixed(4)},${vertices2D[i].y.toFixed(4)})`);
+    }
+    console.log(`Boundary HEs (${boundaryHalfEdges.length}):`);
+    for (const he of boundaryHalfEdges) {
+      console.log(`  ${he.forward?'F':'R'} v${he.startVtx}→v${he.endVtx} occ=${he.pcurveOccurrence} type=${he.edge.curve.type} closed=${he.edge.curve.isClosed} degen=${he.edge.degenerate||false}`);
+    }
+    console.log(`Int HEs (${intHalfEdges.length}):`);
+    for (const he of intHalfEdges) {
+      console.log(`  ${he.forward?'F':'R'} v${he.startVtx}→v${he.endVtx} type=${he.edge.curve.type} closed=${he.edge.curve.isClosed} pcurves=${he.edge.pcurves.length}`);
+    }
+    console.log(`splitEdges: ${splitEdges.length}`);
+    for (const e of splitEdges) {
+      const s = edgeStartPoint(e), en = edgeEndPoint(e);
+      const uvFwd = getEdgeUV(e, surface, true);
+      console.log(`  type=${e.curve.type} closed=${e.curve.isClosed} pcurves=${e.pcurves.length} 3Ds=(${s.x.toFixed(3)},${s.y.toFixed(3)},${s.z.toFixed(3)}) 3De=(${en.x.toFixed(3)},${en.y.toFixed(3)},${en.z.toFixed(3)}) uvFwd=${uvFwd ? `(${uvFwd.start.x.toFixed(3)},${uvFwd.start.y.toFixed(3)})→(${uvFwd.end.x.toFixed(3)},${uvFwd.end.y.toFixed(3)})` : 'null'}`);
+    }
+  }
+
   const allHalfEdges = [...boundaryHalfEdges, ...intHalfEdges];
+  // Only include forward boundary half-edges + both directions of interior edges.
+  // Reverse boundary HEs form the exterior face (unbounded complement) which we
+  // don't need. Including them causes the tracer to find CW+CCW of the same
+  // interior region, consuming FFI half-edges and preventing adjacent face discovery.
+  // OCCT ref: BOPAlgo_WireSplitter uses both directions, but its angle-based
+  // selection consistently traces CCW. Our approach avoids the issue entirely.
   const allWithReverse = [
-    ...boundaryHalfEdges.flatMap((he) => [
-      he,
-      {
-        edge: he.edge,
-        forward: !he.forward,
-        startVtx: he.endVtx,
-        endVtx: he.startVtx,
-        angleAtStart: 0,
-        angleAtEnd: 0,
-        used: false,
-        isBoundary: true,
-        pcurveOccurrence: he.pcurveOccurrence,
-      } satisfies HalfEdge,
-    ]),
+    ...boundaryHalfEdges,
     ...intHalfEdges,
   ];
   const closedVertices = new Set<number>();
@@ -1534,8 +1555,6 @@ function traceBuilderFace(face: Face, edges: Edge[]): BuilderFaceTraceDebug | nu
       // Use the stored UV at the current path position for seam disambiguation.
       const currentUV: Pt2 | null = pathUVs[pathUVs.length - 1];
       const currentTol2D = currentUV ? 2 * tolerance2D(adapter, currentUV, TOL) : 0;
-      const currentTolU = currentUV ? 2 * uTolerance2D(adapter, currentUV, TOL) : 0;
-      const currentTolV = currentUV ? 2 * vTolerance2D(adapter, currentUV, TOL) : 0;
       // OCCT ref: BOPAlgo_WireSplitter_1.cxx Path() calls AngleIn(aEOuta, aLEInfo)
       // at the current vertex. Read the incoming angle from the local
       // edge-info list instead of trusting the cached edge-end angle, so
@@ -1571,34 +1590,18 @@ function traceBuilderFace(face: Face, edges: Edge[]): BuilderFaceTraceDebug | nu
           break;
         }
 
-        // OCCT: Path() lines 572-583 — Coord2dVf(aE, myFace) gives the UV at
-        // the candidate edge's forward vertex. Compare with aPb by 2D distance.
-        // Use PCurve UV when available (standard modulo wrapping for periodic
-        // surfaces). Fall back to vertex pool startUV without modulo for edges
-        // lacking PCurves (e.g. pole sub-edges where modulo hides seam side).
-        if (closedVertices.has(vtx) && currentUV && cand.startVtx !== cand.endVtx) {
-          let du: number, dv: number;
+        // OCCT ref: BOPAlgo_WireSplitter_1.cxx Path() lines 293-307
+        // If vertex is on seam (bIsClosed), get UV at candidate edge's forward
+        // vertex (Coord2dVf) and skip if squared 2D distance to current
+        // position (aPb) exceeds squared tolerance (aTol2D2).
+        if (closedVertices.has(vtx) && currentUV) {
           const candForwardUV = getForwardVertexUV(cand.edge, surface, cand.forward, cand.pcurveOccurrence);
           if (candForwardUV) {
-            ({ du, dv } = uvDistanceRaw(candForwardUV, currentUV));
-          } else if (cand.startUV) {
-            ({ du, dv } = uvDistanceRaw(cand.startUV, currentUV));
-          } else {
-            const cw = cand.edge === lastEdge.edge
-              ? 2 * Math.PI
-              : clockwiseAngle(incomingAngle, candInfo.angle);
-            if (candInfo.isInside) {
-              insideCount++;
-              onlyInside = candInfo;
+            const { du, dv } = uvDistanceRaw(candForwardUV, currentUV);
+            if (du * du + dv * dv > currentTol2D * currentTol2D) {
+              continue;
             }
-            if (cw < bestAngle) {
-              bestAngle = cw;
-              bestInfo = candInfo;
-            }
-            continue;
           }
-          if (du * du + dv * dv >= currentTol2D * currentTol2D) continue;
-          if (du > currentTolU || dv > currentTolV) continue;
         }
 
         if (!currentInfo.isInside && candInfo.isInside) {
@@ -1632,6 +1635,17 @@ function traceBuilderFace(face: Face, edges: Edge[]): BuilderFaceTraceDebug | nu
 
       if (pathEdges.length >= 1) {
         loops.push(pathEdges);
+      }
+    }
+  }
+
+  if ((globalThis as any).__builderFaceDiag) {
+    console.log(`\nTraced ${loops.length} loops:`);
+    for (let li = 0; li < loops.length; li++) {
+      const loop = loops[li];
+      console.log(`  Loop ${li} (${loop.length} edges):`);
+      for (const he of loop) {
+        console.log(`    ${he.forward?'F':'R'} v${he.startVtx}→v${he.endVtx} type=${he.edge.curve.type} bnd=${he.isBoundary} occ=${he.pcurveOccurrence}`);
       }
     }
   }
@@ -1795,22 +1809,134 @@ function sampleTemporaryWirePolygon(
   return { polygon: pts, maxDeflectionU, maxDeflectionV };
 }
 
+/**
+ * Re-sample a wire polygon with tighter deflection tolerance.
+ * OCCT ref: IntTools_FClass2d::Init adaptive re-discretization (lines 440-497)
+ */
+function resampleWirePolygon(
+  wire: Wire,
+  surface: Surface,
+  adapter: SurfaceAdapter,
+  _targetDeflection: number,
+): { polygon: Pt2[]; maxDeflectionU: number; maxDeflectionV: number } | null {
+  // Increase sample density for curved edges
+  const pts: Pt2[] = [];
+  let maxDeflectionU = 0;
+  let maxDeflectionV = 0;
+  let firstEdge = true;
+
+  function appendPoint(pt: Pt2): void {
+    let adjusted = { ...pt };
+    if (adapter.isUPeriodic && pts.length > 0) {
+      const prev = pts[pts.length - 1];
+      const period = adapter.uPeriod;
+      let best = adjusted.x;
+      let bestDist = Math.abs(adjusted.x - prev.x);
+      for (const candidate of [adjusted.x - period, adjusted.x + period]) {
+        const dist = Math.abs(candidate - prev.x);
+        if (dist < bestDist) {
+          best = candidate;
+          bestDist = dist;
+        }
+      }
+      adjusted = { x: best, y: adjusted.y };
+    }
+    pts.push(adjusted);
+  }
+
+  for (const oe of wire.edges) {
+    const pc = findPCurveForUse(oe.edge, surface, oe.forward, 0);
+    if (pc) {
+      const c = pc.curve2d;
+      const isCurved = c.type === 'circle' || c.type === 'arc' || c.type === 'ellipse';
+      // Higher density than default: 4x for curves, 2x for lines
+      const n = isCurved ? 129 : 9;
+      const startIndex = firstEdge ? 0 : 1;
+      for (let i = startIndex; i < n; i++) {
+        const frac = i / (n - 1);
+        const t = oe.forward
+          ? c.startParam + frac * (c.endParam - c.startParam)
+          : c.endParam - frac * (c.endParam - c.startParam);
+        appendPoint(evaluateCurve2D(c, t));
+      }
+      if (pts.length >= 5) {
+        const deviation = pointLineDeviation2D(pts[pts.length - 4], pts[pts.length - 1], pts[pts.length - 2]);
+        maxDeflectionU = Math.max(maxDeflectionU, deviation.du);
+        maxDeflectionV = Math.max(maxDeflectionV, deviation.dv);
+      }
+      firstEdge = false;
+      continue;
+    }
+
+    const curve = oe.edge.curve;
+    const isCurved = curve.type === 'circle3d' || curve.type === 'arc3d' || curve.type === 'ellipse3d';
+    if (isCurved) {
+      const n = curve.isClosed ? 129 : 65;
+      const startIndex = firstEdge ? 0 : 1;
+      for (let i = startIndex; i < n; i++) {
+        const frac = i / (n - 1);
+        const t = oe.forward
+          ? curve.startParam + frac * (curve.endParam - curve.startParam)
+          : curve.endParam - frac * (curve.endParam - curve.startParam);
+        const uv = adapter.projectPoint(evalCurve(curve, t));
+        appendPoint({ x: uv.u, y: uv.v });
+      }
+      if (pts.length >= 5) {
+        const deviation = pointLineDeviation2D(pts[pts.length - 4], pts[pts.length - 1], pts[pts.length - 2]);
+        maxDeflectionU = Math.max(maxDeflectionU, deviation.du);
+        maxDeflectionV = Math.max(maxDeflectionV, deviation.dv);
+      }
+      firstEdge = false;
+      continue;
+    }
+
+    const p3 = oe.forward ? edgeStartPoint(oe.edge) : edgeEndPoint(oe.edge);
+    const uv = adapter.projectPoint(p3);
+    appendPoint({ x: uv.u, y: uv.v });
+    firstEdge = false;
+  }
+
+  if (pts.length <= 3) return null;
+  return { polygon: pts, maxDeflectionU, maxDeflectionV };
+}
+
 function analyzeTemporaryWire(
   wire: Wire,
   surface: Surface,
   adapter: SurfaceAdapter,
   periodic: boolean,
 ): TemporaryWireAnalysis {
-  const { polygon, maxDeflectionU, maxDeflectionV } = sampleTemporaryWirePolygon(wire, surface, adapter);
-  const signedArea = polygon.length >= 3
+  let { polygon, maxDeflectionU, maxDeflectionV } = sampleTemporaryWirePolygon(wire, surface, adapter);
+  let signedArea = polygon.length >= 3
     ? polygonSignedAreaRaw(polygon)
     : 0;
-  const perimeter = polygon.length >= 2
+  let perimeter = polygon.length >= 2
     ? polygonPerimeterRaw(polygon)
     : 0;
-  const expectedThickness = perimeter > 0
+  let expectedThickness = perimeter > 0
     ? Math.max((2 * Math.abs(signedArea)) / perimeter, 1e-7)
     : 0;
+
+  // Adaptive re-discretization (OCCT IntTools_FClass2d::Init lines 265-330)
+  // When polygon deflection exceeds the area/perimeter thickness ratio,
+  // re-sample with tighter tolerance to prevent self-intersecting polygons.
+  let defl = Math.max(maxDeflectionU, maxDeflectionV);
+  let discrDefl = Math.min(defl * 0.1, expectedThickness * 10);
+  while (defl > expectedThickness && discrDefl > 1e-7 && polygon.length > 3) {
+    const resampled = resampleWirePolygon(wire, surface, adapter, discrDefl);
+    if (!resampled || resampled.polygon.length <= 3) break;
+
+    polygon = resampled.polygon;
+    maxDeflectionU = resampled.maxDeflectionU;
+    maxDeflectionV = resampled.maxDeflectionV;
+    signedArea = polygonSignedAreaRaw(polygon);
+    perimeter = polygonPerimeterRaw(polygon);
+    expectedThickness = perimeter > 0
+      ? Math.max((2 * Math.abs(signedArea)) / perimeter, 1e-7)
+      : 0;
+    defl = Math.max(maxDeflectionU, maxDeflectionV);
+    discrDefl = Math.min(discrDefl * 0.1, expectedThickness * 10);
+  }
 
   const seenEdges = new Set<Edge>();
   let repeatedEdge = false;
@@ -1823,15 +1949,14 @@ function analyzeTemporaryWire(
   }
 
   // OCCT ref: IntTools_FClass2d::Init()
-  // 1. classify from the sampled wire polygon (SeqPnt2d)
-  // 2. reject bad wires with insufficient polygon support / near-zero area /
-  //    excessive deflection for their area-perimeter thickness ratio
+  // Match OCCT's badWire criteria exactly:
+  // - repeated edges (not in OCCT but prevents degenerate loops)
+  // - too few polygon points (SeqPnt2d.Length() <= 3)
+  // - near-zero area (< Precision::SquareConfusion = 1e-14)
   const badWire =
     repeatedEdge
     || polygon.length <= 3
-    || Math.abs(signedArea) < 1e-8
-    || expectedThickness <= 1e-7
-    || Math.max(maxDeflectionU, maxDeflectionV) > expectedThickness;
+    || Math.abs(signedArea) < 1e-14;
 
   return {
     polygon,
@@ -1999,15 +2124,16 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   const adapter = toAdapter(surface);
   const periodic = adapter.isUPeriodic;
   const traced = traceBuilderFace(face, edges);
-  if (!traced) return [face];
+  if (!traced) { console.log('[BF] traceBuilderFace returned null'); return [face]; }
   const { loops, vertices2D, splitEdges } = traced;
-  if (loops.length === 0) return [face];
+  if (loops.length === 0) { console.log('[BF] 0 loops, edges=' + edges.length); return [face]; }
+  if (edges.length <= 2) console.log('[BF] loops=' + loops.length + ' edges=' + edges.length + ' loopSizes=' + loops.map(l => l.length).join(','));
 
   // ── Build wires from loops and classify ──
 
   interface LoopInfo {
     wire: Wire;
-    analysis: TemporaryWireAnalysis;
+    tempFace: Face | null;  // OCCT: temporary face with single wire for FClass2d classification
     loop: HalfEdge[];
   }
 
@@ -2063,11 +2189,22 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
 
   for (const loop of loops) {
     const loopKey = canonicalizeLoopKey(loop);
-    if (seenLoopKeys.has(loopKey)) continue;
+    if (seenLoopKeys.has(loopKey)) {
+      if (edges.length <= 2) {
+        const verts = loop.map(h => h.startVtx + '→' + h.endVtx + (h.isBoundary ? 'B' : 'I')).join(' ');
+        console.log('[BF] dup loop size=' + loop.length + ' verts=[' + verts + '] key=' + loopKey.substring(0, 80));
+      }
+      continue;
+    }
     seenLoopKeys.add(loopKey);
+    if (edges.length <= 2) {
+      const verts = loop.map(h => h.startVtx + '→' + h.endVtx + (h.isBoundary ? 'B' : 'I')).join(' ');
+      console.log('[BF] accept loop size=' + loop.length + ' verts=[' + verts + '] key=' + loopKey.substring(0, 80));
+    }
 
     const wire = makeWireFromTracedLoop(loop);
-    if (!wire || !wire.isClosed) continue;
+    if (!wire || !wire.isClosed) { if (edges.length <= 2) console.log('[BF] unclosed wire loop size=' + loop.length + ' closed=' + wire?.isClosed); continue; }
+    if ((globalThis as any).__builderFaceDiag) console.log(`[BF-WIRE] loop ${loopInfos.length}: wire closed=${wire.isClosed} edges=${wire.edges.length}`);
 
     if (wire.edges.length === 1) {
       const curve = wire.edges[0].edge.curve;
@@ -2084,14 +2221,16 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       }
     }
 
-    // Compute signed area in UV space.
-    // OCCT ref: IntTools_FClass2d::Init() samples along the wire PCurves
-    // (SeqPnt2d), then IntTools_FClass2d::Perform() recadres classification
-    // points on periodic surfaces. Use the sampled wire polygon here, but
-    // normalize periodic U before the sign check so the temporary-face
-    // growth/hole surrogate follows the same periodic recadrage direction.
-    const analysis = analyzeTemporaryWire(wire, surface, adapter, periodic);
-    loopInfos.push({ wire, analysis, loop });
+    // OCCT ref: BOPAlgo_BuilderFace::PerformAreas creates a temporary face
+    // per wire loop for FClass2d classification.
+    // Use FClass2d on temporary faces for growth/hole classification.
+    // Create temp face eagerly; if it fails, fall back to analyzeTemporaryWire.
+    let tempFace: Face | null = null;
+    const tempFaceResult = makeFace(surface, wire, []);
+    if (tempFaceResult.success) {
+      tempFace = tempFaceResult.result!;
+    }
+    loopInfos.push({ wire, tempFace, loop });
   }
 
   if (loopInfos.length === 0) return [face];
@@ -2133,57 +2272,127 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     return null;
   }
 
-  // ── Classify loops as outers or holes ──
-  // Following OCCT BOPAlgo_WireSplitter: use geometric containment,
-  // not area sign. A loop is a hole if it's contained inside another loop
-  // (odd nesting depth). This correctly handles face splitting where both
-  // sub-faces are outers with potentially different windings.
-
-  // Step 1: Initial growth-vs-hole classification.
-  // OCCT ref: BOPAlgo_BuilderFace::PerformAreas + IsGrowthWire().
-  // Follow the OCCT structure here:
-  // 1. loops reusing known hole edges are growths
-  // 2. otherwise classify the temporary single-wire face from its own sampled
-  //    wire orientation on the forward face (IntTools_FClass2d::IsHole()).
+  // ── Classify loops as outers (growth) or holes ──
+  // OCCT ref: BOPAlgo_BuilderFace::PerformAreas
+  // 1. Quick check: IsGrowthWire — if wire shares edges with known holes, it's growth
+  // 2. Otherwise: FClass2d::IsHole() on the temporary single-wire face
   const outers: LoopInfo[] = [];
   const candidateHoles: LoopInfo[] = [];
   const holeEdgeSet = new Set<Edge>();
 
-  function isBadTemporaryLoop(loopInfo: LoopInfo): boolean {
-    // OCCT ref: IntTools_FClass2d marks wires with near-zero signed area as
-    // "BadWire" and does not treat their orientation as authoritative for
-    // growth/hole classification.
-    const seenEdges = new Set<Edge>();
-    for (const oe of loopInfo.wire.edges) {
-      if (seenEdges.has(oe.edge)) {
-        return true;
-      }
-      seenEdges.add(oe.edge);
+  // OCCT: IsGrowthWire(aWire, aMHE)
+  function isGrowthWire(wire: Wire, holeEdges: Set<Edge>): boolean {
+    if (holeEdges.size === 0) return false;
+    for (const oe of wire.edges) {
+      if (holeEdges.has(oe.edge)) return true;
     }
-    return loopInfo.analysis.badWire;
+    return false;
   }
 
   for (const li of loopInfos) {
-    if (isBadTemporaryLoop(li)) {
-      continue;
+    let bIsGrowth = isGrowthWire(li.wire, holeEdgeSet);
+    if (!bIsGrowth) {
+      if (li.tempFace) {
+        // OCCT: IntTools_FClass2d& aClsf = myContext->FClass2d(aFace);
+        //       bIsGrowth = !aClsf.IsHole();
+        const classifier = new FClass2d(li.tempFace, TOL);
+        bIsGrowth = !classifier.isHole;
+      } else {
+        // Fallback: use analyzeTemporaryWire when tempFace creation failed
+        const analysis = analyzeTemporaryWire(li.wire, surface, adapter, periodic);
+        if (analysis.badWire) continue;  // Skip bad wires
+        bIsGrowth = !analysis.isHole;
+      }
     }
-    const isGrowthFromHoleEdges = li.wire.edges.some((oe) =>
-      holeEdgeSet.has(oe.edge));
-    const isGrowthFromOrientation = !li.analysis.isHole;
-    if (isGrowthFromHoleEdges || isGrowthFromOrientation) {
+
+    if ((globalThis as any).__builderFaceDiag) {
+      const poly = loopPolygonFromHalfEdges(li.loop);
+      const area = polygonSignedArea(poly, periodic, adapter.uPeriod);
+      console.log(`[BF-CLASS] loop ${outers.length + candidateHoles.length}: growth=${bIsGrowth} tempFace=${!!li.tempFace} area=${area.toFixed(2)}`);
+    }
+    if (bIsGrowth) {
       outers.push(li);
     } else {
       candidateHoles.push(li);
+      // OCCT: TopExp::MapShapes(aWire, TopAbs_EDGE, aMHE)
       for (const oe of li.wire.edges) {
         holeEdgeSet.add(oe.edge);
       }
     }
   }
 
-  // Step 2: Keep candidate holes as holes.
-  // OCCT ref: BOPAlgo_BuilderFace::PerformAreas does not promote hole faces
-  // back into growth faces on bounded faces. Holes are only assigned to
-  // containing growth faces later.
+  // ── Promote misclassified holes back to growth ──
+  // FClass2d can misclassify growth loops as holes when the UV coordinate system
+  // reverses winding direction (e.g., certain plane orientations). A true hole is
+  // geometrically inside a growth loop; a split sibling is adjacent, sharing the
+  // intersection edge. If a candidate hole shares an intersection edge with the
+  // split set but is not inside any growth loop, promote it to growth.
+  // OCCT ref: this is handled implicitly by consistent IsHole() via proper
+  // PCurve orientation; we need this workaround since our UV mapping can reverse.
+  const promotedLoops = new Set<LoopInfo>();
+  if (candidateHoles.length > 0 && outers.length > 0 && splitEdges.length > 0) {
+    const splitEdgeSet = new Set(splitEdges);
+    const promoted: LoopInfo[] = [];
+    const remaining: LoopInfo[] = [];
+
+    for (const hole of candidateHoles) {
+      // Check if this hole shares a split (intersection) edge
+      const sharesSplitEdge = hole.wire.edges.some(oe =>
+        splitEdgeSet.has(oe.edge) || splitEdgeSet.has(oe.edge.sourceEdge as Edge)
+      );
+
+      if ((globalThis as any).__builderFaceDiag) {
+        console.log(`[BF-PROMOTE] hole shares split edge: ${sharesSplitEdge}, edges=${hole.wire.edges.length}, splitEdgeSet.size=${splitEdgeSet.size}`);
+        for (const oe of hole.wire.edges) {
+          console.log(`  edge: ${oe.edge.curve.type} inSet=${splitEdgeSet.has(oe.edge)} srcInSet=${splitEdgeSet.has(oe.edge.sourceEdge as Edge)} bnd=${!splitEdgeSet.has(oe.edge) && !splitEdgeSet.has(oe.edge.sourceEdge as Edge)} degen=${oe.edge.degenerate}`);
+        }
+      }
+
+      if (sharesSplitEdge) {
+        // Check if it's geometrically inside any growth loop (would mean it's a real hole)
+        let insideGrowth = false;
+        for (const outer of outers) {
+          if (!outer.tempFace) continue;
+          const classifier = new FClass2d(outer.tempFace, TOL);
+          // Sample a point from the hole loop that isn't on a shared edge
+          for (const oe of hole.wire.edges) {
+            if (splitEdgeSet.has(oe.edge) || splitEdgeSet.has(oe.edge.sourceEdge as Edge)) continue;
+            if (oe.edge.degenerate) continue;
+            const midT = (oe.edge.curve.startParam + oe.edge.curve.endParam) / 2;
+            const midPt = evalCurve(oe.edge.curve, midT);
+            const uv = adapter.projectPoint(midPt);
+            const state = classifier.perform({ x: uv.u, y: uv.v });
+            if (state === 'in') { insideGrowth = true; }
+            break;
+          }
+          if (insideGrowth) break;
+        }
+
+        if ((globalThis as any).__builderFaceDiag) console.log(`[BF-PROMOTE] insideGrowth=${insideGrowth}`);
+        if (!insideGrowth) {
+          // Not inside any growth → it's a sibling split, not a hole
+
+          promoted.push(hole);
+          promotedLoops.add(hole);
+          continue;
+        }
+      }
+      remaining.push(hole);
+    }
+
+    for (const p of promoted) {
+      outers.push(p);
+      // Remove its edges from holeEdgeSet
+      for (const oe of p.wire.edges) {
+        holeEdgeSet.delete(oe.edge);
+      }
+    }
+    candidateHoles.length = 0;
+    candidateHoles.push(...remaining);
+  }
+
+
+
   const holes: LoopInfo[] = [];
 
   function wirePolygon(wire: Wire): Pt2[] {
@@ -2250,64 +2459,86 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   // keeps only the most-inner containing growth face for each hole.
   const assignedHoles = new Map<LoopInfo, LoopInfo[]>();
 
+  // OCCT ref: BOPAlgo_BuilderFace.cxx IsInside() (lines 793-838)
+  // Check if a wire loop is inside another loop using FClass2d classification.
+  // Returns null if FClass2d can't determine (no tempFace available).
+  function isInsideFClass2d(holeInfo: LoopInfo, outerInfo: LoopInfo): boolean | null {
+    if (!outerInfo.tempFace) return null;
+
+    // Get edges of the outer face for exclusion
+    const faceEdgeSet = new Set<Edge>();
+    for (const oe of outerInfo.wire.edges) faceEdgeSet.add(oe.edge);
+
+    // Try FClass2d-based classification (OCCT-faithful path)
+    const classifier = new FClass2d(outerInfo.tempFace, TOL);
+
+    for (const oe of holeInfo.wire.edges) {
+      if (oe.edge.degenerate) continue;
+      // OCCT: if face contains the edge, wire cannot be inside
+      if (faceEdgeSet.has(oe.edge)) return false;
+
+      // Get 2D curve midpoint of the edge on the face
+      let midUV: Pt2 | null = null;
+      const pc = findPCurveForUse(oe.edge, surface, oe.forward, 0);
+      if (pc) {
+        const midT = (pc.curve2d.startParam + pc.curve2d.endParam) / 2;
+        midUV = evaluateCurve2D(pc.curve2d, midT);
+      } else {
+        // Fallback: project 3D midpoint to UV
+        const curve = oe.edge.curve;
+        const midT = (curve.startParam + curve.endParam) / 2;
+        const midPt3D = evalCurve(curve, midT);
+        const uv = adapter.projectPoint(midPt3D);
+        midUV = { x: uv.u, y: uv.v };
+      }
+
+      const state = classifier.perform(midUV, true);
+      return state === 'in';
+    }
+    return false;
+  }
+
+  // Polygon-based fallback for containment (used when FClass2d path isn't applicable)
   function loopInsideOuter(loopInfo: LoopInfo, outerInfo: LoopInfo): boolean {
     const outerEdgeSet = new Set(outerInfo.wire.edges.map((oe) => oe.edge));
     const outerPoly = loopInfoPolygon(outerInfo);
-    if (outerPoly.length < 3) {
-      return false;
-    }
+    if (outerPoly.length < 3) return false;
 
-    let anyChecked = false;
     for (const he of loopInfo.loop) {
       if (he.edge.degenerate) continue;
-      if (outerEdgeSet.has(he.edge)) {
-        continue;
-      }
+      if (outerEdgeSet.has(he.edge)) continue;
 
       const uv = getEdgeUV(he.edge, surface, he.forward, he.pcurveOccurrence);
       if (!uv) continue;
-      anyChecked = true;
-      const mid = {
-        x: (uv.start.x + uv.end.x) / 2,
-        y: (uv.start.y + uv.end.y) / 2,
-      };
-      if (pointInPolygonUV(mid, outerPoly, periodic, adapter.uPeriod)) {
-        return true;
-      }
+      const mid = { x: (uv.start.x + uv.end.x) / 2, y: (uv.start.y + uv.end.y) / 2 };
+      if (pointInPolygonUV(mid, outerPoly, periodic, adapter.uPeriod)) return true;
     }
 
-    const loopIdx = loopInfos.indexOf(loopInfo);
     const loopPoly = loopInfoPolygon(loopInfo);
-    const loopPt = (loopClassificationPoint(loopInfo.loop) ?? polygonSamplePoint(loopPoly))
-      ?? vertices2D[loopInfos[loopIdx].loop[0].startVtx];
-    if (!anyChecked) {
-      return pointInPolygonUV(loopPt, outerPoly, periodic, adapter.uPeriod);
-    }
-    return pointInPolygonUV(loopPt, outerPoly, periodic, adapter.uPeriod);
+    const loopPt = loopClassificationPoint(loopInfo.loop) ?? polygonSamplePoint(loopPoly);
+    if (loopPt) return pointInPolygonUV(loopPt, outerPoly, periodic, adapter.uPeriod);
+    return false;
+  }
+
+  // OCCT ref: BOPAlgo_BuilderFace::PerformAreas hole-to-face assignment
+  // For each hole, find the innermost containing growth face.
+  // Use FClass2d-based isInside first, fall back to polygon-based containment.
+  function holeInsideOuter(hole: LoopInfo, outer: LoopInfo): boolean {
+    // Try FClass2d first (OCCT-faithful)
+    const fclass2dResult = isInsideFClass2d(hole, outer);
+    if (fclass2dResult !== null) return fclass2dResult;
+    // Fallback: polygon-based containment
+    return loopInsideOuter(hole, outer);
   }
 
   for (const hole of holes) {
     let chosenOuter: LoopInfo | null = null;
     for (const outer of outers) {
       if (hole === outer) continue;
-      if (!loopInsideOuter(hole, outer)) continue;
+      if (!holeInsideOuter(hole, outer)) continue;
 
-      const holeIdx = loopInfos.indexOf(hole);
-      const holePoly = loopInfoPolygon(hole);
-      const holePt = (loopClassificationPoint(hole.loop) ?? polygonSamplePoint(holePoly))
-        ?? vertices2D[loopInfos[holeIdx].loop[0].startVtx];
-      if (shouldFilterToOriginalDomain && !pointInPolygonUV(holePt, originalOuterPolygon, periodic, adapter.uPeriod)) {
-        continue;
-      }
-      if (shouldFilterToOriginalDomain && originalHolePolygons.some((polygon) => polygon.length >= 3 && pointInPolygonUV(holePt, polygon, periodic, adapter.uPeriod))) {
-        continue;
-      }
-      const usesOnlyOriginalOuterBoundary = hole.wire.edges.every((oe) => originalOuterEdgeSet.has(oe.edge.sourceEdge ?? oe.edge));
-      if (usesOnlyOriginalOuterBoundary) {
-        continue;
-      }
-
-      if (!chosenOuter || loopInsideOuter(outer, chosenOuter)) {
+      // OCCT: keep the innermost containing growth face
+      if (!chosenOuter || holeInsideOuter(outer, chosenOuter)) {
         chosenOuter = outer;
       }
     }
@@ -2332,10 +2563,13 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   for (const outer of outers) {
     let myHoles: Wire[] = (assignedHoles.get(outer) ?? []).map((hole) => hole.wire);
 
-    if (allowDualRoleContainedLoop) {
+    if (allowDualRoleContainedLoop && !promotedLoops.has(outer)) {
       for (const containedOuter of outers) {
         if (containedOuter === outer) continue;
-        if (!loopInsideOuter(containedOuter, outer)) {
+        // Don't add promoted loops (former holes promoted to growth) as dual-role holes —
+        // they're split siblings, not nested regions.
+        if (promotedLoops.has(containedOuter)) continue;
+        if (!holeInsideOuter(containedOuter, outer)) {
           continue;
         }
 
@@ -2390,8 +2624,9 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
       .map(loopInfoPolygon);
     const samplePt = polygonSamplePoint(candidatePolygon, candidateHolePolygons);
     if (shouldFilterToOriginalDomain && samplePt) {
-      if (!pointInPolygonUV(samplePt, originalOuterPolygon, periodic, adapter.uPeriod)) {
-        continue;
+      const inOuter = pointInPolygonUV(samplePt, originalOuterPolygon, periodic, adapter.uPeriod);
+      if (!inOuter) {
+          continue;
       }
       if (originalHolePolygons.some((polygon) => polygon.length >= 3 && pointInPolygonUV(samplePt, polygon, periodic, adapter.uPeriod))) {
         continue;
@@ -2399,6 +2634,7 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
     }
 
     const faceResult = makeFace(surface, wire, myHoles);
+    if ((globalThis as any).__builderFaceDiag) console.log(`[BF-FACE] makeFace success=${faceResult.success} holes=${myHoles.length} wireEdges=${wire.edges.length}`);
     if (faceResult.success) {
       faceResults.push(faceResult.result!);
     }
@@ -2409,11 +2645,22 @@ export function builderFace(face: Face, edges: Edge[]): Face[] {
   }
 
   if (periodic && faceResults.length > 1) {
+    // Filter out faces that are identical to the original unsplit face.
+    // On periodic surfaces the tracer can produce a loop that traces the full
+    // boundary without including any split edges — that duplicate must be removed.
+    // OCCT ref: BuilderFace never produces a duplicate of the input face.
+    // Check edge identity, not just count, to avoid filtering valid split sub-faces
+    // that happen to have the same edge count as the original.
+    const originalEdgeSet = new Set(face.outerWire.edges.map(oe => oe.edge));
     const filtered = faceResults.filter((candidate) => {
-      const unchangedNoHole =
-        candidate.innerWires.length === 0 &&
-        candidate.outerWire.edges.length === face.outerWire.edges.length;
-      return !unchangedNoHole;
+      if (candidate.innerWires.length !== face.innerWires.length) return true;
+      if (candidate.outerWire.edges.length !== face.outerWire.edges.length) return true;
+      // Check if ALL outer edges are from the original face (no split edges)
+      const allOriginal = candidate.outerWire.edges.every(oe => {
+        const src = oe.edge.sourceEdge ?? oe.edge;
+        return originalEdgeSet.has(src) || originalEdgeSet.has(oe.edge);
+      });
+      return !allOriginal;
     });
     if (filtered.length > 0) {
       return filtered;
@@ -2462,14 +2709,15 @@ function pointInPolygonUV(pt: Pt2, polygon: Pt2[], periodic: boolean, uPeriod: n
 }
 
 function canonicalizeLoopKey(loop: HalfEdge[]): string {
-  const items = loop.map((he) => {
-    const a = edgeStartPoint(he.edge);
-    const b = edgeEndPoint(he.edge);
-    const pa = `${a.x.toFixed(6)},${a.y.toFixed(6)},${a.z.toFixed(6)}`;
-    const pb = `${b.x.toFixed(6)},${b.y.toFixed(6)},${b.z.toFixed(6)}`;
-    return pa < pb ? `${pa}|${pb}` : `${pb}|${pa}`;
-  }).sort();
-  return items.join('::');
+  // Use directed vertex sequence to distinguish CW from CCW traversals.
+  // Find the minimum start vertex to create a canonical rotation.
+  const vtxSeq = loop.map((he) => he.startVtx);
+  let minIdx = 0;
+  for (let i = 1; i < vtxSeq.length; i++) {
+    if (vtxSeq[i] < vtxSeq[minIdx]) minIdx = i;
+  }
+  const rotated = [...vtxSeq.slice(minIdx), ...vtxSeq.slice(0, minIdx)];
+  return rotated.join(',');
 }
 
 function wireVertexPoints(wire: Wire): Point3D[] {

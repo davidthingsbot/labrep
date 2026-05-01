@@ -205,7 +205,8 @@ export function buildPCurveForEdgeOnSurface(
     // to 2D via dot products with plane axes, uses SAME radius (unchanged
     // for normal-to-plane projection since xAxis/yAxis are orthonormal).
     const circ3d = edge.curve as Circle3D;
-    const circle2d = makeCircle2D({ x: startUV.u, y: startUV.v }, circ3d.radius);
+    const centerUV = adapter.projectPoint(circ3d.plane.origin);
+    const circle2d = makeCircle2D({ x: centerUV.u, y: centerUV.v }, circ3d.radius);
     if (!circle2d.result) return null;
     return makePCurve(circle2d.result, surface);
   }

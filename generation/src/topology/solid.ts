@@ -176,16 +176,7 @@ function computeFaceVolume(face: Face, edgeContributions?: FaceEdgeVolumeContrib
 
     const isTrueSeam = (edgeAppearances.get(oe.edge) || 0) >= 2;
     let targetOcc = rawOcc;
-    if (face.forward === false && isTrueSeam && matchingPCs.length >= 2) {
-      const midU0 = evaluateCurve2D(
-        matchingPCs[0].curve2d,
-        (matchingPCs[0].curve2d.startParam + matchingPCs[0].curve2d.endParam) / 2,
-      ).x;
-      const farFromBU1 = Math.abs(midU0 - BU1) > (adapter.isUPeriodic ? adapter.uPeriod / 4 : 1);
-      if (farFromBU1) {
-        targetOcc = 1 - rawOcc;
-      }
-    } else if (!isTrueSeam && matchingPCs.length >= 2) {
+    if (!isTrueSeam && matchingPCs.length >= 2) {
       // OCCT BRep_Tool::CurveOnSurface on a closed-surface edge:
       // PCurve1 for FORWARD edge use, PCurve2 for REVERSED edge use.
       targetOcc = oe.forward ? 0 : 1;
